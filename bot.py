@@ -134,6 +134,7 @@ mock_match_data = {
     ]
 }
 
+
 class SignupView(discord.ui.View):
     def __init__(self):
         super().__init__()
@@ -155,7 +156,8 @@ class SignupView(discord.ui.View):
                 player_names[interaction.user.id] = interaction.user.name
 
                 self.sign_up_button.label = f"Sign Up ({len(queue)}/10)"
-                await interaction.response.edit_message(content="Click a button to manage your queue status!", view=self)
+                await interaction.response.edit_message(content="Click a button to manage your queue status!",
+                                                        view=self)
 
                 await interaction.followup.send(
                     f"{interaction.user.name} added to the queue! Current queue count: {len(queue)}",
@@ -184,6 +186,7 @@ class SignupView(discord.ui.View):
             ephemeral=True,
         )
 
+
 # MongoDB Connection
 uri = os.getenv("uri_key")
 client = MongoClient(uri, server_api=ServerApi('1'))
@@ -195,11 +198,11 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 # Global variables
 queue = []
-team1 = []  
-team2 = []  
-signup_active = False  
-player_mmr = {}  
-player_names = {}  
+team1 = []
+team2 = []
+signup_active = False
+player_mmr = {}
+player_names = {}
 votes = {"Balanced Teams": 0, "Captains": 0}
 match_ongoing = False
 dummy = False
@@ -213,9 +216,9 @@ selected_captain2 = None
 signup_refresh_task = None
 
 # Initialize MongoDB Collections
-db = client["valorant"]  
-users = db["users"]       
-mmr_collection = db["mmr_data"]  
+db = client["valorant"]
+users = db["users"]
+mmr_collection = db["mmr_data"]
 
 # Initialize API
 api_key = os.getenv("api_key")
@@ -226,6 +229,7 @@ bot_token = os.getenv("bot_token")
 
 official_maps = ["Haven", "Sunset", "Ascent", "Abyss", "Pearl", "Bind", "Split"]
 all_maps = ["Bind", "Haven", "Split", "Ascent", "Icebox", "Breeze", "Fracture", "Pearl", "Lotus", "Sunset", "Abyss"]
+
 
 def create_signup_view():
     sign_up_button = Button(label=f"Sign Up ({len(queue)}/10)", style=discord.ButtonStyle.green)
@@ -241,7 +245,8 @@ def create_signup_view():
                 player_names[interaction.user.id] = interaction.user.name
 
                 sign_up_button.label = f"Sign Up ({len(queue)}/10)"
-                await interaction.response.edit_message(content="Click a button to manage your queue status!", view=view)
+                await interaction.response.edit_message(content="Click a button to manage your queue status!",
+                                                        view=view)
 
                 await interaction.followup.send(
                     f"{interaction.user.name} added to the queue! Current queue count: {len(queue)}",
@@ -255,7 +260,9 @@ def create_signup_view():
             else:
                 await interaction.response.send_message("You're already in the queue!", ephemeral=True)
         else:
-            await interaction.response.send_message("You must link your Riot account to queue. Use `!linkriot Name#Tag` to link your account", ephemeral=True)
+            await interaction.response.send_message(
+                "You must link your Riot account to queue. Use `!linkriot Name#Tag` to link your account",
+                ephemeral=True)
 
     async def leave_queue_callback(interaction: discord.Interaction):
         # Remove the user from the queue
@@ -277,6 +284,7 @@ def create_signup_view():
 
     return view
 
+
 # refresh the signup message every minute
 async def refresh_signup_message(ctx):
     global signup_message, signup_active, signup_view
@@ -295,12 +303,14 @@ async def refresh_signup_message(ctx):
     except asyncio.CancelledError:
         pass
 
+
 # Function to cancel the signup refresh
 def cancel_signup_task():
     global signup_refresh_task
     if signup_refresh_task:
         signup_refresh_task.cancel()
         signup_refresh_task = None
+
 
 async def vote_map(ctx):
     global queue, selected_map_name, team1, team2
@@ -439,6 +449,7 @@ async def vote_map(ctx):
 
     await ctx.send("Start the match, then use !report to finalize results")
 
+
 # Load data from mongodb
 def load_mmr_data():
     global player_mmr
@@ -457,6 +468,7 @@ def load_mmr_data():
             'average_combat_score': doc.get('average_combat_score', 0),
             'kill_death_ratio': doc.get('kill_death_ratio', 0)
         }
+
 
 # Save mmr
 def save_mmr_data():
@@ -487,11 +499,13 @@ def save_mmr_data():
             upsert=True
         )
 
+
 load_mmr_data()
+
 
 # adjust MMR and track wins/losses
 def adjust_mmr(winning_team, losing_team):
-    MMR_CONSTANT = 32  
+    MMR_CONSTANT = 32
     global player_mmr
 
     # Calculate average MMR for team1 and 2
@@ -520,6 +534,7 @@ def adjust_mmr(winning_team, losing_team):
 
     save_mmr_data()
 
+
 def balanced_teams(players):
     global match_ongoing
     players.sort(key=lambda p: player_mmr[p["id"]]["mmr"], reverse=True)
@@ -536,6 +551,7 @@ def balanced_teams(players):
             team2_mmr += player_mmr[player["id"]]["mmr"]
 
     return team1, team2
+
 
 async def captains_mode(ctx):
     global team1, team2, match_ongoing, selected_captain1, selected_captain2, signup_active
@@ -584,18 +600,44 @@ async def captains_mode(ctx):
 
     await captains_pick_next(ctx, remaining_players, captains, pick_order, pick_count)
 
-async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_count):
-    global team1, team2, signup_active, match_ongoing, selected_captain1, selected_captain2, queue, votes, selected_map_name
 
+remaining_players_message = None
+drafting_message = None
+captain_pick_message = None
+
+
+async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_count):
+    global team1, team2, signup_active, match_ongoing, selected_captain1, selected_captain2, queue, votes, selected_map_name, remaining_players_message, drafting_message, captain_pick_message
+
+    captain1 = captains[0]
+    captain2 = captains[1]
+
+    # Finalize teams
     if not remaining_players:
-        # Finalize teams
-        captain1 = captains[0]
-        captain2 = captains[1]
-        await ctx.send(
-            f"**Final Teams:**\n"
-            f"Attackers (Captain: {captain1['name']}): {', '.join([p['name'] for p in team1])}\n"
-            f"Defenders (Captain: {captain2['name']}): {', '.join([p['name'] for p in team2])}"
+        # Delete the drafting messages
+        await remaining_players_message.delete()
+        await drafting_message.delete()
+        await captain_pick_message.delete()
+
+        # Create embed for the final teams
+        final_teams_embed = discord.Embed(
+            title="Final Teams",
+            color=discord.Color.green()
         )
+        final_teams_embed.add_field(
+            name=f"Attackers (Captain: {captain1})",
+            value='\n'.join([p['name'] for p in team1]),
+            inline=False,
+        )
+        final_teams_embed.add_field(
+            name=f"Defenders (Captain: {captain2})",
+            value='\n'.join([p['name'] for p in team2]),
+            inline=False,
+        )
+
+        # Display final teams
+        await ctx.send(embed=final_teams_embed)
+
         signup_active = False
         match_ongoing = True
 
@@ -603,13 +645,16 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         selected_captain1 = None
         selected_captain2 = None
 
+        # Reset drafting messages
+        remaining_players_message = None
+        drafting_message = None
+        captain_pick_message = None
+
         await vote_map(ctx)
         return
 
     current_captain_id = pick_order[pick_count]
     current_captain = next((c for c in captains if c["id"] == current_captain_id), None)
-    await ctx.send(f"Remaining players: {', '.join([p['name'] for p in remaining_players])}")
-    await ctx.send(f"{current_captain['name']}, it's your turn to pick!")
 
     # Select Menu
     options = [
@@ -630,7 +675,8 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         selected_player_id = int(select.values[0])
         player_dict = next((p for p in remaining_players if p["id"] == selected_player_id), None)
         if not player_dict:
-            await interaction.response.send_message("Player not available. Please select a valid player.", ephemeral=True)
+            await interaction.response.send_message("Player not available. Please select a valid player.",
+                                                    ephemeral=True)
             return
 
         # Add the player to the right team
@@ -641,8 +687,9 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
 
         remaining_players.remove(player_dict)
         select.disabled = True
-        await interaction.response.edit_message(content=f"{current_captain['name']} picked {player_dict['name']}.", view=None)
-        await interaction.followup.send(f"You picked {player_dict['name']}.", ephemeral=True)
+
+        # Let discord know the action was processed
+        await interaction.response.defer()
 
         # Proceed to the next pick
         await captains_pick_next(ctx, remaining_players, captains, pick_order, pick_count + 1)
@@ -652,7 +699,40 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
     view = View()
     view.add_item(select)
 
-    message = await ctx.send(f"{current_captain['name']}, please pick a player:", view=view)
+    # Construct the messages for the draft
+    # Embed to display the remaining players in the draft
+    remaining_players_embed = discord.Embed(
+        title="Remaining Players",
+        description='\n'.join([p['name'] for p in remaining_players]),
+        color=discord.Color.blue(),
+    )
+    # Embed to display the currently drafted players
+    drafting_embed = discord.Embed(
+        title=f"Current Draft",
+        color=discord.Color.green()
+    )
+    drafting_embed.add_field(
+        name=f"**{captain1}'s Team**",
+        value='\n'.join([p['name'] for p in team1]),
+        inline=False,
+    )
+    drafting_embed.add_field(
+        name=f"**{captain2}'s Team**",
+        value='\n'.join([p['name'] for p in team2]),
+        inline=False,
+    )
+    # Send message for the first time
+    message = f"**{current_captain['name']}**, please pick a player:"
+
+    # Logic to edit message instead of sending a new one
+    if captain_pick_message is None:
+        remaining_players_message = await ctx.send(embed=remaining_players_embed)
+        drafting_message = await ctx.send(embed=drafting_embed)
+        captain_pick_message = await ctx.send(message, view=view)
+    else:
+        await remaining_players_message.edit(embed=remaining_players_embed)
+        await drafting_message.edit(embed=drafting_embed)
+        await captain_pick_message.edit(content=message, view=view)
 
     # Wait for the captain to make a selection or time out
     try:
@@ -670,6 +750,9 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         selected_captain1 = None
         selected_captain2 = None
         selected_map_name = None
+        remaining_players_message = None
+        drafting_message = None
+        captain_pick_message = None
         votes = {"Balanced Teams": 0, "Captains": 0}
 
         # Clear teams and queue
@@ -684,10 +767,11 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         await signup(ctx)
         return
 
+
 async def start_voting(channel):
     global votes, dummy, match_ongoing
-    votes = {"Balanced Teams": 0, "Captains": 0} 
-    voters = set() 
+    votes = {"Balanced Teams": 0, "Captains": 0}
+    voters = set()
 
     # Create voting buttons with labels
     balanced_button = Button(label="Balanced Teams (0)", style=discord.ButtonStyle.green)
@@ -705,8 +789,8 @@ async def start_voting(channel):
 
         votes["Balanced Teams"] += 1
         voters.add(interaction.user.id)
-        balanced_button.label = f"Balanced Teams ({votes['Balanced Teams']})" 
-        await interaction.message.edit(view=voting_view) 
+        balanced_button.label = f"Balanced Teams ({votes['Balanced Teams']})"
+        await interaction.message.edit(view=voting_view)
         await interaction.response.send_message(
             f"Voted for Balanced Teams! Current votes: {votes['Balanced Teams']}",
             ephemeral=True,
@@ -721,9 +805,9 @@ async def start_voting(channel):
             return
 
         votes["Captains"] += 1
-        voters.add(interaction.user.id)  
-        captains_button.label = f"Captains ({votes['Captains']})"  
-        await interaction.message.edit(view=voting_view) 
+        voters.add(interaction.user.id)
+        captains_button.label = f"Captains ({votes['Captains']})"
+        await interaction.message.edit(view=voting_view)
         await interaction.response.send_message(
             f"Voted for Captains! Current votes: {votes['Captains']}",
             ephemeral=True,
@@ -755,21 +839,24 @@ async def start_voting(channel):
             decision = "Balanced Teams" if random.choice([True, False]) else "Captains"
             await channel.send(f"It's a tie! Flipping a coin... {decision} wins!")
             if decision == "Balanced Teams":
-                await balanced_teams_logic(channel) 
+                await balanced_teams_logic(channel)
             else:
-                await captains_mode(channel) 
+                await captains_mode(channel)
     match_ongoing = True
     dummy = False
+
 
 async def balanced_teams_logic(ctx):
     global team1, team2, match_ongoing
     team1, team2 = balanced_teams(queue)
-    await ctx.send(f"**Balanced Teams:**\nAttackers: {', '.join([p['name'] for p in team1])}\nDefenders: {', '.join([p['name'] for p in team2])}")
-    signup_active = False  
+    await ctx.send(
+        f"**Balanced Teams:**\nAttackers: {', '.join([p['name'] for p in team1])}\nDefenders: {', '.join([p['name'] for p in team2])}")
+    signup_active = False
     match_ongoing = True
 
     # vote for maps next
     await vote_map(ctx)
+
 
 # Signup Command
 @bot.command()
@@ -790,6 +877,7 @@ async def signup(ctx):
 
     # Refresh the signup message
     signup_refresh_task = asyncio.create_task(refresh_signup_message(ctx))
+
 
 # Command to join queue without pressing the button
 @bot.command()
@@ -822,7 +910,9 @@ async def join(ctx):
         else:
             await ctx.send("You're already in the queue!")
     else:
-        await ctx.send("You must link your Riot account to join the queue. Use `!linkriot Name#Tag` to link your account.")
+        await ctx.send(
+            "You must link your Riot account to join the queue. Use `!linkriot Name#Tag` to link your account.")
+
 
 # Leave queue command without pressing button
 @bot.command()
@@ -840,6 +930,7 @@ async def leave(ctx):
         await ctx.send(f"{ctx.author.name} removed from the queue! Current queue count: {len(queue)}")
     else:
         await ctx.send("You're not in the queue.")
+
 
 @bot.command()
 async def status(ctx):
@@ -866,6 +957,7 @@ async def status(ctx):
 
     queue_status = ", ".join(riot_names)
     await ctx.send(f"Current queue ({len(queue)}/10): {queue_status}")
+
 
 # Report the match
 @bot.command()
@@ -905,7 +997,7 @@ async def report(ctx):
         team1 = []
         team2 = []
         for i in range(1, 11):
-            player_id = i  
+            player_id = i
             player_name = f"TestPlayer{i}"
 
             users.update_one(
@@ -946,7 +1038,7 @@ async def report(ctx):
             await ctx.send("Could not retrieve match data.")
             return
 
-        match = match_data["data"][0] 
+        match = match_data["data"][0]
 
     match_players = match.get("players", [])
     if not match_players:
@@ -1037,7 +1129,8 @@ async def report(ctx):
         update_stats(player_stats)
 
     await ctx.send("Player stats updated!")
-    match_ongoing = False 
+    match_ongoing = False
+
 
 # Update stats
 def update_stats(player_stats):
@@ -1098,7 +1191,7 @@ def update_stats(player_stats):
         kill_death_ratio = kills / deaths if deaths > 0 else kills
 
         player_mmr[discord_id] = {
-            'mmr': 1000,  
+            'mmr': 1000,
             'wins': 0,
             'losses': 0,
             'total_combat_score': total_combat_score,
@@ -1131,7 +1224,7 @@ def update_stats(player_stats):
 # Allow players to check their MMR and stats
 @bot.command()
 async def stats(ctx):
-    player_id = ctx.author.id  
+    player_id = ctx.author.id
     if player_id in player_mmr:
         stats_data = player_mmr[player_id]
         mmr_value = stats_data["mmr"]
@@ -1164,10 +1257,11 @@ async def stats(ctx):
     else:
         await ctx.send("You do not have an MMR yet. Participate in matches to earn one!")
 
+
 # Display leaderboard
 @bot.command()
 async def leaderboard(ctx):
-    if not player_mmr: 
+    if not player_mmr:
         await ctx.send("No MMR data available yet.")
         return
 
@@ -1201,6 +1295,7 @@ async def leaderboard(ctx):
     leaderboard_text = "\n".join(leaderboard_entries)
     await ctx.send(f"**MMR Leaderboard (Top 10 Players):**\n{leaderboard_text}")
 
+
 # Simulate a queue
 @bot.command()
 async def simulate_queue(ctx):
@@ -1209,42 +1304,43 @@ async def simulate_queue(ctx):
 
     if signup_active:
         await ctx.send("A signup is already in progress. Resetting queue for simulation.")
-        queue.clear()  
+        queue.clear()
 
-    # Clear teams
+        # Clear teams
     team1.clear()
     team2.clear()
 
     # Add 10 dummy players to the queue
-    queue = [{"id": i, "name": f"Player{i}"} for i in range(1, 11)] 
+    queue = [{"id": i, "name": f"Player{i}"} for i in range(1, 11)]
 
     # Assign default MMR to the dummy players and map IDs to names
     for player in queue:
         if player["id"] not in player_mmr:
-            player_mmr[player["id"]] = {"mmr": 1000, "wins": 0, "losses": 0}  
-        player_names[player["id"]] = player["name"]  
+            player_mmr[player["id"]] = {"mmr": 1000, "wins": 0, "losses": 0}
+        player_names[player["id"]] = player["name"]
 
-    save_mmr_data()  
+    save_mmr_data()
 
-    signup_active = True  
+    signup_active = True
     await ctx.send(f"Simulated full queue: {', '.join([player['name'] for player in queue])}")
 
     # Proceed to the voting stage
     await ctx.send("The queue is now full, proceeding to the voting stage.")
     await start_voting(ctx.channel)
 
+
 # Link Riot Account
 @bot.command()
 async def linkriot(ctx, *, riot_input):
     try:
-        riot_name, riot_tag = riot_input.rsplit("#", 1) 
+        riot_name, riot_tag = riot_input.rsplit("#", 1)
     except ValueError:
         await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
         return
 
     data = requests.get(f"https://api.henrikdev.xyz/valorant/v1/account/{riot_name}/{riot_tag}", headers=headers)
     user = data.json()
-    
+
     if "data" not in user:
         await ctx.send("Could not find your Riot account. Please check the name and tag.")
     else:
@@ -1259,6 +1355,7 @@ async def linkriot(ctx, *, riot_input):
             upsert=True
         )
         await ctx.send(f"Successfully linked {riot_name}#{riot_tag} to your Discord account.")
+
 
 # Set captain1
 @bot.command()
@@ -1291,7 +1388,8 @@ async def setcaptain1(ctx, *, riot_name_tag):
 
     selected_captain1 = player_in_queue
     await ctx.send(f"Captain 1 set to {riot_name}#{riot_tag}")
-    
+
+
 # Set captain2
 @bot.command()
 @commands.has_role("blood")
@@ -1324,6 +1422,7 @@ async def setcaptain2(ctx, *, riot_name_tag):
     selected_captain2 = player_in_queue
     await ctx.send(f"Captain 2 set to {riot_name}#{riot_tag}")
 
+
 # Stop the signup process, only owner can do this
 @bot.command()
 @commands.has_role("Owner")
@@ -1341,20 +1440,23 @@ async def help(ctx):
         description="Duck's 10 Mans Commands:",
         color=discord.Color.blue()
     )
-    
+
     help_embed.add_field(name="!signup", value="Start a signup session for matches.", inline=False)
     help_embed.add_field(name="!report", value="Report the most recent match and update MMR.", inline=False)
     help_embed.add_field(name="!stats", value="Check your MMR and match stats.", inline=False)
     help_embed.add_field(name="!leaderboard", value="View the MMR leaderboard.", inline=False)
     help_embed.add_field(name="!linkriot", value="Link or update your Riot account using `Name#Tag`.", inline=False)
     help_embed.add_field(name="!join", value="Joins the queue.", inline=False)
-    help_embed.add_field(name="!setcaptain1", value="Set Captain 1 using `Name#Tag` (only accessible by admins)", inline=False)
-    help_embed.add_field(name="!setcaptain2", value="Set Captain 2 using `Name#Tag` (only accessible by admins)", inline=False)
+    help_embed.add_field(name="!setcaptain1", value="Set Captain 1 using `Name#Tag` (only accessible by admins)",
+                         inline=False)
+    help_embed.add_field(name="!setcaptain2", value="Set Captain 2 using `Name#Tag` (only accessible by admins)",
+                         inline=False)
     help_embed.add_field(name="!leave", value="Leaves the queue", inline=False)
     help_embed.add_field(name="!help", value="Display this help menu.", inline=False)
-    
+
     # Send the embedded message
     await ctx.send(embed=help_embed)
+
 
 # Run the bot
 bot.run(bot_token)
