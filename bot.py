@@ -588,17 +588,74 @@ async def captains_mode(ctx):
     await captains_pick_next(ctx, remaining_players, captains, pick_order, pick_count)
 
 async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_count):
-    global team1, team2, signup_active, match_ongoing, selected_captain1, selected_captain2, queue, votes, selected_map_name
+    global team1, team2, signup_active, match_ongoing, selected_captain1, selected_captain2, queue, votes, selected_map_name, remaining_players_message, drafting_message, captain_pick_message
 
+    captain1 = captains[0]
+    captain2 = captains[1]
+
+    # Finalize teams
     if not remaining_players:
-        # Finalize teams
-        captain1 = captains[0]
-        captain2 = captains[1]
-        await ctx.send(
-            f"**Final Teams:**\n"
-            f"Attackers (Captain: {captain1['name']}): {', '.join([p['name'] for p in team1])}\n"
-            f"Defenders (Captain: {captain2['name']}): {', '.join([p['name'] for p in team2])}"
+        # Delete the drafting messages
+        if remaining_players_message:
+            await remaining_players_message.delete()
+        if drafting_message:
+            await drafting_message.delete()
+        if captain_pick_message:
+            await captain_pick_message.delete()
+
+        # Get Riot names for captains
+        captain1_data = users.find_one({"discord_id": str(captain1["id"])})
+        if captain1_data:
+            captain1_name = f"{captain1_data.get('name', 'Unknown')}#{captain1_data.get('tag', 'Unknown')}"
+        else:
+            captain1_name = captain1["name"]
+
+        captain2_data = users.find_one({"discord_id": str(captain2["id"])})
+        if captain2_data:
+            captain2_name = f"{captain2_data.get('name', 'Unknown')}#{captain2_data.get('tag', 'Unknown')}"
+        else:
+            captain2_name = captain2["name"]
+
+        # Get Riot names for team members
+        team1_names = []
+        for p in team1:
+            user_data = users.find_one({"discord_id": str(p["id"])})
+            if user_data:
+                riot_name = user_data.get("name", "Unknown")
+                riot_tag = user_data.get("tag", "Unknown")
+                team1_names.append(f"{riot_name}#{riot_tag}")
+            else:
+                team1_names.append(p["name"])
+
+        team2_names = []
+        for p in team2:
+            user_data = users.find_one({"discord_id": str(p["id"])})
+            if user_data:
+                riot_name = user_data.get("name", "Unknown")
+                riot_tag = user_data.get("tag", "Unknown")
+                team2_names.append(f"{riot_name}#{riot_tag}")
+            else:
+                team2_names.append(p["name"])
+
+        # Create embed for the final teams
+        final_teams_embed = discord.Embed(
+            title="Final Teams",
+            color=discord.Color.green()
         )
+        final_teams_embed.add_field(
+            name=f"Attackers (Captain: {captain1_name})",
+            value='\n'.join(team1_names),
+            inline=False,
+        )
+        final_teams_embed.add_field(
+            name=f"Defenders (Captain: {captain2_name})",
+            value='\n'.join(team2_names),
+            inline=False,
+        )
+
+        # Display final teams
+        await ctx.send(embed=final_teams_embed)
+
         signup_active = False
         match_ongoing = True
 
@@ -606,19 +663,35 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         selected_captain1 = None
         selected_captain2 = None
 
+        # Reset drafting messages
+        remaining_players_message = None
+        drafting_message = None
+        captain_pick_message = None
+
         await vote_map(ctx)
         return
 
     current_captain_id = pick_order[pick_count]
     current_captain = next((c for c in captains if c["id"] == current_captain_id), None)
-    await ctx.send(f"Remaining players: {', '.join([p['name'] for p in remaining_players])}")
-    await ctx.send(f"{current_captain['name']}, it's your turn to pick!")
+
+    # Get current captain's Riot name
+    current_captain_data = users.find_one({"discord_id": str(current_captain_id)})
+    if current_captain_data:
+        current_captain_name = f"{current_captain_data.get('name', 'Unknown')}#{current_captain_data.get('tag', 'Unknown')}"
+    else:
+        current_captain_name = current_captain["name"]
 
     # Select Menu
-    options = [
-        discord.SelectOption(label=p['name'], value=str(p['id']))
-        for p in remaining_players
-    ]
+    options = []
+    for p in remaining_players:
+        user_data = users.find_one({"discord_id": str(p["id"])})
+        if user_data:
+            riot_name = user_data.get("name", "Unknown")
+            riot_tag = user_data.get("tag", "Unknown")
+            label = f"{riot_name}#{riot_tag}"
+        else:
+            label = p["name"]
+        options.append(discord.SelectOption(label=label, value=str(p["id"])))
 
     select = Select(
         placeholder="Select a player to pick",
@@ -633,7 +706,8 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         selected_player_id = int(select.values[0])
         player_dict = next((p for p in remaining_players if p["id"] == selected_player_id), None)
         if not player_dict:
-            await interaction.response.send_message("Player not available. Please select a valid player.", ephemeral=True)
+            await interaction.response.send_message("Player not available. Please select a valid player.",
+                                                    ephemeral=True)
             return
 
         # Add the player to the right team
@@ -644,8 +718,9 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
 
         remaining_players.remove(player_dict)
         select.disabled = True
-        await interaction.response.edit_message(content=f"{current_captain['name']} picked {player_dict['name']}.", view=None)
-        await interaction.followup.send(f"You picked {player_dict['name']}.", ephemeral=True)
+
+        # Let discord know the action was processed
+        await interaction.response.defer()
 
         # Proceed to the next pick
         await captains_pick_next(ctx, remaining_players, captains, pick_order, pick_count + 1)
@@ -655,7 +730,77 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
     view = View()
     view.add_item(select)
 
-    message = await ctx.send(f"{current_captain['name']}, please pick a player:", view=view)
+    # Construct the messages for the draft
+    remaining_players_names = []
+    for p in remaining_players:
+        user_data = users.find_one({"discord_id": str(p["id"])})
+        if user_data:
+            riot_name = user_data.get("name", "Unknown")
+            riot_tag = user_data.get("tag", "Unknown")
+            name = f"{riot_name}#{riot_tag}"
+        else:
+            name = p["name"]
+        remaining_players_names.append(name)
+
+    remaining_players_embed = discord.Embed(
+        title="Remaining Players",
+        description='\n'.join(remaining_players_names),
+        color=discord.Color.blue(),
+    )
+
+    # Embed to display the currently drafted players
+    # For team1
+    team1_names = []
+    for p in team1:
+        user_data = users.find_one({"discord_id": str(p["id"])})
+        if user_data:
+            riot_name = user_data.get("name", "Unknown")
+            riot_tag = user_data.get("tag", "Unknown")
+            name = f"{riot_name}#{riot_tag}"
+        else:
+            name = p["name"]
+        team1_names.append(name)
+
+    # For team2
+    team2_names = []
+    for p in team2:
+        user_data = users.find_one({"discord_id": str(p["id"])})
+        if user_data:
+            riot_name = user_data.get("name", "Unknown")
+            riot_tag = user_data.get("tag", "Unknown")
+            name = f"{riot_name}#{riot_tag}"
+        else:
+            name = p["name"]
+        team2_names.append(name)
+
+    # Get captains' Riot names (already obtained earlier)
+    drafting_embed = discord.Embed(
+        title="Current Draft",
+        color=discord.Color.green()
+    )
+    drafting_embed.add_field(
+        name=f"**{captain1_name}'s Team**",
+        value='\n'.join(team1_names) if team1_names else "No players yet",
+        inline=False,
+    )
+    drafting_embed.add_field(
+        name=f"**{captain2_name}'s Team**",
+        value='\n'.join(team2_names) if team2_names else "No players yet",
+        inline=False,
+    )
+
+    # Send message for the first time
+    message = f"**{current_captain_name}**, please pick a player:"
+
+    # Logic to edit message instead of sending a new one
+    if captain_pick_message is None:
+        remaining_players_message = await ctx.send(embed=remaining_players_embed)
+        drafting_message = await ctx.send(embed=drafting_embed)
+        captain_pick_message = await ctx.send(message, view=view)
+    else:
+        await remaining_players_message.edit(embed=remaining_players_embed)
+        await drafting_message.edit(embed=drafting_embed)
+        await captain_pick_message.edit(content=message, view=view)
 
     # Wait for the captain to make a selection or time out
     try:
@@ -665,7 +810,7 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
             timeout=60,
         )
     except asyncio.TimeoutError:
-        await ctx.send(f"{current_captain['name']} took too long to pick. Drafting canceled.")
+        await ctx.send(f"{current_captain_name} took too long to pick. Drafting canceled.")
 
         # Reset variables
         signup_active = False
@@ -673,6 +818,9 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         selected_captain1 = None
         selected_captain2 = None
         selected_map_name = None
+        remaining_players_message = None
+        drafting_message = None
+        captain_pick_message = None
         votes = {"Balanced Teams": 0, "Captains": 0}
 
         # Clear teams and queue
