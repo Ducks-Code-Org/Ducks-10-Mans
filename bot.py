@@ -12,113 +12,113 @@ import os
 mock_match_data = {
     "players": [
         {
-            "name": "TestPlayer1",
-            "tag": "1234",
+            "name": "WaffIes",
+            "tag": "NA1",
             "team_id": "Red",
             "stats": {
-                "score": 250,
-                "kills": 15,
-                "deaths": 10,
-                "assists": 5
+                "score": 7410,
+                "kills": 25,
+                "deaths": 21,
+                "assists": 8
             }
         },
         {
-            "name": "TestPlayer2",
-            "tag": "1234",
+            "name": "mintychewinggum",
+            "tag": "8056",
             "team_id": "Red",
             "stats": {
-                "score": 250,
-                "kills": 15,
-                "deaths": 10,
-                "assists": 5
+                "score": 6656,
+                "kills": 23,
+                "deaths": 17,
+                "assists": 11
             }
         },
         {
-            "name": "TestPlayer3",
-            "tag": "1234",
+            "name": "MetALz",
+            "tag": "AZoN",
             "team_id": "Red",
             "stats": {
-                "score": 250,
-                "kills": 15,
-                "deaths": 10,
-                "assists": 5
+                "score": 6032,
+                "kills": 21,
+                "deaths": 16,
+                "assists": 10
             }
         },
         {
-            "name": "TestPlayer4",
-            "tag": "1234",
+            "name": "dShocc1",
+            "tag": "LNEUP",
             "team_id": "Red",
             "stats": {
-                "score": 250,
-                "kills": 15,
-                "deaths": 10,
-                "assists": 5
+                "score": 4160,
+                "kills": 14,
+                "deaths": 17,
+                "assists": 12
             }
         },
         {
-            "name": "TestPlayer5",
-            "tag": "1234",
+            "name": "Pyr",
+            "tag": "10219",
             "team_id": "Red",
             "stats": {
-                "score": 250,
-                "kills": 15,
-                "deaths": 10,
+                "score": 3796,
+                "kills": 13,
+                "deaths": 16,
+                "assists": 7
+            }
+        },
+        {
+            "name": "Duck",
+            "tag": "MST",
+            "team_id": "Blue",
+            "stats": {
+                "score": 7488,
+                "kills": 27,
+                "deaths": 18,
+                "assists": 2
+            }
+        },
+        {
+            "name": "TheAlphaEw0k",
+            "tag": "MST",
+            "team_id": "Blue",
+            "stats": {
+                "score": 5798,
+                "kills": 19,
+                "deaths": 19,
                 "assists": 5
             }
         },
         {
-            "name": "TestPlayer6",
-            "tag": "1234",
+            "name": "twentytwo",
+            "tag": "4249",
             "team_id": "Blue",
             "stats": {
-                "score": 250,
+                "score": 4472,
                 "kills": 15,
-                "deaths": 10,
+                "deaths": 25,
+                "assists": 4
+            }
+        },
+        {
+            "name": "Rut",
+            "tag": "rucky",
+            "team_id": "Blue",
+            "stats": {
+                "score": 4238,
+                "kills": 14,
+                "deaths": 18,
                 "assists": 5
             }
         },
         {
-            "name": "TestPlayer7",
-            "tag": "1234",
+            "name": "Luh4r",
+            "tag": "i0n",
             "team_id": "Blue",
             "stats": {
-                "score": 250,
-                "kills": 15,
-                "deaths": 10,
-                "assists": 5
-            }
-        },
-        {
-            "name": "TestPlayer8",
-            "tag": "1234",
-            "team_id": "Blue",
-            "stats": {
-                "score": 250,
-                "kills": 15,
-                "deaths": 10,
-                "assists": 5
-            }
-        },
-        {
-            "name": "TestPlayer9",
-            "tag": "1234",
-            "team_id": "Blue",
-            "stats": {
-                "score": 250,
-                "kills": 15,
-                "deaths": 10,
-                "assists": 5
-            }
-        },
-        {
-            "name": "TestPlayer10",
-            "tag": "1234",
-            "team_id": "Blue",
-            "stats": {
-                "score": 250,
-                "kills": 15,
-                "deaths": 10,
-                "assists": 5
+                "score":3484,
+                "kills": 12,
+                "deaths": 16,
+                "assists": 12
             }
         },
     ],
@@ -133,7 +133,6 @@ mock_match_data = {
         }
     ]
 }
-
 
 class SignupView(discord.ui.View):
     def __init__(self):
@@ -156,8 +155,7 @@ class SignupView(discord.ui.View):
                 player_names[interaction.user.id] = interaction.user.name
 
                 self.sign_up_button.label = f"Sign Up ({len(queue)}/10)"
-                await interaction.response.edit_message(content="Click a button to manage your queue status!",
-                                                        view=self)
+                await interaction.response.edit_message(content="Click a button to manage your queue status!", view=self)
 
                 await interaction.followup.send(
                     f"{interaction.user.name} added to the queue! Current queue count: {len(queue)}",
@@ -186,7 +184,6 @@ class SignupView(discord.ui.View):
             ephemeral=True,
         )
 
-
 # MongoDB Connection
 uri = os.getenv("uri_key")
 client = MongoClient(uri, server_api=ServerApi('1'))
@@ -198,11 +195,11 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 # Global variables
 queue = []
-team1 = []
-team2 = []
-signup_active = False
-player_mmr = {}
-player_names = {}
+team1 = []  
+team2 = []  
+signup_active = False  
+player_mmr = {}  
+player_names = {}  
 votes = {"Balanced Teams": 0, "Captains": 0}
 match_ongoing = False
 dummy = False
@@ -214,11 +211,12 @@ selected_map_name = None
 selected_captain1 = None
 selected_captain2 = None
 signup_refresh_task = None
+match_not_reported = False
 
 # Initialize MongoDB Collections
-db = client["valorant"]
-users = db["users"]
-mmr_collection = db["mmr_data"]
+db = client["valorant"]  
+users = db["users"]       
+mmr_collection = db["mmr_data"]  
 
 # Initialize API
 api_key = os.getenv("api_key")
@@ -229,7 +227,6 @@ bot_token = os.getenv("bot_token")
 
 official_maps = ["Haven", "Sunset", "Ascent", "Abyss", "Pearl", "Bind", "Split"]
 all_maps = ["Bind", "Haven", "Split", "Ascent", "Icebox", "Breeze", "Fracture", "Pearl", "Lotus", "Sunset", "Abyss"]
-
 
 def create_signup_view():
     sign_up_button = Button(label=f"Sign Up ({len(queue)}/10)", style=discord.ButtonStyle.green)
@@ -245,8 +242,7 @@ def create_signup_view():
                 player_names[interaction.user.id] = interaction.user.name
 
                 sign_up_button.label = f"Sign Up ({len(queue)}/10)"
-                await interaction.response.edit_message(content="Click a button to manage your queue status!",
-                                                        view=view)
+                await interaction.response.edit_message(content="Click a button to manage your queue status!", view=view)
 
                 await interaction.followup.send(
                     f"{interaction.user.name} added to the queue! Current queue count: {len(queue)}",
@@ -260,9 +256,7 @@ def create_signup_view():
             else:
                 await interaction.response.send_message("You're already in the queue!", ephemeral=True)
         else:
-            await interaction.response.send_message(
-                "You must link your Riot account to queue. Use `!linkriot Name#Tag` to link your account",
-                ephemeral=True)
+            await interaction.response.send_message("You must link your Riot account to queue. Use `!linkriot Name#Tag` to link your account", ephemeral=True)
 
     async def leave_queue_callback(interaction: discord.Interaction):
         # Remove the user from the queue
@@ -284,7 +278,6 @@ def create_signup_view():
 
     return view
 
-
 # refresh the signup message every minute
 async def refresh_signup_message(ctx):
     global signup_message, signup_active, signup_view
@@ -303,14 +296,12 @@ async def refresh_signup_message(ctx):
     except asyncio.CancelledError:
         pass
 
-
 # Function to cancel the signup refresh
 def cancel_signup_task():
     global signup_refresh_task
     if signup_refresh_task:
         signup_refresh_task.cancel()
         signup_refresh_task = None
-
 
 async def vote_map(ctx):
     global queue, selected_map_name, team1, team2
@@ -358,7 +349,7 @@ async def vote_map(ctx):
     map_pool_view.add_item(all_maps_button)
 
     await ctx.send("Vote for the map pool:", view=map_pool_view)
-    await asyncio.sleep(10)
+    await asyncio.sleep(25)
 
     if map_pool_votes["Competitive Maps"] >= map_pool_votes["All Maps"]:
         selected_map_pool = official_maps
@@ -399,7 +390,7 @@ async def vote_map(ctx):
         map_view.add_item(button)
 
     await ctx.send("Vote for the map to play:", view=map_view)
-    await asyncio.sleep(10)
+    await asyncio.sleep(25)
 
     winning_map = max(map_votes, key=map_votes.get)
     selected_map_name = winning_map
@@ -449,7 +440,6 @@ async def vote_map(ctx):
 
     await ctx.send("Start the match, then use !report to finalize results")
 
-
 # Load data from mongodb
 def load_mmr_data():
     global player_mmr
@@ -465,10 +455,10 @@ def load_mmr_data():
             'total_kills': doc.get('total_kills', 0),
             'total_deaths': doc.get('total_deaths', 0),
             'matches_played': doc.get('matches_played', 0),
+            'total_rounds_played': doc.get('total_rounds_played', 0),
             'average_combat_score': doc.get('average_combat_score', 0),
             'kill_death_ratio': doc.get('kill_death_ratio', 0)
         }
-
 
 # Save mmr
 def save_mmr_data():
@@ -493,19 +483,18 @@ def save_mmr_data():
                 'total_kills': stats.get('total_kills', 0),
                 'total_deaths': stats.get('total_deaths', 0),
                 'matches_played': stats.get('matches_played', 0),
+                'total_rounds_played': stats.get('total_rounds_played', 0),
                 'average_combat_score': stats.get('average_combat_score', 0),
                 'kill_death_ratio': stats.get('kill_death_ratio', 0)
             }},
             upsert=True
         )
 
-
 load_mmr_data()
-
 
 # adjust MMR and track wins/losses
 def adjust_mmr(winning_team, losing_team):
-    MMR_CONSTANT = 32
+    MMR_CONSTANT = 32  
     global player_mmr
 
     # Calculate average MMR for team1 and 2
@@ -534,7 +523,6 @@ def adjust_mmr(winning_team, losing_team):
 
     save_mmr_data()
 
-
 def balanced_teams(players):
     global match_ongoing
     players.sort(key=lambda p: player_mmr[p["id"]]["mmr"], reverse=True)
@@ -551,7 +539,6 @@ def balanced_teams(players):
             team2_mmr += player_mmr[player["id"]]["mmr"]
 
     return team1, team2
-
 
 async def captains_mode(ctx):
     global team1, team2, match_ongoing, selected_captain1, selected_captain2, signup_active
@@ -573,23 +560,10 @@ async def captains_mode(ctx):
 
     captain1, captain2 = captains[:2]
 
-    # Get Riot names for captains
-    captain1_data = users.find_one({"discord_id": str(captain1["id"])})
-    if captain1_data:
-        captain1_name = f"{captain1_data.get('name', 'Unknown')}#{captain1_data.get('tag', 'Unknown')}"
-    else:
-        captain1_name = captain1["name"]
-
-    captain2_data = users.find_one({"discord_id": str(captain2["id"])})
-    if captain2_data:
-        captain2_name = f"{captain2_data.get('name', 'Unknown')}#{captain2_data.get('tag', 'Unknown')}"
-    else:
-        captain2_name = captain2["name"]
-
     await ctx.send(
         f"**Captains Mode Selected:**\n"
-        f"Captain 1: {captain1_name} (MMR: {player_mmr[captain1['id']]['mmr']})\n"
-        f"Captain 2: {captain2_name} (MMR: {player_mmr[captain2['id']]['mmr']})"
+        f"Captain 1: {captain1['name']} (MMR: {player_mmr[captain1['id']]['mmr']})\n"
+        f"Captain 2: {captain2['name']} (MMR: {player_mmr[captain2['id']]['mmr']})"
     )
 
     # Initialize teams with captains
@@ -613,81 +587,18 @@ async def captains_mode(ctx):
 
     await captains_pick_next(ctx, remaining_players, captains, pick_order, pick_count)
 
-
-remaining_players_message = None
-drafting_message = None
-captain_pick_message = None
-
-
 async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_count):
-    global team1, team2, signup_active, match_ongoing, selected_captain1, selected_captain2, queue, votes, selected_map_name, remaining_players_message, drafting_message, captain_pick_message
+    global team1, team2, signup_active, match_ongoing, selected_captain1, selected_captain2, queue, votes, selected_map_name
 
-    captain1 = captains[0]
-    captain2 = captains[1]
-
-    # Finalize teams
     if not remaining_players:
-        # Delete the drafting messages
-        if remaining_players_message:
-            await remaining_players_message.delete()
-        if drafting_message:
-            await drafting_message.delete()
-        if captain_pick_message:
-            await captain_pick_message.delete()
-
-        # Get Riot names for captains
-        captain1_data = users.find_one({"discord_id": str(captain1["id"])})
-        if captain1_data:
-            captain1_name = f"{captain1_data.get('name', 'Unknown')}#{captain1_data.get('tag', 'Unknown')}"
-        else:
-            captain1_name = captain1["name"]
-
-        captain2_data = users.find_one({"discord_id": str(captain2["id"])})
-        if captain2_data:
-            captain2_name = f"{captain2_data.get('name', 'Unknown')}#{captain2_data.get('tag', 'Unknown')}"
-        else:
-            captain2_name = captain2["name"]
-
-        # Get Riot names for team members
-        team1_names = []
-        for p in team1:
-            user_data = users.find_one({"discord_id": str(p["id"])})
-            if user_data:
-                riot_name = user_data.get("name", "Unknown")
-                riot_tag = user_data.get("tag", "Unknown")
-                team1_names.append(f"{riot_name}#{riot_tag}")
-            else:
-                team1_names.append(p["name"])
-
-        team2_names = []
-        for p in team2:
-            user_data = users.find_one({"discord_id": str(p["id"])})
-            if user_data:
-                riot_name = user_data.get("name", "Unknown")
-                riot_tag = user_data.get("tag", "Unknown")
-                team2_names.append(f"{riot_name}#{riot_tag}")
-            else:
-                team2_names.append(p["name"])
-
-        # Create embed for the final teams
-        final_teams_embed = discord.Embed(
-            title="Final Teams",
-            color=discord.Color.green()
+        # Finalize teams
+        captain1 = captains[0]
+        captain2 = captains[1]
+        await ctx.send(
+            f"**Final Teams:**\n"
+            f"Attackers (Captain: {captain1['name']}): {', '.join([p['name'] for p in team1])}\n"
+            f"Defenders (Captain: {captain2['name']}): {', '.join([p['name'] for p in team2])}"
         )
-        final_teams_embed.add_field(
-            name=f"Attackers (Captain: {captain1_name})",
-            value='\n'.join(team1_names),
-            inline=False,
-        )
-        final_teams_embed.add_field(
-            name=f"Defenders (Captain: {captain2_name})",
-            value='\n'.join(team2_names),
-            inline=False,
-        )
-
-        # Display final teams
-        await ctx.send(embed=final_teams_embed)
-
         signup_active = False
         match_ongoing = True
 
@@ -695,35 +606,19 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         selected_captain1 = None
         selected_captain2 = None
 
-        # Reset drafting messages
-        remaining_players_message = None
-        drafting_message = None
-        captain_pick_message = None
-
         await vote_map(ctx)
         return
 
     current_captain_id = pick_order[pick_count]
     current_captain = next((c for c in captains if c["id"] == current_captain_id), None)
-
-    # Get current captain's Riot name
-    current_captain_data = users.find_one({"discord_id": str(current_captain_id)})
-    if current_captain_data:
-        current_captain_name = f"{current_captain_data.get('name', 'Unknown')}#{current_captain_data.get('tag', 'Unknown')}"
-    else:
-        current_captain_name = current_captain["name"]
+    await ctx.send(f"Remaining players: {', '.join([p['name'] for p in remaining_players])}")
+    await ctx.send(f"{current_captain['name']}, it's your turn to pick!")
 
     # Select Menu
-    options = []
-    for p in remaining_players:
-        user_data = users.find_one({"discord_id": str(p["id"])})
-        if user_data:
-            riot_name = user_data.get("name", "Unknown")
-            riot_tag = user_data.get("tag", "Unknown")
-            label = f"{riot_name}#{riot_tag}"
-        else:
-            label = p["name"]
-        options.append(discord.SelectOption(label=label, value=str(p["id"])))
+    options = [
+        discord.SelectOption(label=p['name'], value=str(p['id']))
+        for p in remaining_players
+    ]
 
     select = Select(
         placeholder="Select a player to pick",
@@ -738,8 +633,7 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         selected_player_id = int(select.values[0])
         player_dict = next((p for p in remaining_players if p["id"] == selected_player_id), None)
         if not player_dict:
-            await interaction.response.send_message("Player not available. Please select a valid player.",
-                                                    ephemeral=True)
+            await interaction.response.send_message("Player not available. Please select a valid player.", ephemeral=True)
             return
 
         # Add the player to the right team
@@ -750,9 +644,8 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
 
         remaining_players.remove(player_dict)
         select.disabled = True
-
-        # Let discord know the action was processed
-        await interaction.response.defer()
+        await interaction.response.edit_message(content=f"{current_captain['name']} picked {player_dict['name']}.", view=None)
+        await interaction.followup.send(f"You picked {player_dict['name']}.", ephemeral=True)
 
         # Proceed to the next pick
         await captains_pick_next(ctx, remaining_players, captains, pick_order, pick_count + 1)
@@ -762,77 +655,7 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
     view = View()
     view.add_item(select)
 
-    # Construct the messages for the draft
-    remaining_players_names = []
-    for p in remaining_players:
-        user_data = users.find_one({"discord_id": str(p["id"])})
-        if user_data:
-            riot_name = user_data.get("name", "Unknown")
-            riot_tag = user_data.get("tag", "Unknown")
-            name = f"{riot_name}#{riot_tag}"
-        else:
-            name = p["name"]
-        remaining_players_names.append(name)
-
-    remaining_players_embed = discord.Embed(
-        title="Remaining Players",
-        description='\n'.join(remaining_players_names),
-        color=discord.Color.blue(),
-    )
-
-    # Embed to display the currently drafted players
-    # For team1
-    team1_names = []
-    for p in team1:
-        user_data = users.find_one({"discord_id": str(p["id"])})
-        if user_data:
-            riot_name = user_data.get("name", "Unknown")
-            riot_tag = user_data.get("tag", "Unknown")
-            name = f"{riot_name}#{riot_tag}"
-        else:
-            name = p["name"]
-        team1_names.append(name)
-
-    # For team2
-    team2_names = []
-    for p in team2:
-        user_data = users.find_one({"discord_id": str(p["id"])})
-        if user_data:
-            riot_name = user_data.get("name", "Unknown")
-            riot_tag = user_data.get("tag", "Unknown")
-            name = f"{riot_name}#{riot_tag}"
-        else:
-            name = p["name"]
-        team2_names.append(name)
-
-    # Get captains' Riot names (already obtained earlier)
-    drafting_embed = discord.Embed(
-        title="Current Draft",
-        color=discord.Color.green()
-    )
-    drafting_embed.add_field(
-        name=f"**{captain1_name}'s Team**",
-        value='\n'.join(team1_names) if team1_names else "No players yet",
-        inline=False,
-    )
-    drafting_embed.add_field(
-        name=f"**{captain2_name}'s Team**",
-        value='\n'.join(team2_names) if team2_names else "No players yet",
-        inline=False,
-    )
-
-    # Send message for the first time
-    message = f"**{current_captain_name}**, please pick a player:"
-
-    # Logic to edit message instead of sending a new one
-    if captain_pick_message is None:
-        remaining_players_message = await ctx.send(embed=remaining_players_embed)
-        drafting_message = await ctx.send(embed=drafting_embed)
-        captain_pick_message = await ctx.send(message, view=view)
-    else:
-        await remaining_players_message.edit(embed=remaining_players_embed)
-        await drafting_message.edit(embed=drafting_embed)
-        await captain_pick_message.edit(content=message, view=view)
+    message = await ctx.send(f"{current_captain['name']}, please pick a player:", view=view)
 
     # Wait for the captain to make a selection or time out
     try:
@@ -842,7 +665,7 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
             timeout=60,
         )
     except asyncio.TimeoutError:
-        await ctx.send(f"{current_captain_name} took too long to pick. Drafting canceled.")
+        await ctx.send(f"{current_captain['name']} took too long to pick. Drafting canceled.")
 
         # Reset variables
         signup_active = False
@@ -850,9 +673,6 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         selected_captain1 = None
         selected_captain2 = None
         selected_map_name = None
-        remaining_players_message = None
-        drafting_message = None
-        captain_pick_message = None
         votes = {"Balanced Teams": 0, "Captains": 0}
 
         # Clear teams and queue
@@ -867,11 +687,12 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         await signup(ctx)
         return
 
-
 async def start_voting(channel):
     global votes, dummy, match_ongoing
-    votes = {"Balanced Teams": 0, "Captains": 0}
-    voters = set()
+    votes = {"Balanced Teams": 0, "Captains": 0} 
+    voters = set() 
+
+    match_not_reported = True
 
     # Create voting buttons with labels
     balanced_button = Button(label="Balanced Teams (0)", style=discord.ButtonStyle.green)
@@ -889,8 +710,8 @@ async def start_voting(channel):
 
         votes["Balanced Teams"] += 1
         voters.add(interaction.user.id)
-        balanced_button.label = f"Balanced Teams ({votes['Balanced Teams']})"
-        await interaction.message.edit(view=voting_view)
+        balanced_button.label = f"Balanced Teams ({votes['Balanced Teams']})" 
+        await interaction.message.edit(view=voting_view) 
         await interaction.response.send_message(
             f"Voted for Balanced Teams! Current votes: {votes['Balanced Teams']}",
             ephemeral=True,
@@ -905,9 +726,9 @@ async def start_voting(channel):
             return
 
         votes["Captains"] += 1
-        voters.add(interaction.user.id)
-        captains_button.label = f"Captains ({votes['Captains']})"
-        await interaction.message.edit(view=voting_view)
+        voters.add(interaction.user.id)  
+        captains_button.label = f"Captains ({votes['Captains']})"  
+        await interaction.message.edit(view=voting_view) 
         await interaction.response.send_message(
             f"Voted for Captains! Current votes: {votes['Captains']}",
             ephemeral=True,
@@ -922,7 +743,7 @@ async def start_voting(channel):
 
     await channel.send("Vote for how teams will be decided:", view=voting_view)
 
-    await asyncio.sleep(15)
+    await asyncio.sleep(25)
 
     # Determine voting results
     if dummy == True:
@@ -939,33 +760,33 @@ async def start_voting(channel):
             decision = "Balanced Teams" if random.choice([True, False]) else "Captains"
             await channel.send(f"It's a tie! Flipping a coin... {decision} wins!")
             if decision == "Balanced Teams":
-                await balanced_teams_logic(channel)
+                await balanced_teams_logic(channel) 
             else:
-                await captains_mode(channel)
+                await captains_mode(channel) 
     match_ongoing = True
     dummy = False
-
 
 async def balanced_teams_logic(ctx):
     global team1, team2, match_ongoing
     team1, team2 = balanced_teams(queue)
-    await ctx.send(
-        f"**Balanced Teams:**\nAttackers: {', '.join([p['name'] for p in team1])}\nDefenders: {', '.join([p['name'] for p in team2])}")
-    signup_active = False
+    await ctx.send(f"**Balanced Teams:**\nAttackers: {', '.join([p['name'] for p in team1])}\nDefenders: {', '.join([p['name'] for p in team2])}")
+    signup_active = False  
     match_ongoing = True
 
     # vote for maps next
     await vote_map(ctx)
 
-
 # Signup Command
 @bot.command()
 async def signup(ctx):
-    global signup_active, team1, team2, signup_message, signup_refresh_task, signup_view
+    global signup_active, team1, team2, signup_message, signup_refresh_task, signup_view, match_not_reported
 
     if signup_active:
         await ctx.send("A signup is already in progress. Please wait for it to complete.")
         return
+    
+    if match_not_reported:
+        await ctx.send("Report the last match before starting another one (credits to dshocc for bug testing)")
 
     signup_active = True
     queue.clear()
@@ -977,7 +798,6 @@ async def signup(ctx):
 
     # Refresh the signup message
     signup_refresh_task = asyncio.create_task(refresh_signup_message(ctx))
-
 
 # Command to join queue without pressing the button
 @bot.command()
@@ -1010,9 +830,7 @@ async def join(ctx):
         else:
             await ctx.send("You're already in the queue!")
     else:
-        await ctx.send(
-            "You must link your Riot account to join the queue. Use `!linkriot Name#Tag` to link your account.")
-
+        await ctx.send("You must link your Riot account to join the queue. Use `!linkriot Name#Tag` to link your account.")
 
 # Leave queue command without pressing button
 @bot.command()
@@ -1030,7 +848,6 @@ async def leave(ctx):
         await ctx.send(f"{ctx.author.name} removed from the queue! Current queue count: {len(queue)}")
     else:
         await ctx.send("You're not in the queue.")
-
 
 @bot.command()
 async def status(ctx):
@@ -1058,11 +875,10 @@ async def status(ctx):
     queue_status = ", ".join(riot_names)
     await ctx.send(f"Current queue ({len(queue)}/10): {queue_status}")
 
-
 # Report the match
 @bot.command()
 async def report(ctx):
-    global match_ongoing, queue, team1, team2, selected_map_name
+    global match_ongoing, queue, team1, team2, selected_map_name, match_not_reported
 
     current_user = users.find_one({"discord_id": str(ctx.author.id)})
     if not current_user:
@@ -1077,12 +893,6 @@ async def report(ctx):
     url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{name}/{tag}"
     response = requests.get(url, headers=headers)
     match_data = response.json()
-
-    # Match data must contain the "data" or else it's an error code
-    if "data" not in match_data or not match_data["data"]:
-        await ctx.send("Could not retrieve match data.")
-        return
-
     match = match_data["data"][0]
     metadata = match.get("metadata", {})
     map_name = metadata.get("map", {}).get("name", "").lower()
@@ -1093,29 +903,36 @@ async def report(ctx):
         match = mock_match_data
         match_ongoing = True
 
+        # Reconstruct queue, team1, and team2 from mock_match_data
         queue = []
         team1 = []
         team2 = []
-        for i in range(1, 11):
-            player_id = i
-            player_name = f"TestPlayer{i}"
 
-            users.update_one(
-                {"discord_id": str(player_id)},
-                {"$set": {"name": player_name, "tag": "1234"}},
-                upsert=True
-            )
+        for player_data in match["players"]:
+            player_name = player_data["name"]
+            player_tag = player_data["tag"]
 
-            player = {"id": player_id, "name": player_name}
-            queue.append(player)
-            if i <= 5:
-                team1.append(player)
+            user = users.find_one({"name": player_name, "tag": player_tag})
+            if user:
+                discord_id = int(user["discord_id"])
+                player = {"id": discord_id, "name": player_name}
+
+                queue.append(player)
+
+                if player_data["team_id"] == "Red":
+                    team1.append(player)
+                else:
+                    team2.append(player)
+
+                if discord_id not in player_mmr:
+                    player_mmr[discord_id] = {"mmr": 1000, "wins": 0, "losses": 0}
+                player_names[discord_id] = player_name
             else:
-                team2.append(player)
+                await ctx.send(f"Player {player_name}#{player_tag} is not linked to any Discord account.")
+                return
 
-            if player_id not in player_mmr:
-                player_mmr[player_id] = {"mmr": 1000, "wins": 0, "losses": 0}
-            player_names[player_id] = player_name
+        # For mocking match data, set to amount of rounds played
+        total_rounds = 24
     else:
         if not match_ongoing:
             await ctx.send("No match is currently active, use `!signup` to start one")
@@ -1129,16 +946,20 @@ async def report(ctx):
             await ctx.send("Map doesn't match your most recent match. Unable to report it.")
             return
 
-        current_user = users.find_one({"discord_id": str(ctx.author.id)})
-        if not current_user:
-            await ctx.send("You need to link your Riot account first using `!linkriot Name#Tag`")
-            return
-
         if "data" not in match_data or not match_data["data"]:
             await ctx.send("Could not retrieve match data.")
             return
 
         match = match_data["data"][0]
+
+        # Get total rounds played from the match data
+        teams = match.get('teams', [])
+        if teams:
+            team1_data = teams[0]
+            total_rounds = team1_data.get('rounds_won', 0) + team1_data.get('rounds_lost', 0)
+        else:
+            await ctx.send("No team data found in match data.")
+            return 
 
     match_players = match.get("players", [])
     if not match_players:
@@ -1224,16 +1045,15 @@ async def report(ctx):
     adjust_mmr(winning_team, losing_team)
     await ctx.send("MMR Updated!")
 
-    # Update stats
     for player_stats in match_players:
-        update_stats(player_stats)
+        update_stats(player_stats, total_rounds)
 
     await ctx.send("Player stats updated!")
+    match_not_reported = False
     match_ongoing = False
 
-
 # Update stats
-def update_stats(player_stats):
+def update_stats(player_stats, total_rounds):
     name = player_stats.get("name")
     tag = player_stats.get("tag")
 
@@ -1257,8 +1077,9 @@ def update_stats(player_stats):
         total_combat_score = player_data.get("total_combat_score", 0) + score
         total_kills = player_data.get("total_kills", 0) + kills
         total_deaths = player_data.get("total_deaths", 0) + deaths
+        total_rounds_played = player_data.get("total_rounds_played", 0) + total_rounds
 
-        average_combat_score = total_combat_score / total_matches
+        average_combat_score = total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
         kill_death_ratio = total_kills / total_deaths if total_deaths > 0 else total_kills
 
         player_mmr[discord_id].update({
@@ -1266,6 +1087,7 @@ def update_stats(player_stats):
             "total_kills": total_kills,
             "total_deaths": total_deaths,
             "matches_played": total_matches,
+            "total_rounds_played": total_rounds_played,
             "average_combat_score": average_combat_score,
             "kill_death_ratio": kill_death_ratio
         })
@@ -1277,6 +1099,7 @@ def update_stats(player_stats):
                 'total_kills': total_kills,
                 'total_deaths': total_deaths,
                 'matches_played': total_matches,
+                'total_rounds_played': total_rounds_played,
                 'average_combat_score': average_combat_score,
                 'kill_death_ratio': kill_death_ratio
             }},
@@ -1287,8 +1110,9 @@ def update_stats(player_stats):
         total_combat_score = score
         total_kills = kills
         total_deaths = deaths
-        average_combat_score = score
-        kill_death_ratio = kills / deaths if deaths > 0 else kills
+        total_rounds_played = total_rounds
+        average_combat_score = total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
+        kill_death_ratio = total_kills / total_deaths if total_deaths > 0 else total_kills
 
         player_mmr[discord_id] = {
             'mmr': 1000,
@@ -1298,6 +1122,7 @@ def update_stats(player_stats):
             'total_kills': total_kills,
             'total_deaths': total_deaths,
             'matches_played': total_matches,
+            'total_rounds_played': total_rounds_played,
             'average_combat_score': average_combat_score,
             'kill_death_ratio': kill_death_ratio
         }
@@ -1314,12 +1139,12 @@ def update_stats(player_stats):
                 'total_kills': total_kills,
                 'total_deaths': total_deaths,
                 'matches_played': total_matches,
+                'total_rounds_played': total_rounds_played,
                 'average_combat_score': average_combat_score,
                 'kill_death_ratio': kill_death_ratio
             }},
             upsert=True
         )
-
 
 # Allow players to check their MMR and stats
 @bot.command()
@@ -1331,6 +1156,7 @@ async def stats(ctx):
         wins = stats_data["wins"]
         losses = stats_data["losses"]
         matches_played = stats_data.get('matches_played', wins + losses)
+        total_rounds_played = stats_data.get('total_rounds_played', 0)
         avg_cs = stats_data.get('average_combat_score', 0)
         kd_ratio = stats_data.get('kill_death_ratio', 0)
         win_percent = (wins / matches_played) * 100 if matches_played > 0 else 0
@@ -1351,12 +1177,12 @@ async def stats(ctx):
             f"Losses: {losses}\n"
             f"Win%: {win_percent:.2f}%\n"
             f"Matches Played: {matches_played}\n"
+            f"Total Rounds Played: {total_rounds_played}\n"
             f"Average Combat Score: {avg_cs:.2f}\n"
             f"Kill/Death Ratio: {kd_ratio:.2f}"
         )
     else:
         await ctx.send("You do not have an MMR yet. Participate in matches to earn one!")
-
 
 # Display leaderboard
 @bot.command()
@@ -1383,6 +1209,7 @@ async def leaderboard(ctx):
         wins = stats["wins"]
         losses = stats["losses"]
         matches_played = stats.get('matches_played', wins + losses)
+        total_rounds_played = stats.get('total_rounds_played', 0)
         avg_cs = stats.get('average_combat_score', 0)
         kd_ratio = stats.get('kill_death_ratio', 0)
         win_percent = (wins / matches_played) * 100 if matches_played > 0 else 0
@@ -1395,6 +1222,51 @@ async def leaderboard(ctx):
     leaderboard_text = "\n".join(leaderboard_entries)
     await ctx.send(f"**MMR Leaderboard (Top 10 Players):**\n{leaderboard_text}")
 
+@bot.command()
+@commands.has_role("Owner")  # Restrict this command to admins
+async def initialize_rounds(ctx):
+    result = mmr_collection.update_many(
+        {},  # Update all documents
+        {'$set': {'total_rounds_played': 0}}
+    )
+    await ctx.send(f"Initialized total_rounds_played for {result.modified_count} players.")
+
+# To recalculate average combat score after bug
+@bot.command()
+@commands.has_role("Owner") 
+async def recalculate(ctx):
+    players = mmr_collection.find()
+    updated_count = 0
+    for player in players:
+        player_id = int(player.get('player_id'))
+        total_combat_score = player.get('total_combat_score', 0)
+        total_rounds_played = player.get('total_rounds_played', 0)
+
+        if total_rounds_played > 0:
+            average_combat_score = total_combat_score / total_rounds_played
+        else:
+            average_combat_score = 0
+
+        # Update the database
+        mmr_collection.update_one(
+            {'player_id': player_id},
+            {'$set': {'average_combat_score': average_combat_score}}
+        )
+
+        # Update the in-memory player_mmr dictionary
+        if player_id in player_mmr:
+            player_mmr[player_id]['average_combat_score'] = average_combat_score
+        else:
+            # In case the player is not in player_mmr (should not happen)
+            player_mmr[player_id] = {
+                'average_combat_score': average_combat_score
+            }
+
+        updated_count += 1
+
+    load_mmr_data()
+
+    await ctx.send(f"Recalculated average combat score for {updated_count} players.")
 
 # Simulate a queue
 @bot.command()
@@ -1404,43 +1276,42 @@ async def simulate_queue(ctx):
 
     if signup_active:
         await ctx.send("A signup is already in progress. Resetting queue for simulation.")
-        queue.clear()
+        queue.clear()  
 
-        # Clear teams
+    # Clear teams
     team1.clear()
     team2.clear()
 
     # Add 10 dummy players to the queue
-    queue = [{"id": i, "name": f"Player{i}"} for i in range(1, 11)]
+    queue = [{"id": i, "name": f"Player{i}"} for i in range(1, 11)] 
 
     # Assign default MMR to the dummy players and map IDs to names
     for player in queue:
         if player["id"] not in player_mmr:
-            player_mmr[player["id"]] = {"mmr": 1000, "wins": 0, "losses": 0}
-        player_names[player["id"]] = player["name"]
+            player_mmr[player["id"]] = {"mmr": 1000, "wins": 0, "losses": 0}  
+        player_names[player["id"]] = player["name"]  
 
-    save_mmr_data()
+    save_mmr_data()  
 
-    signup_active = True
+    signup_active = True  
     await ctx.send(f"Simulated full queue: {', '.join([player['name'] for player in queue])}")
 
     # Proceed to the voting stage
     await ctx.send("The queue is now full, proceeding to the voting stage.")
     await start_voting(ctx.channel)
 
-
 # Link Riot Account
 @bot.command()
 async def linkriot(ctx, *, riot_input):
     try:
-        riot_name, riot_tag = riot_input.rsplit("#", 1)
+        riot_name, riot_tag = riot_input.rsplit("#", 1) 
     except ValueError:
         await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
         return
 
     data = requests.get(f"https://api.henrikdev.xyz/valorant/v1/account/{riot_name}/{riot_tag}", headers=headers)
     user = data.json()
-
+    
     if "data" not in user:
         await ctx.send("Could not find your Riot account. Please check the name and tag.")
     else:
@@ -1455,7 +1326,6 @@ async def linkriot(ctx, *, riot_input):
             upsert=True
         )
         await ctx.send(f"Successfully linked {riot_name}#{riot_tag} to your Discord account.")
-
 
 # Set captain1
 @bot.command()
@@ -1488,8 +1358,7 @@ async def setcaptain1(ctx, *, riot_name_tag):
 
     selected_captain1 = player_in_queue
     await ctx.send(f"Captain 1 set to {riot_name}#{riot_tag}")
-
-
+    
 # Set captain2
 @bot.command()
 @commands.has_role("blood")
@@ -1522,15 +1391,20 @@ async def setcaptain2(ctx, *, riot_name_tag):
     selected_captain2 = player_in_queue
     await ctx.send(f"Captain 2 set to {riot_name}#{riot_tag}")
 
-
 # Stop the signup process, only owner can do this
 @bot.command()
-@commands.has_role("Owner")
+@commands.has_role("blood")
 async def cancel(ctx):
+    global signup_message, signup_active
     cancel_signup_task()
+    if signup_message:
+        try:
+            await signup_message.delete()
+        except discord.NotFound:
+            pass
+        signup_message = None
     await ctx.send("Canceled Signup")
     signup_active = False
-
 
 # Custom Help Command
 @bot.command()
@@ -1540,23 +1414,20 @@ async def help(ctx):
         description="Duck's 10 Mans Commands:",
         color=discord.Color.blue()
     )
-
+    
     help_embed.add_field(name="!signup", value="Start a signup session for matches.", inline=False)
     help_embed.add_field(name="!report", value="Report the most recent match and update MMR.", inline=False)
     help_embed.add_field(name="!stats", value="Check your MMR and match stats.", inline=False)
     help_embed.add_field(name="!leaderboard", value="View the MMR leaderboard.", inline=False)
     help_embed.add_field(name="!linkriot", value="Link or update your Riot account using `Name#Tag`.", inline=False)
     help_embed.add_field(name="!join", value="Joins the queue.", inline=False)
-    help_embed.add_field(name="!setcaptain1", value="Set Captain 1 using `Name#Tag` (only accessible by admins)",
-                         inline=False)
-    help_embed.add_field(name="!setcaptain2", value="Set Captain 2 using `Name#Tag` (only accessible by admins)",
-                         inline=False)
+    help_embed.add_field(name="!setcaptain1", value="Set Captain 1 using `Name#Tag` (only accessible by admins)", inline=False)
+    help_embed.add_field(name="!setcaptain2", value="Set Captain 2 using `Name#Tag` (only accessible by admins)", inline=False)
     help_embed.add_field(name="!leave", value="Leaves the queue", inline=False)
     help_embed.add_field(name="!help", value="Display this help menu.", inline=False)
-
+    
     # Send the embedded message
     await ctx.send(embed=help_embed)
-
 
 # Run the bot
 bot.run(bot_token)
