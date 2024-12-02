@@ -588,17 +588,37 @@ async def captains_mode(ctx):
     await captains_pick_next(ctx, remaining_players, captains, pick_order, pick_count)
 
 async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_count):
-    global team1, team2, signup_active, match_ongoing, selected_captain1, selected_captain2, queue, votes, selected_map_name
+    global team1, team2, signup_active, match_ongoing, selected_captain1, selected_captain2, queue, votes, selected_map_name, remaining_players_message, drafting_message, captain_pick_message
 
+    captain1 = captains[0]
+    captain2 = captains[1]
+
+    # Finalize teams
     if not remaining_players:
-        # Finalize teams
-        captain1 = captains[0]
-        captain2 = captains[1]
-        await ctx.send(
-            f"**Final Teams:**\n"
-            f"Attackers (Captain: {captain1['name']}): {', '.join([p['name'] for p in team1])}\n"
-            f"Defenders (Captain: {captain2['name']}): {', '.join([p['name'] for p in team2])}"
+        # Delete the drafting messages
+        await remaining_players_message.delete()
+        await drafting_message.delete()
+        await captain_pick_message.delete()
+
+        # Create embed for the final teams
+        final_teams_embed = discord.Embed(
+            title="Final Teams",
+            color=discord.Color.green()
         )
+        final_teams_embed.add_field(
+            name=f"Attackers (Captain: {captain1})",
+            value='\n'.join([p['name'] for p in team1]),
+            inline=False,
+        )
+        final_teams_embed.add_field(
+            name=f"Defenders (Captain: {captain2})",
+            value='\n'.join([p['name'] for p in team2]),
+            inline=False,
+        )
+
+        # Display final teams
+        await ctx.send(embed=final_teams_embed)
+
         signup_active = False
         match_ongoing = True
 
@@ -606,13 +626,16 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         selected_captain1 = None
         selected_captain2 = None
 
+        # Reset drafting messages
+        remaining_players_message = None
+        drafting_message = None
+        captain_pick_message = None
+
         await vote_map(ctx)
         return
 
     current_captain_id = pick_order[pick_count]
     current_captain = next((c for c in captains if c["id"] == current_captain_id), None)
-    await ctx.send(f"Remaining players: {', '.join([p['name'] for p in remaining_players])}")
-    await ctx.send(f"{current_captain['name']}, it's your turn to pick!")
 
     # Select Menu
     options = [
@@ -633,7 +656,8 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         selected_player_id = int(select.values[0])
         player_dict = next((p for p in remaining_players if p["id"] == selected_player_id), None)
         if not player_dict:
-            await interaction.response.send_message("Player not available. Please select a valid player.", ephemeral=True)
+            await interaction.response.send_message("Player not available. Please select a valid player.",
+                                                    ephemeral=True)
             return
 
         # Add the player to the right team
@@ -644,8 +668,9 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
 
         remaining_players.remove(player_dict)
         select.disabled = True
-        await interaction.response.edit_message(content=f"{current_captain['name']} picked {player_dict['name']}.", view=None)
-        await interaction.followup.send(f"You picked {player_dict['name']}.", ephemeral=True)
+
+        # Let discord know the action was processed
+        await interaction.response.defer()
 
         # Proceed to the next pick
         await captains_pick_next(ctx, remaining_players, captains, pick_order, pick_count + 1)
@@ -655,7 +680,40 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
     view = View()
     view.add_item(select)
 
-    message = await ctx.send(f"{current_captain['name']}, please pick a player:", view=view)
+    # Construct the messages for the draft
+    # Embed to display the remaining players in the draft
+    remaining_players_embed = discord.Embed(
+        title="Remaining Players",
+        description='\n'.join([p['name'] for p in remaining_players]),
+        color=discord.Color.blue(),
+    )
+    # Embed to display the currently drafted players
+    drafting_embed = discord.Embed(
+        title=f"Current Draft",
+        color=discord.Color.green()
+    )
+    drafting_embed.add_field(
+        name=f"**{captain1}'s Team**",
+        value='\n'.join([p['name'] for p in team1]),
+        inline=False,
+    )
+    drafting_embed.add_field(
+        name=f"**{captain2}'s Team**",
+        value='\n'.join([p['name'] for p in team2]),
+        inline=False,
+    )
+    # Send message for the first time
+    message = f"**{current_captain['name']}**, please pick a player:"
+
+    # Logic to edit message instead of sending a new one
+    if captain_pick_message is None:
+        remaining_players_message = await ctx.send(embed=remaining_players_embed)
+        drafting_message = await ctx.send(embed=drafting_embed)
+        captain_pick_message = await ctx.send(message, view=view)
+    else:
+        await remaining_players_message.edit(embed=remaining_players_embed)
+        await drafting_message.edit(embed=drafting_embed)
+        await captain_pick_message.edit(content=message, view=view)
 
     # Wait for the captain to make a selection or time out
     try:
@@ -673,6 +731,9 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         selected_captain1 = None
         selected_captain2 = None
         selected_map_name = None
+        remaining_players_message = None
+        drafting_message = None
+        captain_pick_message = None
         votes = {"Balanced Teams": 0, "Captains": 0}
 
         # Clear teams and queue
