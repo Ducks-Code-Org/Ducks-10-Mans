@@ -224,7 +224,8 @@ remaining_players_message = None
 # Initialize MongoDB Collections
 db = client["valorant"]  
 users = db["users"]       
-mmr_collection = db["mmr_data"]  
+mmr_collection = db["mmr_data"]
+all_matches = db["matches"]
 
 # Initialize API
 api_key = os.getenv("api_key")
@@ -1229,6 +1230,9 @@ async def report(ctx):
     # Now save all updates to the database
     save_mmr_data()
     await ctx.send("Player stats updated!")
+
+    # Record every match played in a new collection
+    all_matches.insert_one(match)
 
     match_not_reported = False
     match_ongoing = False
