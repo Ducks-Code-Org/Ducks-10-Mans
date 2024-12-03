@@ -12,25 +12,14 @@ import os
 mock_match_data = {
     "players": [
         {
-            "name": "WaffIes",
-            "tag": "NA1",
+            "name": "SSL Wheel",
+            "tag": "7126",
             "team_id": "Red",
             "stats": {
-                "score": 7410,
-                "kills": 25,
-                "deaths": 21,
-                "assists": 8
-            }
-        },
-        {
-            "name": "mintychewinggum",
-            "tag": "8056",
-            "team_id": "Red",
-            "stats": {
-                "score": 6656,
-                "kills": 23,
-                "deaths": 17,
-                "assists": 11
+                "score": 8188,
+                "kills": 31,
+                "deaths": 12,
+                "assists": 4
             }
         },
         {
@@ -38,32 +27,43 @@ mock_match_data = {
             "tag": "AZoN",
             "team_id": "Red",
             "stats": {
-                "score": 6032,
-                "kills": 21,
-                "deaths": 16,
-                "assists": 10
+                "score": 6233,
+                "kills": 22,
+                "deaths": 11,
+                "assists": 6
             }
         },
         {
-            "name": "dShocc1",
-            "tag": "LNEUP",
+            "name": "Luh4r",
+            "tag": "i0n",
             "team_id": "Red",
             "stats": {
-                "score": 4160,
-                "kills": 14,
+                "score": 5405,
+                "kills": 19,
                 "deaths": 17,
-                "assists": 12
+                "assists": 8
             }
         },
         {
-            "name": "Pyr",
-            "tag": "10219",
+            "name": "Crimsyn",
+            "tag": "Rose",
             "team_id": "Red",
             "stats": {
-                "score": 3796,
-                "kills": 13,
-                "deaths": 16,
-                "assists": 7
+                "score": 3772,
+                "kills": 14,
+                "deaths": 12,
+                "assists": 4
+            }
+        },
+        {
+            "name": "ItzFitz",
+            "tag": "1738",
+            "team_id": "Red",
+            "stats": {
+                "score": 2829,
+                "kills": 8,
+                "deaths": 14,
+                "assists": 9
             }
         },
         {
@@ -71,65 +71,69 @@ mock_match_data = {
             "tag": "MST",
             "team_id": "Blue",
             "stats": {
-                "score": 7488,
-                "kills": 27,
+                "score": 5405,
+                "kills": 17,
                 "deaths": 18,
-                "assists": 2
+                "assists": 3
             }
         },
         {
-            "name": "TheAlphaEw0k",
-            "tag": "MST",
+            "name": "NBK2003",
+            "tag": "1584",
             "team_id": "Blue",
             "stats": {
-                "score": 5798,
-                "kills": 19,
+                "score": 4416,
+                "kills": 16,
+                "deaths": 20,
+                "assists": 3
+            }
+        },
+        {
+            "name": "galaxy",
+            "tag": "KUJG",
+            "team_id": "Blue",
+            "stats": {
+                "score": 3703,
+                "kills": 11,
+                "deaths": 20,
+                "assists": 7
+            }
+        },
+        {
+            "name": "dShocc1",
+            "tag": "LNEUP",
+            "team_id": "Blue",
+            "stats": {
+                "score": 3174,
+                "kills": 10,
+                "deaths": 17,
+                "assists": 3
+            }
+        },
+        {
+            "name": "mintychewinggum",
+            "tag": "8056",
+            "team_id": "Blue",
+            "stats": {
+                "score": 3082,
+                "kills": 11,
                 "deaths": 19,
                 "assists": 5
-            }
-        },
-        {
-            "name": "twentytwo",
-            "tag": "4249",
-            "team_id": "Blue",
-            "stats": {
-                "score": 4472,
-                "kills": 15,
-                "deaths": 25,
-                "assists": 4
-            }
-        },
-        {
-            "name": "Rut",
-            "tag": "rucky",
-            "team_id": "Blue",
-            "stats": {
-                "score": 4238,
-                "kills": 14,
-                "deaths": 18,
-                "assists": 5
-            }
-        },
-        {
-            "name": "Luh4r",
-            "tag": "i0n",
-            "team_id": "Blue",
-            "stats": {
-                "score":3484,
-                "kills": 12,
-                "deaths": 16,
-                "assists": 12
             }
         },
     ],
     "teams": [
         {
             "team_id": "Red",
-            "won": True
+            "won": True,
+            "rounds_won": 13,
+            "rounds_lost": 11
         },
         {
             "team_id": "Blue",
-            "won": False
+            "won": False,
+            "rounds_won": 11,
+            "rounds_lost": 13
         }
     ]
 }
@@ -212,6 +216,10 @@ selected_captain1 = None
 selected_captain2 = None
 signup_refresh_task = None
 match_not_reported = False
+# Initialize captain_pick_message and related variables
+captain_pick_message = None
+drafting_message = None
+remaining_players_message = None
 
 # Initialize MongoDB Collections
 db = client["valorant"]  
@@ -227,6 +235,28 @@ bot_token = os.getenv("bot_token")
 
 official_maps = ["Haven", "Sunset", "Ascent", "Abyss", "Pearl", "Bind", "Split"]
 all_maps = ["Bind", "Haven", "Split", "Ascent", "Icebox", "Breeze", "Fracture", "Pearl", "Lotus", "Sunset", "Abyss"]
+
+def ensure_player_mmr(player_id):
+    if player_id not in player_mmr:
+        # Initialize
+        player_mmr[player_id] = {
+            'mmr': 1000,
+            'wins': 0,
+            'losses': 0,
+            'total_combat_score': 0,
+            'total_kills': 0,
+            'total_deaths': 0,
+            'matches_played': 0,
+            'total_rounds_played': 0,
+            'average_combat_score': 0,
+            'kill_death_ratio': 0
+        }
+        # Update player names
+        user_data = users.find_one({"discord_id": str(player_id)})
+        if user_data:
+            player_names[player_id] = user_data.get("name", "Unknown")
+        else:
+            player_names[player_id] = "Unknown"
 
 def create_signup_view():
     sign_up_button = Button(label=f"Sign Up ({len(queue)}/10)", style=discord.ButtonStyle.green)
@@ -497,15 +527,15 @@ def adjust_mmr(winning_team, losing_team):
     MMR_CONSTANT = 32  
     global player_mmr
 
-    # Calculate average MMR for team1 and 2
+    # Calculate average MMR for winning and losing teams
     winning_team_mmr = sum(player_mmr[player["id"]]["mmr"] for player in winning_team) / len(winning_team)
     losing_team_mmr = sum(player_mmr[player["id"]]["mmr"] for player in losing_team) / len(losing_team)
 
-    # Calculate the expected result of the game
+    # Calculate expected results
     expected_win = 1 / (1 + 10 ** ((losing_team_mmr - winning_team_mmr) / 400))
     expected_loss = 1 / (1 + 10 ** ((winning_team_mmr - losing_team_mmr) / 400))
 
-    # Adjust MMR (winning team)
+    # Adjust MMR for winning team
     for player in winning_team:
         player_id = player["id"]
         current_mmr = player_mmr[player_id]["mmr"]
@@ -513,15 +543,13 @@ def adjust_mmr(winning_team, losing_team):
         player_mmr[player_id]["mmr"] = round(new_mmr)
         player_mmr[player_id]["wins"] += 1
 
-    # Adjust MMR (losing team)
+    # Adjust MMR for losing team
     for player in losing_team:
         player_id = player["id"]
         current_mmr = player_mmr[player_id]["mmr"]
         new_mmr = current_mmr + MMR_CONSTANT * (0 - expected_loss)
-        player_mmr[player_id]["mmr"] = max(0, round(new_mmr))  # Ensure MMR doesn't drop below 0
+        player_mmr[player_id]["mmr"] = max(0, round(new_mmr))
         player_mmr[player_id]["losses"] += 1
-
-    save_mmr_data()
 
 def balanced_teams(players):
     global match_ongoing
@@ -593,6 +621,19 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
     captain1 = captains[0]
     captain2 = captains[1]
 
+    # Get Riot names for captains (Move this outside the if-block)
+    captain1_data = users.find_one({"discord_id": str(captain1["id"])})
+    if captain1_data:
+        captain1_name = f"{captain1_data.get('name', 'Unknown')}#{captain1_data.get('tag', 'Unknown')}"
+    else:
+        captain1_name = captain1["name"]
+
+    captain2_data = users.find_one({"discord_id": str(captain2["id"])})
+    if captain2_data:
+        captain2_name = f"{captain2_data.get('name', 'Unknown')}#{captain2_data.get('tag', 'Unknown')}"
+    else:
+        captain2_name = captain2["name"]
+
     # Finalize teams
     if not remaining_players:
         # Delete the drafting messages
@@ -602,19 +643,6 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
             await drafting_message.delete()
         if captain_pick_message:
             await captain_pick_message.delete()
-
-        # Get Riot names for captains
-        captain1_data = users.find_one({"discord_id": str(captain1["id"])})
-        if captain1_data:
-            captain1_name = f"{captain1_data.get('name', 'Unknown')}#{captain1_data.get('tag', 'Unknown')}"
-        else:
-            captain1_name = captain1["name"]
-
-        captain2_data = users.find_one({"discord_id": str(captain2["id"])})
-        if captain2_data:
-            captain2_name = f"{captain2_data.get('name', 'Unknown')}#{captain2_data.get('tag', 'Unknown')}"
-        else:
-            captain2_name = captain2["name"]
 
         # Get Riot names for team members
         team1_names = []
@@ -836,11 +864,9 @@ async def captains_pick_next(ctx, remaining_players, captains, pick_order, pick_
         return
 
 async def start_voting(channel):
-    global votes, dummy, match_ongoing
+    global votes, dummy, match_ongoing, match_not_reported
     votes = {"Balanced Teams": 0, "Captains": 0} 
     voters = set() 
-
-    match_not_reported = True
 
     # Create voting buttons with labels
     balanced_button = Button(label="Balanced Teams (0)", style=discord.ButtonStyle.green)
@@ -1045,7 +1071,7 @@ async def report(ctx):
     metadata = match.get("metadata", {})
     map_name = metadata.get("map", {}).get("name", "").lower()
 
-    testing_mode = False  # TRUE WHILE TESTING
+    testing_mode = False # TRUE WHILE TESTING
 
     if testing_mode:
         match = mock_match_data
@@ -1107,7 +1133,7 @@ async def report(ctx):
             total_rounds = team1_data.get('rounds_won', 0) + team1_data.get('rounds_lost', 0)
         else:
             await ctx.send("No team data found in match data.")
-            return 
+            return
 
     match_players = match.get("players", [])
     if not match_players:
@@ -1188,15 +1214,22 @@ async def report(ctx):
     else:
         await ctx.send("Could not match the winning team to our teams.")
         return
+    
+    for player in winning_team + losing_team:
+        ensure_player_mmr(player["id"])
 
     # Adjust MMR
     adjust_mmr(winning_team, losing_team)
     await ctx.send("MMR Updated!")
 
+    # Update stats for each player
     for player_stats in match_players:
         update_stats(player_stats, total_rounds)
 
+    # Now save all updates to the database
+    save_mmr_data()
     await ctx.send("Player stats updated!")
+
     match_not_reported = False
     match_ongoing = False
 
@@ -1240,19 +1273,6 @@ def update_stats(player_stats, total_rounds):
             "kill_death_ratio": kill_death_ratio
         })
 
-        mmr_collection.update_one(
-            {'player_id': discord_id},
-            {'$set': {
-                'total_combat_score': total_combat_score,
-                'total_kills': total_kills,
-                'total_deaths': total_deaths,
-                'matches_played': total_matches,
-                'total_rounds_played': total_rounds_played,
-                'average_combat_score': average_combat_score,
-                'kill_death_ratio': kill_death_ratio
-            }},
-            upsert=True
-        )
     else:
         total_matches = 1
         total_combat_score = score
