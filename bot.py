@@ -3,8 +3,7 @@ from discord.ext import commands
 from discord.ui import Button, View, Select
 import random
 import asyncio
-from pymongo.mongo_client import MongoClient
-from pymongo.server_api import ServerApi
+from database import db, users, mmr_collection, all_matches
 import requests
 import os
 
@@ -188,9 +187,7 @@ class SignupView(discord.ui.View):
             ephemeral=True,
         )
 
-# MongoDB Connection
-uri = os.getenv("uri_key")
-client = MongoClient(uri, server_api=ServerApi('1'))
+
 
 # Set up bot
 intents = discord.Intents.default()
@@ -221,11 +218,7 @@ captain_pick_message = None
 drafting_message = None
 remaining_players_message = None
 
-# Initialize MongoDB Collections
-db = client["valorant"]  
-users = db["users"]       
-mmr_collection = db["mmr_data"]
-all_matches = db["matches"]
+
 
 # Initialize API
 api_key = os.getenv("api_key")
