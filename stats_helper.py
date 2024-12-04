@@ -1,7 +1,7 @@
 from database import users, mmr_collection
-from globals import player_mmr, player_names
+
 # Update stats
-def update_stats(player_stats, total_rounds):
+def update_stats(player_stats, total_rounds, player_mmr, player_names):
     name = player_stats.get("name")
     tag = player_stats.get("tag")
 

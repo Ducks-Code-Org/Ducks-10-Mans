@@ -1,26 +1,23 @@
 import discord
-from discord.ui import Button, View
-from database import users
-from globals import player_mmr, player_names
-from voting import start_voting
+from discord.ui import Button
+from globals import official_maps, all_maps
 import asyncio
-import random
+from views.map_vote_view import MapVoteView
 
 
 class MapTypeVoteView(discord.ui.View):
-    def __init__(self, ctx, bot, queue):
+    def __init__(self, ctx, bot, queue, team1, team2):
         super().__init__()
         self.ctx = ctx
         self.bot = bot
         self.queue = queue  # Queue passed from signup view
+        self.team1 = team1
+        self.team2 = team2
         self.competitive_button = Button(label="Competitive Maps (0)", style=discord.ButtonStyle.green)
         self.all_maps_button = Button(label="All Maps (0)", style=discord.ButtonStyle.blurple)
 
         self.add_item(self.competitive_button)
         self.add_item(self.all_maps_button)
-        self.competitive_button.callback = self.balanced_callback
-        self.all_maps_button.callback = self.captains_callback
-
         self.map_pool_votes = {"Competitive Maps": 0, "All Maps": 0}
         self.voters = set()
 
@@ -55,11 +52,29 @@ class MapTypeVoteView(discord.ui.View):
         await interaction.message.edit(view=self)
         await interaction.response.send_message("You voted for All Maps.", ephemeral=True)
 
-    async def start_voting_map_type(self):
-        
+    async def send_view(self):
+        await self.ctx.send("Vote for the map pool:", view=self)
+        await asyncio.sleep(25)
+
+        if self.map_pool_votes["Competitive Maps"] >= self.map_pool_votes["All Maps"]:
+
+
+            await self.ctx.send("Competitive Maps selected!")
+            map_vote = MapVoteView(self.ctx, self.bot, self.queue, official_maps, self.team1, self.team2)
+            await map_vote.setup()
+
+            # Begin vote for specific map
+            await map_vote.send_view()
+        else:
+            await self.ctx.send("All Maps selected!")
+            map_vote = MapVoteView(self.ctx, self.bot, self.queue, all_maps, self.team1, self.team2)
+            await map_vote.setup()
+
+            # Begin vote for specific map
+            await map_vote.send_view()
 
     def setup_callbacks(self):
-        self.competitive_button.callback = self.balanced_callback
-        self.all_maps_button.callback = self.captains_callback
+        self.competitive_button.callback = self.competitive_button
+        self.all_maps_button.callback = self.all_maps_button
 
     # refresh the signup message every minute
