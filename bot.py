@@ -1369,7 +1369,7 @@ async def stats(ctx):
 @bot.command()
 async def leaderboard(ctx):
     if not player_mmr:
-        await ctx.send("No MMR data available yet.")
+        await ctx.send("No MMR data available yet.") 
         return
 
     # Sort players by MMR and take the top 10
@@ -1382,7 +1382,7 @@ async def leaderboard(ctx):
         if user_data:
             riot_name = user_data.get("name", "Unknown")
             riot_tag = user_data.get("tag", "Unknown")
-            name = f"{riot_name}#{riot_tag}"
+            name = f"**{riot_name}#{riot_tag}**" #changed to make bold
         else:
             name = "Unknown"
 
@@ -1401,7 +1401,7 @@ async def leaderboard(ctx):
         )
 
     leaderboard_text = "\n".join(leaderboard_entries)
-    await ctx.send(f"**MMR Leaderboard (Top 10 Players):**\n{leaderboard_text}")
+    await ctx.send(f"##MMR Leaderboard (Top 10 Players):##\n{leaderboard_text}") #changed to make header, changing ## to # will make it larger
 
 @bot.command()
 @commands.has_role("Owner")  # Restrict this command to admins
