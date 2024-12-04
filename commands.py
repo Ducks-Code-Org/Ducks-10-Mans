@@ -495,7 +495,7 @@ class BotCommands(commands.Cog):
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
                 riot_tag = user_data.get("tag", "Unknown")
-                names.append(f"{riot_name}#{riot_tag}")
+                names.append(f"**{riot_name}#{riot_tag}**")
             else:
                 names.append("Unknown")
 
