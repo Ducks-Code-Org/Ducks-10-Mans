@@ -6,13 +6,10 @@ from views.map_vote_view import MapVoteView
 
 
 class MapTypeVoteView(discord.ui.View):
-    def __init__(self, ctx, bot, queue, team1, team2):
+    def __init__(self, ctx, bot):
         super().__init__()
         self.ctx = ctx
         self.bot = bot
-        self.queue = queue  # Queue passed from signup view
-        self.team1 = team1
-        self.team2 = team2
         self.competitive_button = Button(label="Competitive Maps (0)", style=discord.ButtonStyle.green)
         self.all_maps_button = Button(label="All Maps (0)", style=discord.ButtonStyle.blurple)
 
@@ -26,7 +23,7 @@ class MapTypeVoteView(discord.ui.View):
 
     async def competitive_callback(self, interaction: discord.Interaction):
         # make user is in the queue and hasn't voted yet
-        if interaction.user.id not in [player["id"] for player in self.queue]:
+        if interaction.user.id not in [player["id"] for player in self.bot.queue]:
             await interaction.response.send_message("You must be in the queue to vote!", ephemeral=True)
             return
         if interaction.user.id in self.voters:
@@ -40,7 +37,7 @@ class MapTypeVoteView(discord.ui.View):
 
     async def all_maps_callback(self, interaction: discord.Interaction):
         # make sure the user is in the queue and hasn't voted yet
-        if interaction.user.id not in [player["id"] for player in self.queue]:
+        if interaction.user.id not in [player["id"] for player in self.bot.queue]:
             await interaction.response.send_message("You must be in the queue to vote!", ephemeral=True)
             return
         if interaction.user.id in self.voters:
@@ -60,14 +57,14 @@ class MapTypeVoteView(discord.ui.View):
 
 
             await self.ctx.send("Competitive Maps selected!")
-            map_vote = MapVoteView(self.ctx, self.bot, self.queue, official_maps, self.team1, self.team2)
+            map_vote = MapVoteView(self.ctx, self.bot, official_maps)
             await map_vote.setup()
 
             # Begin vote for specific map
             await map_vote.send_view()
         else:
             await self.ctx.send("All Maps selected!")
-            map_vote = MapVoteView(self.ctx, self.bot, self.queue, all_maps, self.team1, self.team2)
+            map_vote = MapVoteView(self.ctx, self.bot, all_maps)
             await map_vote.setup()
 
             # Begin vote for specific map

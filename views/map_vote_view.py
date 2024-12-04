@@ -6,13 +6,10 @@ import asyncio
 
 
 class MapVoteView(discord.ui.View):
-    def __init__(self, ctx, bot, queue, map_choices, team1, team2):
+    def __init__(self, ctx, bot, map_choices):
         super().__init__()
         self.ctx = ctx
         self.bot = bot
-        self.queue = queue  # Queue passed from signup view
-        self.team1 = team1
-        self.team2 = team2
         self.map_choices = map_choices  # map choices passed from map type vote view
         self.map_buttons = []
 
@@ -27,7 +24,7 @@ class MapVoteView(discord.ui.View):
             button = Button(label=f"{map_name} (0)", style=discord.ButtonStyle.secondary)
 
             async def map_callback(interaction: discord.Interaction, map_name=map_name):
-                if interaction.user.id not in [player["id"] for player in self.queue]:
+                if interaction.user.id not in [player["id"] for player in self.bot.queue]:
                     await interaction.response.send_message("You must be in the queue to vote!", ephemeral=True)
                     return
                 if interaction.user.id in self.voters:
@@ -63,7 +60,7 @@ class MapVoteView(discord.ui.View):
         )
 
         attackers = []
-        for player in self.team1:
+        for player in self.bot.team1:
             user_data = users.find_one({"discord_id": str(player["id"])})
             mmr = self.bot.player_mmr.get(player["id"], {}).get("mmr", 1000)
             if user_data:
@@ -74,7 +71,7 @@ class MapVoteView(discord.ui.View):
                 attackers.append(f"{player['name']} (MMR: {mmr})")
 
         defenders = []
-        for player in self.team2:
+        for player in self.bot.team2:
             user_data = users.find_one({"discord_id": str(player["id"])})
             mmr = self.bot.player_mmr.get(player["id"], {}).get("mmr", 1000)
             if user_data:

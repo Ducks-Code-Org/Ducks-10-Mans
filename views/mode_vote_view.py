@@ -1,17 +1,15 @@
 import discord
-from discord.ui import Button, View
-from database import users
+from discord.ui import Button
 from views.map_type_vote_view import MapTypeVoteView
 from views.captains_drafting_view import CaptainsDraftingView
 import asyncio
 import random
 
 class ModeVoteView(discord.ui.View):
-    def __init__(self, ctx, bot, queue):
+    def __init__(self, ctx, bot):
         super().__init__()
         self.ctx = ctx
         self.bot = bot
-        self.queue = queue  # Queue passed from signup view
         self.balanced_button = Button(label="Balanced Teams (0)", style=discord.ButtonStyle.green)
         self.captains_button = Button(label="Captains (0)", style=discord.ButtonStyle.blurple)
         self.add_item(self.balanced_button)
@@ -29,7 +27,7 @@ class ModeVoteView(discord.ui.View):
 
     async def balanced_callback(self, interaction: discord.Interaction):
         # make sure the user is in the queue
-        if interaction.user.id not in [player["id"] for player in self.queue]:
+        if interaction.user.id not in [player["id"] for player in self.bot.queue]:
             await interaction.response.send_message("You must be in the queue to vote!", ephemeral=True)
             return
         # make sure the user has not already voted
@@ -47,7 +45,7 @@ class ModeVoteView(discord.ui.View):
         )
 
     async def captains_callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in [player["id"] for player in self.queue]:
+        if interaction.user.id not in [player["id"] for player in self.bot.queue]:
             await interaction.response.send_message("You must be in the queue to vote!", ephemeral=True)
             return
         if interaction.user.id in self.voters:
@@ -80,13 +78,16 @@ class ModeVoteView(discord.ui.View):
         return team1, team2
 
     async def balanced_teams_logic(self):
-        team1, team2 = self.balanced_teams(self.queue)
+        team1, team2 = self.balanced_teams(self.bot.queue)
         await self.ctx.send(
             f"**Balanced Teams:**\nAttackers: {', '.join([p['name'] for p in team1])}\nDefenders: {', '.join([p['name'] for p in team2])}")
 
         self.bot.match_ongoing = True
 
-        vote_map_type = MapTypeVoteView(self.ctx, self.bot, self.queue, team1, team2)
+        self.bot.team1 = team1
+        self.bot.team2 = team2
+
+        vote_map_type = MapTypeVoteView(self.ctx, self.bot)
 
         # vote for maps next
         await vote_map_type.send_view()
@@ -100,7 +101,7 @@ class ModeVoteView(discord.ui.View):
 
         # Fill captains with highest MMR if not set
         if len(captains) < 2:
-            sorted_players = sorted(self.queue, key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], reverse=True)
+            sorted_players = sorted(self.bot.queue, key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], reverse=True)
             for player in sorted_players:
                 if player not in captains:
                     captains.append(player)
@@ -130,7 +131,7 @@ class ModeVoteView(discord.ui.View):
                 await self.balanced_teams_logic()
             elif self.votes["Captains"] > self.votes["Balanced Teams"]:
                 await self.ctx.send("Captains wins the vote!")
-                captains_drafting = CaptainsDraftingView(self.ctx, self.bot, self.queue)
+                captains_drafting = CaptainsDraftingView(self.ctx, self.bot)
                 await captains_drafting.send_current_draft_view()
             else:
                 decision = "Balanced Teams" if random.choice([True, False]) else "Captains"
@@ -138,7 +139,7 @@ class ModeVoteView(discord.ui.View):
                 if decision == "Balanced Teams":
                     await self.balanced_teams_logic()
                 else:
-                    captains_drafting = CaptainsDraftingView(self.ctx, self.bot, self.queue)
+                    captains_drafting = CaptainsDraftingView(self.ctx, self.bot)
                     await captains_drafting.send_current_draft_view()
         match_ongoing = True
         dummy = False

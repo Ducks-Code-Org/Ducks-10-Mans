@@ -6,18 +6,17 @@ import asyncio
 
 
 class CaptainsDraftingView(discord.ui.View):
-    def __init__(self, ctx, bot, queue):
+    def __init__(self, ctx, bot):
         super().__init__()
         self.ctx = ctx
         self.bot = bot
-        self.queue = queue  # Queue passed from signup view
 
         self.player_select = Select(
             placeholder="Select a player to pick",
             options=[],
         )
 
-        self.remaining_players = [p for p in queue if p not in [self.bot.captain1, self.bot.captain2]]
+        self.remaining_players = [p for p in self.bot.queue if p not in [self.bot.captain1, self.bot.captain2]]
         self.pick_order = [
             self.bot.captain1,
             self.bot.captain2,
@@ -29,24 +28,23 @@ class CaptainsDraftingView(discord.ui.View):
             self.bot.captain1,
         ]
         self.pick_count = 0
-        self.team1 = []
-        self.team2 = []
         self.remaining_players_message = None
         self.drafting_message = None
         self.captain_pick_message = None
 
-        # Get Riot names for captain
-        captain1_data = users.find_one({"discord_id": str(self.bot.captain1["id"])})
-        if captain1_data:
-            self.captain1_name = f"{captain1_data.get('name', 'Unknown')}#{captain1_data.get('tag', 'Unknown')}"
-        else:
-            self.captain1_name = self.bot.captain1["name"]
+        if self.bot.captain1 and self.bot.captain2:
+            # Get Riot names for captain
+            captain1_data = users.find_one({"discord_id": str(self.bot.captain1["id"])})
+            if captain1_data:
+                self.captain1_name = f"{captain1_data.get('name', 'Unknown')}#{captain1_data.get('tag', 'Unknown')}"
+            else:
+                self.captain1_name = self.bot.captain1["name"]
 
-        captain2_data = users.find_one({"discord_id": str(self.bot.captain2["id"])})
-        if captain2_data:
-            self.captain2_name = f"{captain2_data.get('name', 'Unknown')}#{captain2_data.get('tag', 'Unknown')}"
-        else:
-            self.captain2_name = self.bot.captain2["name"]
+            captain2_data = users.find_one({"discord_id": str(self.bot.captain2["id"])})
+            if captain2_data:
+                self.captain2_name = f"{captain2_data.get('name', 'Unknown')}#{captain2_data.get('tag', 'Unknown')}"
+            else:
+                self.captain2_name = self.bot.captain2["name"]
 
         # Link callbacks to buttons
         self.setup_callbacks()
@@ -64,7 +62,7 @@ class CaptainsDraftingView(discord.ui.View):
 
         # Get Riot names for team members
         team1_names = []
-        for p in self.team1:
+        for p in self.bot.team1:
             user_data = users.find_one({"discord_id": str(p["id"])})
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
@@ -74,7 +72,7 @@ class CaptainsDraftingView(discord.ui.View):
                 team1_names.append(p["name"])
 
         team2_names = []
-        for p in self.team2:
+        for p in self.bot.team2:
             user_data = users.find_one({"discord_id": str(p["id"])})
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
@@ -102,7 +100,7 @@ class CaptainsDraftingView(discord.ui.View):
                 # Display final teams
                 await self.ctx.send(embed=final_teams_embed)
 
-                map_type_vote = MapTypeVoteView(self.ctx, self.bot, self.queue, self.team1, self.team2)
+                map_type_vote = MapTypeVoteView(self.ctx, self.bot)
 
                 # Begin vote for competitive or all maps
                 await map_type_vote.send_view()
@@ -129,9 +127,9 @@ class CaptainsDraftingView(discord.ui.View):
 
         # Add the player to the right team
         if current_captain_id == self.bot.captain1["id"]:
-            self.team1.append(player_dict)
+            self.bot.team1.append(player_dict)
         else:
-            self.team2.append(player_dict)
+            self.bot.team2.append(player_dict)
 
         self.remaining_players.remove(player_dict)
         self.player_select.disabled = True
@@ -140,6 +138,13 @@ class CaptainsDraftingView(discord.ui.View):
         await interaction.response.defer()
 
     async def send_current_draft_view(self):
+        if self.bot.captain1 is None:
+            await self.ctx.send("No captain 1 set. use !setcaptain1 <name>")
+            return
+        if self.bot.captain2 is None:
+            await self.ctx.send("No captain 2 set. use !setcaptain2 <name>")
+            return
+
         options = []
         for p in self.remaining_players:
             user_data = users.find_one({"discord_id": str(p["id"])})
@@ -174,7 +179,7 @@ class CaptainsDraftingView(discord.ui.View):
         # Embed to display the currently drafted players
         # For team1
         team1_names = []
-        for p in self.team1:
+        for p in self.bot.team1:
             user_data = users.find_one({"discord_id": str(p["id"])})
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
@@ -186,7 +191,7 @@ class CaptainsDraftingView(discord.ui.View):
 
         # For team2
         team2_names = []
-        for p in self.team2:
+        for p in self.bot.team2:
             user_data = users.find_one({"discord_id": str(p["id"])})
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
@@ -246,4 +251,4 @@ class CaptainsDraftingView(discord.ui.View):
         except asyncio.TimeoutError:
             await self.ctx.send(f"{current_captain_name} took too long to pick. Drafting canceled.")
 
-            self.queue.clear()
+            self.bot.queue.clear()

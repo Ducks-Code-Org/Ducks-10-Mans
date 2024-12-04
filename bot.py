@@ -6,13 +6,18 @@ from database import mmr_collection, users
 class CustomBot(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.some_custom_attribute = "This is custom data"
         self.signup_view: SignupView = None
         self.match_not_reported = False
         self.player_mmr = {}
         self.player_names = {}
         self.match_ongoing = False
         self.selected_map = None
+        self.team1 = []
+        self.team2 = []
+
+        self.signup_active = False
+        self.current_signup_message = None
+        self.queue = []
 
         self.captain1 = None
         self.captain2 = None

@@ -157,16 +157,16 @@ class BotCommands(commands.Cog):
             self.bot.signup_view = SignupView(ctx, self.bot)
 
         # Don't create a new signup if one is active
-        if self.bot.signup_view.signup_active:
+        if self.bot.signup_active:
             await ctx.send("A signup is already in progress. Please wait for it to complete.")
             return
 
         if self.bot.match_not_reported:
             await ctx.send("Report the last match before starting another one (credits to dshocc for bug testing)")
 
-        self.bot.signup_view.signup_active = True
+        self.bot.signup_active = True
 
-        await ctx.send("Click a button to manage your queue status!", view=self.bot.signup_view)
+        self.bot.current_signup_message = await ctx.send("Click a button to manage your queue status!", view=self.bot.signup_view)
 
     # Command to join queue without pressing the button
     @commands.command()
@@ -175,7 +175,7 @@ class BotCommands(commands.Cog):
             await ctx.send("No signup is currently active.")
             return
 
-        if not self.bot.signup_view.signup_active:
+        if not self.bot.signup_active:
             await ctx.send("No signup is currently active.")
             return
 
@@ -197,12 +197,12 @@ class BotCommands(commands.Cog):
                     await ctx.send("The queue is now full, proceeding to the voting stage.")
                     self.bot.signup_view.cancel_signup_refresh()
 
-                    voting_view = ModeVoteView(ctx, self.bot, self.bot.signup_view.queue)
+                    voting_view = ModeVoteView(ctx, self.bot)
 
                     # Start vote for how teams will be decided
                     await voting_view.send_view()
 
-                    self.bot.signup_view.signup_active = False
+                    self.bot.signup_active = False
             else:
                 await ctx.send("You're already in the queue!")
         else:
@@ -216,12 +216,12 @@ class BotCommands(commands.Cog):
             await ctx.send("No signup is currently active.")
             return
 
-        if not self.bot.signup_view.signup_active:
+        if not self.bot.signup_active:
             await ctx.send("No signup is currently active.")
             return
 
-        if ctx.author.id in [player["id"] for player in self.bot.signup_view.queue]:
-            self.bot.signup_view.queue[:] = [player for player in self.bot.signup_view.queue if
+        if ctx.author.id in [player["id"] for player in self.bot.queue]:
+            self.bot.queue[:] = [player for player in self.bot.queue if
                                              player["id"] != ctx.author.id]
             # Update the button label
             await self.bot.signup_view.update_signup()
@@ -240,7 +240,7 @@ class BotCommands(commands.Cog):
             return
 
         riot_names = []
-        for player in self.bot.signup_view.queue:
+        for player in self.bot.queue:
             discord_id = player['id']
             user_data = users.find_one({"discord_id": str(discord_id)})
             if user_data:
@@ -251,7 +251,7 @@ class BotCommands(commands.Cog):
                 riot_names.append("Unknown")
 
         queue_status = ", ".join(riot_names)
-        await ctx.send(f"Current queue ({len(self.bot.signup_view.queue)}/10): {queue_status}")
+        await ctx.send(f"Current queue ({len(self.bot.queue)}/10): {queue_status}")
 
     # Report the match
     @commands.command()
@@ -344,7 +344,7 @@ class BotCommands(commands.Cog):
             return
 
         queue_riot_ids = set()
-        for player in queue:
+        for player in self.bot.queue:
             user_data = users.find_one({"discord_id": str(player["id"])})
             if user_data:
                 player_name = user_data.get("name").lower()
@@ -391,7 +391,7 @@ class BotCommands(commands.Cog):
                 match_team_players[team_id].add((player_name, player_tag))
 
         team1_riot_ids = set()
-        for player in team1:
+        for player in self.bot.team1:
             user_data = users.find_one({"discord_id": str(player["id"])})
             if user_data:
                 player_name = user_data.get("name", "").lower()
@@ -399,7 +399,7 @@ class BotCommands(commands.Cog):
                 team1_riot_ids.add((player_name, player_tag))
 
         team2_riot_ids = set()
-        for player in team2:
+        for player in self.bot.team2:
             user_data = users.find_one({"discord_id": str(player["id"])})
             if user_data:
                 player_name = user_data.get("name", "").lower()
@@ -409,11 +409,11 @@ class BotCommands(commands.Cog):
         winning_match_team_players = match_team_players.get(winning_team_id, set())
 
         if winning_match_team_players == team1_riot_ids:
-            winning_team = team1
-            losing_team = team2
+            winning_team = self.bot.team1
+            losing_team = self.bot.team2
         elif winning_match_team_players == team2_riot_ids:
-            winning_team = team2
-            losing_team = team1
+            winning_team = self.bot.team2
+            losing_team = self.bot.team1
         else:
             await ctx.send("Could not match the winning team to our teams.")
             return
@@ -494,7 +494,7 @@ class BotCommands(commands.Cog):
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
                 riot_tag = user_data.get("tag", "Unknown")
-                name = f"{riot_name}#{riot_tag}"
+                name = f"**{riot_name}#{riot_tag}**"
             else:
                 name = "Unknown"
 
@@ -513,7 +513,7 @@ class BotCommands(commands.Cog):
             )
 
         leaderboard_text = "\n".join(leaderboard_entries)
-        await ctx.send(f"**MMR Leaderboard (Top 10 Players):**\n{leaderboard_text}")
+        await ctx.send(f"##MMR Leaderboard (Top 10 Players):##\n{leaderboard_text}")
 
     @commands.command()
     @commands.has_role("Owner")  # Restrict this command to admins
@@ -566,9 +566,9 @@ class BotCommands(commands.Cog):
     async def simulate_queue(self, ctx):
         if self.bot.signup_view is None:
             self.bot.signup_view = SignupView(ctx, self.bot)
-        if self.bot.signup_view.signup_active:
+        if self.bot.signup_active:
             await ctx.send("A signup is already in progress. Resetting queue for simulation.")
-            self.bot.signup_view.queue.clear()
+            self.bot.queue.clear()
 
         # Add 10 dummy players to the queue
         queue = [{"id": i, "name": f"Player{i}"} for i in range(1, 11)]
@@ -587,7 +587,7 @@ class BotCommands(commands.Cog):
         # Proceed to the voting stage
         await ctx.send("The queue is now full, proceeding to the voting stage.")
 
-        mode_vote = ModeVoteView(ctx, self.bot, self.bot.signup_view.queue)
+        mode_vote = ModeVoteView(ctx, self.bot)
         await mode_vote.send_view()
 
     # Link Riot Account
@@ -629,7 +629,7 @@ class BotCommands(commands.Cog):
 
         # Find the player in the queue with matching Riot name and tag
         player_in_queue = None
-        for player in self.bot.signup_view.queue:
+        for player in self.bot.queue:
             user_data = users.find_one({"discord_id": str(player["id"])})
             if user_data:
                 user_riot_name = user_data.get("name", "").lower()
@@ -660,7 +660,7 @@ class BotCommands(commands.Cog):
 
         # Find the player in the queue with matching Riot name and tag
         player_in_queue = None
-        for player in self.bot.signup_view.queue:
+        for player in self.bot.queue:
             user_data = users.find_one({"discord_id": str(player["id"])})
             if user_data:
                 user_riot_name = user_data.get("name", "").lower()
@@ -681,17 +681,22 @@ class BotCommands(commands.Cog):
 
     # Stop the signup process, only owner can do this
     @commands.command()
-    @commands.has_role("blood")
+
     async def cancel(self, ctx):
-        self.bot.signup_view.cancel_signup_refresh()
-        if self.bot.signup_view.current_signup_message:
+        if not self.bot.signup_active:
+            await ctx.send("No signup is active to cancel")
+            return
+        if self.bot.current_signup_message:
+            self.bot.signup_view.cancel_signup_refresh()
             try:
-                await self.bot.signup_view.current_signup_message.delete()
+                await self.bot.current_signup_message.delete()
             except discord.NotFound:
                 pass
-            self.bot.signup_view.current_signup_message = None
-        await ctx.send("Canceled Signup")
-        self.bot.signup_view.signup_active = False
+            self.bot.current_signup_message = None
+            await ctx.send("Canceled Signup")
+            self.bot.signup_active = False
+        else:
+            await ctx.send("Nothing to cancel")
 
     # Custom Help Command
     @commands.command()
