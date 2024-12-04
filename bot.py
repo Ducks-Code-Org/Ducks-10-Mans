@@ -310,10 +310,12 @@ async def refresh_signup_message(ctx):
         while signup_active:
             await asyncio.sleep(60)
 
-            try:
-                await signup_message.delete()
-            except discord.NotFound:
-                pass
+            # delete old message
+            if signup_message:
+                try:
+                    await signup_message.delete()
+                except discord.NotFound:
+                    pass
 
             # Send new signup message
             signup_message = await ctx.send("Click a button to manage your queue status!", view=signup_view)
@@ -947,20 +949,18 @@ async def balanced_teams_logic(ctx):
 # Signup Command
 @bot.command()
 async def signup(ctx):
-    global signup_active, team1, team2, signup_message, signup_refresh_task, signup_view, match_not_reported
+    global signup_active, signup_message, signup_refresh_task, signup_view
 
     if signup_active:
         await ctx.send("A signup is already in progress. Please wait for it to complete.")
         return
-    
-    if match_not_reported:
-        await ctx.send("Report the last match before starting another one (credits to dshocc for bug testing)")
 
+    cancel_signup_task()
+    signup_message = None
+
+    # Initialize signup
     signup_active = True
     queue.clear()
-    team1.clear()
-    team2.clear()
-
     signup_view = SignupView()
     signup_message = await ctx.send("Click a button to manage your queue status!", view=signup_view)
 
@@ -1568,8 +1568,8 @@ async def cancel(ctx):
         except discord.NotFound:
             pass
         signup_message = None
+        signup_active = False
     await ctx.send("Canceled Signup")
-    signup_active = False
 
 # Custom Help Command
 @bot.command()
