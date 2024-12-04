@@ -105,11 +105,6 @@ class CaptainsDraftingView(discord.ui.View):
                 # Begin vote for competitive or all maps
                 await map_type_vote.send_view()
 
-    async def draft_next_player(self):
-        if len(self.remaining_players) == 0:
-            await self.finalize_draft()
-
-        await self.send_current_draft_view()
 
 
     async def select_callback(self, interaction: discord.Interaction):
@@ -136,6 +131,16 @@ class CaptainsDraftingView(discord.ui.View):
 
         # Let discord know the action was processed
         await interaction.response.defer()
+
+        # Attempt to go to the next player to select
+        await self.draft_next_player()
+
+    async def draft_next_player(self):
+        if len(self.remaining_players) == 0:
+            await self.finalize_draft()
+
+        await self.send_current_draft_view()
+
 
     async def send_current_draft_view(self):
         if self.bot.captain1 is None:
