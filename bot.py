@@ -45,27 +45,6 @@ class CustomBot(commands.Bot):
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
                 riot_tag = user_data.get("tag", "Unknown")
-                name = f"{riot_name}#{riot_tag}"
-            else:
-                name = "Unknown"
-
-            mmr_collection.update_one(
-                {'player_id': player_id},
-                {'$set': {
-                    'mmr': stats['mmr'],
-                    'wins': stats['wins'],
-                    'losses': stats['losses'],
-                    'name': name,  # Update name to Riot name
-                    'total_combat_score': stats.get('total_combat_score', 0),
-                    'total_kills': stats.get('total_kills', 0),
-                    'total_deaths': stats.get('total_deaths', 0),
-                    'matches_played': stats.get('matches_played', 0),
-                    'total_rounds_played': stats.get('total_rounds_played', 0),
-                    'average_combat_score': stats.get('average_combat_score', 0),
-                    'kill_death_ratio': stats.get('kill_death_ratio', 0)
-                }},
-                upsert=True
-            )
 
     # adjust MMR and track wins/losses
     def adjust_mmr(self, winning_team, losing_team):
