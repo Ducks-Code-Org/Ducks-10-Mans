@@ -443,7 +443,23 @@ class BotCommands(commands.Cog):
     # Allow players to check their MMR and stats
     @commands.command()
     async def stats(self, ctx):
-        player_id = ctx.author.id
+        # Allows players to lookup the stats of other players
+        if riot_input is not None:
+            try:
+                riot_name, riot_tag = riot_input.rsplit("#", 1)
+            except ValueError:
+                await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
+                return
+            player_data = users.find_one({"name": str(riot_name), "tag": str(riot_tag)})
+            if player_data:
+                player_id = player_data.get("discord_id")
+            else:
+                await ctx.send(
+                    "Could not find this player. Please check the name and tag and ensure they have played at least one match."
+                )
+                return
+        else:
+            player_id = ctx.author.id
         if player_id in self.bot.player_mmr:
             stats_data = self.bot.player_mmr[player_id]
             mmr_value = stats_data["mmr"]
@@ -698,6 +714,23 @@ class BotCommands(commands.Cog):
             self.bot.signup_active = False
         else:
             await ctx.send("Nothing to cancel")
+
+    @commands.command()
+    async def force_draft(self, ctx):
+        from views.captains_drafting_view import CaptainsDraftingView
+        self.bot.queue = [
+            {"name": "Player3", "id": 1},
+            {"name": "Player4", "id": 2},
+            {"name": "Player5", "id": 3},
+            {"name": "Player6", "id": 4},
+            {"name": "Player7", "id": 5},
+            {"name": "Player8", "id": 6},
+            {"name": "Player9", "id": 7},
+            {"name": "Player10", "id": 8},
+        ]
+        draft = CaptainsDraftingView(ctx, self.bot)
+        await draft.send_current_draft_view()
+
 
     # Custom Help Command
     @commands.command()
