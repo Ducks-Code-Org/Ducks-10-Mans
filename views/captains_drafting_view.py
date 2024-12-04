@@ -15,7 +15,7 @@ class CaptainsDraftingView(discord.ui.View):
             placeholder="Select a player to pick",
             options=[],
         )
-
+        self.add_item(self.player_select)
         self.remaining_players = [p for p in self.bot.queue if p not in [self.bot.captain1, self.bot.captain2]]
         self.pick_order = [
             self.bot.captain1,
