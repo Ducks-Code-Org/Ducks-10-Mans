@@ -715,6 +715,23 @@ class BotCommands(commands.Cog):
         else:
             await ctx.send("Nothing to cancel")
 
+    @commands.command()
+    async def force_draft(self, ctx):
+        from views.captains_drafting_view import CaptainsDraftingView
+        self.bot.queue = [
+            {"name": "Player3", "id": 1},
+            {"name": "Player4", "id": 2},
+            {"name": "Player5", "id": 3},
+            {"name": "Player6", "id": 4},
+            {"name": "Player7", "id": 5},
+            {"name": "Player8", "id": 6},
+            {"name": "Player9", "id": 7},
+            {"name": "Player10", "id": 8},
+        ]
+        draft = CaptainsDraftingView(ctx, self.bot)
+        await draft.send_current_draft_view()
+
+
     # Custom Help Command
     @commands.command()
     async def help(self, ctx):

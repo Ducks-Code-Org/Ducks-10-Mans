@@ -120,6 +120,7 @@ class CaptainsDraftingView(discord.ui.View):
                                                     ephemeral=True)
             return
 
+        print(player_dict)
         # Add the player to the right team
         if current_captain_id == self.bot.captain1["id"]:
             self.bot.team1.append(player_dict)
@@ -127,7 +128,6 @@ class CaptainsDraftingView(discord.ui.View):
             self.bot.team2.append(player_dict)
 
         self.remaining_players.remove(player_dict)
-        self.player_select.disabled = True
 
         # Let discord know the action was processed
         await interaction.response.defer()
@@ -240,11 +240,11 @@ class CaptainsDraftingView(discord.ui.View):
         if self.captain_pick_message is not None:
             await self.remaining_players_message.edit(embed=remaining_players_embed)
             await self.drafting_message.edit(embed=drafting_embed)
-            await self.captain_pick_message.edit(message, view=self)
+            await self.captain_pick_message.edit(content=message, view=self)
         else:
             self.remaining_players_message = await self.ctx.send(embed=remaining_players_embed)
             self.drafting_message = await self.ctx.send(embed=drafting_embed)
-            self.captain_pick_message = await self.ctx.send(message, view=self)
+            self.captain_pick_message = await self.ctx.send(content=message, view=self)
 
         # Wait for the captain to make a selection or time out
         try:
