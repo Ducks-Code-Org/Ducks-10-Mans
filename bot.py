@@ -1058,16 +1058,10 @@ async def report(ctx):
     region = "na"
     platform = "pc"
 
-    url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{name}/{tag}"
-    response = requests.get(url, headers=headers)
-    match_data = response.json()
-    match = match_data["data"][0]
-    metadata = match.get("metadata", {})
-    map_name = metadata.get("map", {}).get("name", "").lower()
-
-    testing_mode = False # TRUE WHILE TESTING
+    testing_mode = False  # TRUE WHILE TESTING
 
     if testing_mode:
+        # Use mock match data
         match = mock_match_data
         match_ongoing = True
 
@@ -1099,12 +1093,35 @@ async def report(ctx):
                 await ctx.send(f"Player {player_name}#{player_tag} is not linked to any Discord account.")
                 return
 
-        # For mocking match data, set to amount of rounds played
-        total_rounds = 24
+        teams = match.get('teams', [])
+        if teams:
+            team_data = teams[0] 
+            rounds_info = team_data.get('rounds', {})
+            total_rounds = rounds_info.get('won', 0) + rounds_info.get('lost', 0)
+        else:
+            await ctx.send("No team data found in mock match data.")
+            return
+
+        if total_rounds == 0:
+            total_rounds = 24 
+
     else:
         if not match_ongoing:
             await ctx.send("No match is currently active, use `!signup` to start one")
             return
+
+        # Fetch the most recent match using the v4 endpoint
+        url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{name}/{tag}"
+        response = requests.get(url, headers=headers)
+        match_data = response.json()
+
+        if "data" not in match_data or not match_data["data"]:
+            await ctx.send("Could not retrieve match data.")
+            return
+
+        match = match_data["data"][0]
+        metadata = match.get("metadata", {})
+        map_name = metadata.get("map", {}).get("name", "").lower()
 
         if not selected_map_name:
             await ctx.send("No map was selected for this match.")
@@ -1114,19 +1131,18 @@ async def report(ctx):
             await ctx.send("Map doesn't match your most recent match. Unable to report it.")
             return
 
-        if "data" not in match_data or not match_data["data"]:
-            await ctx.send("Could not retrieve match data.")
-            return
-
-        match = match_data["data"][0]
-
         # Get total rounds played from the match data
         teams = match.get('teams', [])
         if teams:
-            team1_data = teams[0]
-            total_rounds = team1_data.get('rounds_won', 0) + team1_data.get('rounds_lost', 0)
+            team_data = teams[0] 
+            rounds_info = team_data.get('rounds', {})
+            total_rounds = rounds_info.get('won', 0) + rounds_info.get('lost', 0)
         else:
             await ctx.send("No team data found in match data.")
+            return
+
+        if total_rounds == 0:
+            await ctx.send("Could not determine the total rounds played.")
             return
 
     match_players = match.get("players", [])
@@ -1138,8 +1154,8 @@ async def report(ctx):
     for player in queue:
         user_data = users.find_one({"discord_id": str(player["id"])})
         if user_data:
-            player_name = user_data.get("name").lower()
-            player_tag = user_data.get("tag").lower()
+            player_name = user_data.get("name", "").lower()
+            player_tag = user_data.get("tag", "").lower()
             queue_riot_ids.add((player_name, player_tag))
 
     # get the list of players in the match
@@ -1186,7 +1202,7 @@ async def report(ctx):
         user_data = users.find_one({"discord_id": str(player["id"])})
         if user_data:
             player_name = user_data.get("name", "").lower()
-            player_tag = user_data.get("tag").lower()
+            player_tag = user_data.get("tag", "").lower()
             team1_riot_ids.add((player_name, player_tag))
 
     team2_riot_ids = set()
@@ -1194,7 +1210,7 @@ async def report(ctx):
         user_data = users.find_one({"discord_id": str(player["id"])})
         if user_data:
             player_name = user_data.get("name", "").lower()
-            player_tag = user_data.get("tag").lower()
+            player_tag = user_data.get("tag", "").lower()
             team2_riot_ids.add((player_name, player_tag))
 
     winning_match_team_players = match_team_players.get(winning_team_id, set())
@@ -1208,7 +1224,7 @@ async def report(ctx):
     else:
         await ctx.send("Could not match the winning team to our teams.")
         return
-    
+
     for player in winning_team + losing_team:
         ensure_player_mmr(player["id"])
 
@@ -1249,6 +1265,7 @@ def update_stats(player_stats, total_rounds):
     deaths = stats.get("deaths", 0)
     assists = stats.get("assists", 0)
 
+    # Update the player's stats
     if discord_id in player_mmr:
         player_data = player_mmr[discord_id]
         total_matches = player_data.get("matches_played", 0) + 1
@@ -1269,7 +1286,6 @@ def update_stats(player_stats, total_rounds):
             "average_combat_score": average_combat_score,
             "kill_death_ratio": kill_death_ratio
         })
-
     else:
         total_matches = 1
         total_combat_score = score
