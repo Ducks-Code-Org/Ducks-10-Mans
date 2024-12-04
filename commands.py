@@ -333,7 +333,7 @@ class BotCommands(commands.Cog):
             teams = match.get('teams', [])
             if teams:
                 team1_data = teams[0]
-                total_rounds = team1_data.get('rounds_won', 0) + team1_data.get('rounds_lost', 0)
+                total_rounds = metadata.get("total_rounds")
             else:
                 await ctx.send("No team data found in match data.")
                 return
@@ -681,7 +681,7 @@ class BotCommands(commands.Cog):
 
     # Stop the signup process, only owner can do this
     @commands.command()
-
+    @commands.has_role("Owner")
     async def cancel(self, ctx):
         if not self.bot.signup_active:
             await ctx.send("No signup is active to cancel")
