@@ -488,16 +488,23 @@ class BotCommands(commands.Cog):
         # Sort players by MMR and take the top 10
         sorted_mmr = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)[:10]
 
-        leaderboard_entries = []
-        for idx, (player_id, stats) in enumerate(sorted_mmr, start=1):
-            # Get the Riot name and tag from the users collection
+        names = []
+        # Get the Riot name and tag from the users collection
+        for player_id, stats in sorted_mmr:
             user_data = users.find_one({"discord_id": str(player_id)})
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
                 riot_tag = user_data.get("tag", "Unknown")
-                name = f"**{riot_name}#{riot_tag}**"
+                names.append(f"{riot_name}#{riot_tag}")
             else:
-                name = "Unknown"
+                names.append("Unknown")
+
+        max_name_length = max(len(name) for name in names)
+
+        leaderboard_entries = []
+        for idx, (player_id, stats) in enumerate(sorted_mmr, start=1):
+            #pull name from already gathered array names
+            name = names[idx - 1]
 
             mmr_value = stats["mmr"]
             wins = stats["wins"]
@@ -509,7 +516,7 @@ class BotCommands(commands.Cog):
             win_percent = (wins / matches_played) * 100 if matches_played > 0 else 0
 
             leaderboard_entries.append(
-                f"{idx}. {name} - MMR: {mmr_value}, Wins: {wins}, Losses: {losses}, "
+                f"{idx}. {name:<{max_name_length}} - MMR: {mmr_value}, Wins: {wins}, Losses: {losses}, " #pad each name to be same length
                 f"Win%: {win_percent:.1f}%, Avg CS: {avg_cs:.2f}, K/D: {kd_ratio:.2f}"
             )
 
