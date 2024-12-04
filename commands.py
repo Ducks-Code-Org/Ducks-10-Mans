@@ -442,8 +442,24 @@ class BotCommands(commands.Cog):
 
     # Allow players to check their MMR and stats
     @commands.command()
-    async def stats(self, ctx):
-        player_id = ctx.author.id
+    async def stats(self, ctx, *, riot_input = None):
+        # Allows players to lookup the stats of other players
+        if riot_input is not None:
+            try:
+                riot_name, riot_tag = riot_input.rsplit("#", 1)
+            except ValueError:
+                await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
+                return
+            player_data = users.find_one({"name": str(riot_name), "tag": str(riot_tag)})
+            if player_data:
+                player_id = player_data.get("discord_id")
+            else:
+                await ctx.send(
+                    "Could not find this player. Please check the name and tag and ensure they have played at least one match."
+                )
+                return
+        else:
+            player_id = ctx.author.id
         if player_id in self.bot.player_mmr:
             stats_data = self.bot.player_mmr[player_id]
             mmr_value = stats_data["mmr"]
