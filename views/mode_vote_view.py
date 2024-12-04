@@ -7,7 +7,7 @@ import random
 
 class ModeVoteView(discord.ui.View):
     def __init__(self, ctx, bot):
-        super().__init__()
+        super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
         self.balanced_button = Button(label="Balanced Teams (0)", style=discord.ButtonStyle.green)
@@ -22,7 +22,6 @@ class ModeVoteView(discord.ui.View):
 
         # Link callbacks to buttons
         self.setup_callbacks()
-
 
 
     async def balanced_callback(self, interaction: discord.Interaction):

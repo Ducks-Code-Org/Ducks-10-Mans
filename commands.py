@@ -181,7 +181,7 @@ class BotCommands(commands.Cog):
 
         existing_user = users.find_one({"discord_id": str(ctx.author.id)})
         if existing_user:
-            if ctx.author.id not in [player["id"] for player in self.bot.signup_view.queue]:
+            if ctx.author.id not in [player["id"] for player in self.bot.queue]:
                 self.bot.signup_view.add_player_to_queue({"id": ctx.author.id, "name": ctx.author.name})
                 if ctx.author.id not in self.bot.player_mmr:
                     self.bot.player_mmr[ctx.author.id] = {"mmr": 1000, "wins": 0, "losses": 0}
@@ -191,9 +191,9 @@ class BotCommands(commands.Cog):
                 await self.bot.signup_view.update_signup()
 
                 await ctx.send(
-                    f"{ctx.author.name} added to the queue! Current queue count: {len(self.bot.signup_view.queue)}")
+                    f"{ctx.author.name} added to the queue! Current queue count: {len(self.bot.queue)}")
 
-                if len(self.bot.signup_view.queue) == 10:
+                if len(self.bot.queue) == 10:
                     await ctx.send("The queue is now full, proceeding to the voting stage.")
                     self.bot.signup_view.cancel_signup_refresh()
 
@@ -207,7 +207,7 @@ class BotCommands(commands.Cog):
                 await ctx.send("You're already in the queue!")
         else:
             await ctx.send(
-                "You must link your Riot account to join the queue. Use `!linkriot Name#Tag` to link your account.")
+                "You must link your Riot account to join the queue. Use !linkriot Name#Tag to link your account.")
 
     # Leave queue command without pressing button
     @commands.command()
@@ -225,6 +225,7 @@ class BotCommands(commands.Cog):
                                              player["id"] != ctx.author.id]
             # Update the button label
             await self.bot.signup_view.update_signup()
+            await ctx.send("You have left the queue.")
 
         else:
             await ctx.send("You're not in the queue.")
@@ -235,7 +236,7 @@ class BotCommands(commands.Cog):
             await ctx.send("No signup is currently active.")
             return
 
-        if not self.bot.signup_view.signup_active:
+        if not self.bot.signup_active:
             await ctx.send("No signup is currently active.")
             return
 
@@ -513,7 +514,7 @@ class BotCommands(commands.Cog):
             )
 
         leaderboard_text = "\n".join(leaderboard_entries)
-        await ctx.send(f"##MMR Leaderboard (Top 10 Players):##\n{leaderboard_text}")
+        await ctx.send(f"## MMR Leaderboard (Top 10 Players): ##\n{leaderboard_text}")
 
     @commands.command()
     @commands.has_role("Owner")  # Restrict this command to admins

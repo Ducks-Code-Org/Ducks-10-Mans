@@ -8,7 +8,7 @@ import asyncio
 
 class SignupView(discord.ui.View):
     def __init__(self, ctx, bot):
-        super().__init__()
+        super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
         self.signup_refresh_task = asyncio.create_task(self.refresh_signup_message())

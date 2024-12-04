@@ -7,7 +7,7 @@ import asyncio
 
 class CaptainsDraftingView(discord.ui.View):
     def __init__(self, ctx, bot):
-        super().__init__()
+        super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
 

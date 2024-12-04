@@ -4,10 +4,9 @@ from globals import official_maps, all_maps
 import asyncio
 from views.map_vote_view import MapVoteView
 
-
 class MapTypeVoteView(discord.ui.View):
     def __init__(self, ctx, bot):
-        super().__init__()
+        super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
         self.competitive_button = Button(label="Competitive Maps (0)", style=discord.ButtonStyle.green)

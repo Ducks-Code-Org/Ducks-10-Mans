@@ -2,27 +2,31 @@ import discord
 from discord.ui import Button
 from database import users
 import asyncio
-
-
+import random
 
 class MapVoteView(discord.ui.View):
     def __init__(self, ctx, bot, map_choices):
-        super().__init__()
+        super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
         self.map_choices = map_choices  # map choices passed from map type vote view
         self.map_buttons = []
 
-        self.map_votes = {map_name: 0 for map_name in map_choices}
+        self.map_votes = {}
+        self.chosen_maps = []
+
         self.voters = set()
 
     async def setup(self):
         await self.setup_map_buttons()
 
     async def setup_map_buttons(self):
-        for map_name in self.map_choices:
+        random_maps = random.sample(self.map_choices, 3)
+        self.chosen_maps = random_maps
+        self.map_votes = {map_name: 0 for map_name in self.chosen_maps}
+        for map_name in random_maps:
             button = Button(label=f"{map_name} (0)", style=discord.ButtonStyle.secondary)
-
+ 
             async def map_callback(interaction: discord.Interaction, map_name=map_name):
                 if interaction.user.id not in [player["id"] for player in self.bot.queue]:
                     await interaction.response.send_message("You must be in the queue to vote!", ephemeral=True)
