@@ -442,7 +442,7 @@ class BotCommands(commands.Cog):
 
     # Allow players to check their MMR and stats
     @commands.command()
-    async def stats(self, ctx):
+    async def stats(self, ctx, *, riot_input = None):
         # Allows players to lookup the stats of other players
         if riot_input is not None:
             try:
