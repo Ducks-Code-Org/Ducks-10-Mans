@@ -53,6 +53,7 @@ class CaptainsDraftingView(discord.ui.View):
         self.player_select.callback = self.select_callback
 
     async def finalize_draft(self):
+        self.pick_count = 0
         if self.remaining_players_message:
             await self.remaining_players_message.delete()
         if self.drafting_message:
@@ -60,6 +61,8 @@ class CaptainsDraftingView(discord.ui.View):
         if self.captain_pick_message:
             await self.captain_pick_message.delete()
 
+        print(f"Final team 1: {self.bot.team1}")
+        print(f"Final team 2: {self.bot.team2}")
         # Get Riot names for team members
         team1_names = []
         for p in self.bot.team1:
@@ -106,7 +109,6 @@ class CaptainsDraftingView(discord.ui.View):
                 await map_type_vote.send_view()
 
 
-
     async def select_callback(self, interaction: discord.Interaction):
         current_captain_id = self.pick_order[self.pick_count]["id"]
         if interaction.user.id != current_captain_id:
@@ -126,7 +128,7 @@ class CaptainsDraftingView(discord.ui.View):
             self.bot.team1.append(player_dict)
         else:
             self.bot.team2.append(player_dict)
-
+        self.pick_count += 1
         self.remaining_players.remove(player_dict)
 
         # Let discord know the action was processed
@@ -138,6 +140,7 @@ class CaptainsDraftingView(discord.ui.View):
     async def draft_next_player(self):
         if len(self.remaining_players) == 0:
             await self.finalize_draft()
+            return
 
         await self.send_current_draft_view()
 
