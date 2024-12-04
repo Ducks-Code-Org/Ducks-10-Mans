@@ -452,7 +452,7 @@ class BotCommands(commands.Cog):
                 return
             player_data = users.find_one({"name": str(riot_name), "tag": str(riot_tag)})
             if player_data:
-                player_id = player_data.get("discord_id")
+                player_id = int(player_data.get("discord_id"))
             else:
                 await ctx.send(
                     "Could not find this player. Please check the name and tag and ensure they have played at least one match."
