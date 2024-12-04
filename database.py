@@ -1,5 +1,6 @@
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
+import os
 
 # MongoDB Connection
 uri = os.getenv("uri_key")

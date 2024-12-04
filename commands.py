@@ -564,8 +564,8 @@ class BotCommands(commands.Cog):
     # Simulate a queue
     @commands.command()
     async def simulate_queue(self, ctx):
-        dummy = True
-
+        if self.bot.signup_view is None:
+            self.bot.signup_view = SignupView(ctx, self.bot)
         if self.bot.signup_view.signup_active:
             await ctx.send("A signup is already in progress. Resetting queue for simulation.")
             self.bot.signup_view.queue.clear()

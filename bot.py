@@ -2,6 +2,7 @@ from discord.ext import commands
 from commands import BotCommands
 from views.signup_view import SignupView
 from database import mmr_collection, users
+
 class CustomBot(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

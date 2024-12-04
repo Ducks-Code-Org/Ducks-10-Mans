@@ -74,7 +74,7 @@ class MapTypeVoteView(discord.ui.View):
             await map_vote.send_view()
 
     def setup_callbacks(self):
-        self.competitive_button.callback = self.competitive_button
-        self.all_maps_button.callback = self.all_maps_button
+        self.competitive_button.callback = self.competitive_callback
+        self.all_maps_button.callback = self.all_maps_callback
 
     # refresh the signup message every minute

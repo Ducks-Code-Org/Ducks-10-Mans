@@ -55,7 +55,7 @@ class MapVoteView(discord.ui.View):
         winning_map = max(self.map_votes, key=self.map_votes.get)
         selected_map_name = winning_map
         await self.ctx.send(f"The selected map is **{winning_map}**!")
-
+        self.bot.selected_map = winning_map
         teams_embed = discord.Embed(
             title=f"Teams for the match on {winning_map}",
             description="Good luck to both teams!",

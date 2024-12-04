@@ -19,6 +19,7 @@ class ModeVoteView(discord.ui.View):
 
         self.votes = {"Balanced Teams": 0, "Captains": 0}
         self.voters = set()
+        self.dummy = False
 
 
         # Link callbacks to buttons
@@ -85,7 +86,7 @@ class ModeVoteView(discord.ui.View):
 
         self.bot.match_ongoing = True
 
-        vote_map_type = MapTypeVoteView(self.ctx, self.bot, self.queue)
+        vote_map_type = MapTypeVoteView(self.ctx, self.bot, self.queue, team1, team2)
 
         # vote for maps next
         await vote_map_type.send_view()
