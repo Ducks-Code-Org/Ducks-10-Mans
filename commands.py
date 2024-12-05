@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 import requests
+import random
 
 from database import users, all_matches, mmr_collection
 from views.mode_vote_view import ModeVoteView
@@ -153,10 +154,6 @@ class BotCommands(commands.Cog):
     # Signup Command
     @commands.command()
     async def signup(self, ctx):
-        # Check if we need to create the view
-        if self.bot.signup_view is None:
-            self.bot.signup_view = SignupView(ctx, self.bot)
-
         # Don't create a new signup if one is active
         if self.bot.signup_active:
             await ctx.send("A signup is already in progress. Please wait for it to complete.")
@@ -168,6 +165,16 @@ class BotCommands(commands.Cog):
         self.bot.signup_active = True
 
         self.bot.current_signup_message = await ctx.send("Click a button to manage your queue status!", view=self.bot.signup_view)
+        
+        # Generate Signup Thread
+        self.bot.signup_thread = await self.bot.current_signup_message.create_thread(name=f"10-Man Match #{random.randrange(1, 10**4):04}", auto_archive_duration=60)
+        self.bot.signup_thread_message = await ctx.send(f"Queue Started! Join via the queue thread: <#{self.bot.signup_thread.id}>")
+        await self.bot.signup_thread_message.pin()
+        ctx = self.bot.signup_thread
+
+        # Check if we need to create the view
+        if self.bot.signup_view is None:
+            self.bot.signup_view = SignupView(ctx, self.bot)
 
     # Command to join queue without pressing the button
     @commands.command()
@@ -190,6 +197,8 @@ class BotCommands(commands.Cog):
 
                 # Update the button label
                 await self.bot.signup_view.update_signup()
+
+                await self.bot.signup_thread.add_user(ctx.author)
 
                 await ctx.send(
                     f"{ctx.author.name} added to the queue! Current queue count: {len(self.bot.queue)}")
@@ -233,6 +242,7 @@ class BotCommands(commands.Cog):
                                              player["id"] != ctx.author.id]
             # Update the button label
             await self.bot.signup_view.update_signup()
+            await self.bot.signup_thread.remove_user(ctx.author)
             await ctx.send("You have left the queue.")
 
         else:
@@ -261,6 +271,7 @@ class BotCommands(commands.Cog):
 
         queue_status = ", ".join(riot_names)
         await ctx.send(f"Current queue ({len(self.bot.queue)}/10): {queue_status}")
+        await ctx.send(f"Match Thread: <#{self.bot.signup_thread.id}>")
 
     # Report the match
     @commands.command()
@@ -447,6 +458,12 @@ class BotCommands(commands.Cog):
 
         self.bot.match_not_reported = False
         self.bot.match_ongoing = False
+        try:
+            await self.bot.current_signup_message.delete()
+            await self.bot.signup_thread.delete()
+            await self.bot.signup_thread_message.delete()
+        except discord.NotFound:
+                pass
 
     # Allow players to check their MMR and stats
     @commands.command()
@@ -728,6 +745,8 @@ class BotCommands(commands.Cog):
             self.bot.signup_view.cancel_signup_refresh()
             try:
                 await self.bot.current_signup_message.delete()
+                await self.bot.signup_thread.delete()
+                await self.bot.signup_thread_message.delete()
             except discord.NotFound:
                 pass
             self.bot.current_signup_message = None
