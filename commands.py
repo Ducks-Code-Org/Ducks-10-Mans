@@ -162,12 +162,24 @@ class LeaderboardView(View):
 
         await interaction.response.edit_message(content=content, view=self)
 
-    @discord.ui.button(label="Previous", style=discord.ButtonStyle.blurple, disabled=True)
+    @discord.ui.button(style=discord.ButtonStyle.blurple, disabled=True, emoji="⏪")
     async def previous_button(self, interaction: discord.Interaction, button: Button):
         self.current_page -= 1
         await self.update_message(interaction)
 
-    @discord.ui.button(label="Next", style=discord.ButtonStyle.blurple, disabled=False)
+    # Refresh the leaderboard
+    @discord.ui.button(style=discord.ButtonStyle.blurple, emoji="🔄")
+    async def refresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.sorted_mmr = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+
+        # Recalculate total_pages if player count changed
+        self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
+        if self.current_page >= self.total_pages:
+            self.current_page = max(0, self.total_pages - 1)
+            
+        await self.update_message(interaction)
+
+    @discord.ui.button(style=discord.ButtonStyle.blurple, disabled=False, emoji="⏩")
     async def next_button(self, interaction: discord.Interaction, button: Button):
         self.current_page += 1
         await self.update_message(interaction)
