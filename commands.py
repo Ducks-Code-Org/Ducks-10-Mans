@@ -783,14 +783,20 @@ class BotCommands(commands.Cog):
     async def toggledev(self, ctx):
         if not self.dev_mode:
             self.dev_mode = True
-            await self.bot.change_presence(status=discord.Status.do_not_disturb, )
             await ctx.send("Developer Mode Enabled")
             self.bot.command_prefix="^"
+            try:
+                await self.bot.change_presence(status=discord.Status.do_not_disturb, activity=discord.Game(name="Bot Maintenance"))
+            except (discord.HTTPException):
+                pass
         else:
             self.dev_mode = False
-            await self.bot.change_presence(status=discord.Status.online)
             await ctx.send("Developer Mode Disabled")
             self.bot.command_prefix="!"
+            try:
+                await self.bot.change_presence(status=discord.Status.online, activity=discord.Game(name="10 Mans!"))
+            except (discord.HTTPException):
+                pass
 
     # Stop the signup process, only owner can do this
     @commands.command()
