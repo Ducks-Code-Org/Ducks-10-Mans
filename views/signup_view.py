@@ -39,9 +39,18 @@ class SignupView(discord.ui.View):
                     ephemeral=True,
                 )
 
+                await self.bot.signup_thread.add_user(interaction.user)
+
                 if len(self.bot.queue) == 10:
                     await interaction.channel.send("The queue is now full, proceeding to the voting stage.")
                     self.cancel_signup_refresh()
+
+                    # Pings all users in the active queue (intended for afk mfs)
+                    await interaction.channel.send("__Players:__")
+                    player_list_msg = ""
+                    for player in self.bot.queue:
+                        player_list_msg += f"<@{player["id"]}> "
+                    await interaction.channel.send(player_list_msg)
 
                     self.bot.signup_active = False
 
@@ -65,6 +74,8 @@ class SignupView(discord.ui.View):
             ephemeral=True,
         )
 
+        await self.bot.signup_thread.remove_user(interaction.user)
+
     def setup_callbacks(self):
         self.sign_up_button.callback = self.sign_up_callback
         self.leave_queue_button.callback = self.leave_queue_callback
@@ -73,17 +84,14 @@ class SignupView(discord.ui.View):
     async def refresh_signup_message(self):
         try:
             while self.bot.signup_active:
-
-                await asyncio.sleep(60)
-
                 if self.bot.current_signup_message:
                     try:
                         await self.bot.current_signup_message.delete()
                     except discord.NotFound:
                         pass
-
                 # Send new signup message
-                self.bot.current_signup_message = await self.ctx.send("Click a button to manage your queue status!", view=self)
+                self.bot.current_signup_message = await self.bot.signup_thread.send("Click a button to manage your queue status!", view=self, silent=True)
+                await asyncio.sleep(60)
         except asyncio.CancelledError:
             pass
 
