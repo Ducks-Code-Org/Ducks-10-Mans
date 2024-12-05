@@ -511,7 +511,7 @@ class BotCommands(commands.Cog):
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
                 riot_tag = user_data.get("tag", "Unknown")
-                names.append(f"**{riot_name}#{riot_tag}**")
+                names.append(f"{riot_name}#{riot_tag}")
             else:
                 names.append("Unknown")
 
@@ -532,9 +532,10 @@ class BotCommands(commands.Cog):
             win_percent = (wins / matches_played) * 100 if matches_played > 0 else 0
 
             leaderboard_entries.append(
-                f"{idx}. {name:<{max_name_length}} - MMR: {mmr_value}, Wins: {wins}, Losses: {losses}, " #pad each name to be same length
-                f"Win%: {win_percent:.1f}%, Avg CS: {avg_cs:.2f}, K/D: {kd_ratio:.2f}"
+                f"{idx}. **`{name:<{max_name_length}}`** - MMR: {mmr_value:<4} | Wins: {wins:<3} | Losses: {losses:<3} | "
+                f"Win%: {win_percent:<6.1f}% | Avg CS: {avg_cs:<7.2f} | K/D: {kd_ratio:<5.2f}"
             )
+
 
         leaderboard_text = "\n".join(leaderboard_entries)
         await ctx.send(f"## MMR Leaderboard (Top 10 Players): ##\n{leaderboard_text}")
