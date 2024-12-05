@@ -472,7 +472,7 @@ class BotCommands(commands.Cog):
 
     # Allow players to check their MMR and stats
     @commands.command()
-    async def stats(self, ctx, *, riot_input = None):
+    async def stats(self, ctx, *, riot_input=None):
         # Allows players to lookup the stats of other players
         if riot_input is not None:
             try:
@@ -490,6 +490,7 @@ class BotCommands(commands.Cog):
                 return
         else:
             player_id = ctx.author.id
+
         if player_id in self.bot.player_mmr:
             stats_data = self.bot.player_mmr[player_id]
             mmr_value = stats_data["mmr"]
@@ -510,9 +511,19 @@ class BotCommands(commands.Cog):
             else:
                 player_name = ctx.author.name
 
+            # Find leaderboard position
+            total_players = len(self.bot.player_mmr)
+            sorted_mmr = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+            position = None
+            for idx, (pid, _) in enumerate(sorted_mmr, start=1):
+                if pid == player_id:
+                    position = idx
+                    break
+
             await ctx.send(
                 f"**{player_name}'s Stats:**\n"
                 f"MMR: {mmr_value}\n"
+                f"Rank: {position}/{total_players}\n"
                 f"Wins: {wins}\n"
                 f"Losses: {losses}\n"
                 f"Win%: {win_percent:.2f}%\n"
