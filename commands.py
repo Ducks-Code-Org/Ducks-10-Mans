@@ -3,8 +3,10 @@
 import os
 import copy  # To make a copy of player_mmr
 import random
+import math # for leaderboard pages
 
 import discord
+from discord.ui import View, Button
 from discord.ext import commands
 import requests
 from table2ascii import table2ascii as t2a, PresetStyle
@@ -92,6 +94,83 @@ mock_match_data = {
     ],
 }
 
+class LeaderboardView(View):
+    def __init__(self, ctx, bot, sorted_mmr, players_per_page=10):
+        super().__init__(timeout=None) 
+        self.ctx = ctx
+        self.bot = bot
+        self.sorted_mmr = sorted_mmr
+        self.players_per_page = players_per_page
+        self.current_page = 0
+        self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
+
+        # Initialize button states
+        # Will be updated on each page change
+        self.previous_button.disabled = True  # On first page, can't go back
+        self.next_button.disabled = (self.total_pages == 1)  # If only one page, disable Next
+
+    async def update_message(self, interaction: discord.Interaction):
+        # Calculate the people on the page
+        start_index = self.current_page * self.players_per_page
+        end_index = start_index + self.players_per_page
+        page_data = self.sorted_mmr[start_index:end_index]
+
+        # make the leaderboard table for the page
+        leaderboard_data = []
+        names = []
+        for player_id, stats in page_data:
+            user_data = users.find_one({"discord_id": str(player_id)})
+            if user_data:
+                riot_name = user_data.get("name", "Unknown")
+                riot_tag = user_data.get("tag", "Unknown")
+                names.append(f"{riot_name}#{riot_tag}")
+            else:
+                names.append("Unknown")
+
+        for idx, ((player_id, stats), name) in enumerate(zip(page_data, names), start=start_index + 1):
+            mmr_value = stats["mmr"]
+            wins = stats["wins"]
+            losses = stats["losses"]
+            matches_played = stats.get("matches_played", wins + losses)
+            avg_cs = stats.get("average_combat_score", 0)
+            kd_ratio = stats.get("kill_death_ratio", 0)
+            win_percent = (wins / matches_played * 100) if matches_played > 0 else 0
+
+            leaderboard_data.append([
+                idx,
+                name,
+                mmr_value,
+                wins,
+                losses,
+                f"{win_percent:.2f}",
+                f"{avg_cs:.2f}",
+                f"{kd_ratio:.2f}"
+            ])
+
+        table_output = t2a(
+            header=["Rank", "User", "MMR", "Wins", "Losses", "Win%", "Avg ACS", "K/D"],
+            body=leaderboard_data,
+            first_col_heading=True,
+            style=PresetStyle.thick_compact,
+        )
+
+        content = f"## MMR Leaderboard (Page {self.current_page + 1}/{self.total_pages}) ##\n```\n{table_output}\n```"
+
+        # Update button based on the current page
+        self.previous_button.disabled = (self.current_page == 0)
+        self.next_button.disabled = (self.current_page == self.total_pages - 1)
+
+        await interaction.response.edit_message(content=content, view=self)
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.blurple, disabled=True)
+    async def previous_button(self, interaction: discord.Interaction, button: Button):
+        self.current_page -= 1
+        await self.update_message(interaction)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.blurple, disabled=False)
+    async def next_button(self, interaction: discord.Interaction, button: Button):
+        self.current_page += 1
+        await self.update_message(interaction)
 
 class BotCommands(commands.Cog):
     def __init__(self, bot):
@@ -561,14 +640,20 @@ class BotCommands(commands.Cog):
             await ctx.send("No MMR data available yet.")
             return
 
-        # Sort players by MMR and take the top 10
-        sorted_mmr = sorted(
-            self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
-        )[:10]
+        # Sort all players by MMR
+        sorted_mmr = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+
+        # Create the view for pages
+        view = LeaderboardView(ctx, self.bot, sorted_mmr, players_per_page=10)
+
+        # Calculate the page indexes
+        start_index = view.current_page * view.players_per_page
+        end_index = start_index + view.players_per_page
+        page_data = sorted_mmr[start_index:end_index]
 
         names = []
-        # Get the Riot name and tag from the users collection
-        for player_id, stats in sorted_mmr:
+        leaderboard_data = []
+        for player_id, stats in page_data:
             user_data = users.find_one({"discord_id": str(player_id)})
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
@@ -577,42 +662,36 @@ class BotCommands(commands.Cog):
             else:
                 names.append("Unknown")
 
-        leaderboard_data = []
-        for idx, (player_id, stats) in enumerate(sorted_mmr, start=1):
-            # pull name from already gathered array names
-            name = names[idx - 1]
-
+        # Stats for leaderboard
+        for idx, ((player_id, stats), name) in enumerate(zip(page_data, names), start=start_index + 1):
             mmr_value = stats["mmr"]
             wins = stats["wins"]
             losses = stats["losses"]
             matches_played = stats.get("matches_played", wins + losses)
             avg_cs = stats.get("average_combat_score", 0)
             kd_ratio = stats.get("kill_death_ratio", 0)
-            win_percent = (wins / matches_played) * 100 if matches_played > 0 else 0
+            win_percent = (wins / matches_played * 100) if matches_played > 0 else 0
 
-            leaderboard_data.append(
-                [
-                    idx,
-                    name,
-                    mmr_value,
-                    wins,
-                    losses,
-                    f"{win_percent:.2f}",
-                    f"{avg_cs:.2f}",
-                    f"{kd_ratio:.2f}",
-                ]
-            )
+            leaderboard_data.append([
+                idx,
+                name,
+                mmr_value,
+                wins,
+                losses,
+                f"{win_percent:.2f}",
+                f"{avg_cs:.2f}",
+                f"{kd_ratio:.2f}"
+            ])
 
-        # Use t2a Package to Convert Text to ASCII Table and send
         table_output = t2a(
             header=["Rank", "User", "MMR", "Wins", "Losses", "Win%", "Avg ACS", "K/D"],
             body=leaderboard_data,
             first_col_heading=True,
             style=PresetStyle.thick_compact,
         )
-        await ctx.send(
-            f"## MMR Leaderboard (Top 10 Players): ##\n```\n{table_output}\n```"
-        )
+
+        content = f"## MMR Leaderboard (Page {view.current_page+1}/{view.total_pages}) ##\n```\n{table_output}\n```"
+        await ctx.send(content=content, view=view)
 
     @commands.command()
     @commands.has_role("Owner")  # Restrict this command to admins
