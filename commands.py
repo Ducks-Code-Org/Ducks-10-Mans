@@ -171,8 +171,6 @@ class BotCommands(commands.Cog):
         self.bot.signup_thread = await self.bot.current_signup_message.create_thread(name=f"10-Man Match #{random.randrange(1, 10**4):04}", auto_archive_duration=60)
         self.bot.signup_thread_message = await ctx.send(f"Queue Started! Join via the queue thread: <#{self.bot.signup_thread.id}>")
         await self.bot.signup_thread_message.pin()
-        self.bot.origin_ctx = ctx
-        ctx = self.bot.signup_thread
 
         # Check if we need to create the view
         if self.bot.signup_view is None:
@@ -465,8 +463,12 @@ class BotCommands(commands.Cog):
             await self.bot.signup_thread.delete()
             await self.bot.signup_thread_message.delete()
         except discord.NotFound:
-                pass
-        await self.bot.origin_ctx.channel.edit(name=f"10-mans")
+            pass
+        try:
+            await self.bot.origin_ctx.channel.edit(name="10-mans")
+        except discord.HTTPException:
+            pass
+
 
     # Allow players to check their MMR and stats
     @commands.command()
@@ -738,7 +740,7 @@ class BotCommands(commands.Cog):
     async def toggledev(self, ctx):
         if not self.dev_mode:
             self.dev_mode = True
-            await self.bot.change_presence(status=discord.Status.do_not_disturb)
+            await self.bot.change_presence(status=discord.Status.do_not_disturb, )
             await ctx.send("Developer Mode Enabled")
             self.bot.command_prefix="^"
         else:
@@ -755,17 +757,21 @@ class BotCommands(commands.Cog):
             await ctx.send("No signup is active to cancel")
             return
         if self.bot.current_signup_message:
+            self.bot.queue = []
+            self.bot.current_signup_message = None
             self.bot.signup_view.cancel_signup_refresh()
+            self.bot.signup_active = False
+            self.bot.signup_view = None
+            await ctx.send("Canceled Signup")
             try:
-                await self.bot.current_signup_message.delete()
                 await self.bot.signup_thread.delete()
                 await self.bot.signup_thread_message.delete()
             except discord.NotFound:
                 pass
-            await self.bot.origin_ctx.channel.edit(name=f"10-mans")
-            self.bot.current_signup_message = None
-            await ctx.send("Canceled Signup")
-            self.bot.signup_active = False
+            try:
+                await self.bot.origin_ctx.channel.edit(name="10-mans")
+            except discord.HTTPException:
+                pass
         else:
             await ctx.send("Nothing to cancel")
 

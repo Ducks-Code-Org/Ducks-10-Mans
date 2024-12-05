@@ -11,7 +11,9 @@ class SignupView(discord.ui.View):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
+        self.bot.origin_ctx = ctx
         self.signup_refresh_task = asyncio.create_task(self.refresh_signup_message())
+        self.channel_name_refresh_task = asyncio.create_task(self.refresh_channel_name())
 
         self.sign_up_button = Button(label=f"Sign Up (0/10)", style=discord.ButtonStyle.green)
         self.leave_queue_button = Button(label="Leave Queue", style=discord.ButtonStyle.red)
@@ -84,7 +86,6 @@ class SignupView(discord.ui.View):
     async def refresh_signup_message(self):
         try:
             while self.bot.signup_active:
-                await self.bot.origin_ctx.channel.edit(name=f"10-mans《{len(self.bot.queue)}∕10》")
                 if self.bot.current_signup_message:
                     try:
                         await self.bot.current_signup_message.delete()
@@ -101,6 +102,23 @@ class SignupView(discord.ui.View):
         if self.signup_refresh_task:
             self.signup_refresh_task.cancel()
             self.signup_refresh_task = None
+
+    async def refresh_channel_name(self):
+        try:
+            while self.bot.signup_active:
+                try:
+                    if "10-mans" in self.bot.origin_ctx.channel.name:
+                        await self.bot.origin_ctx.channel.edit(name=f"10-mans《{len(self.bot.queue)}∕10》")
+                except discord.HTTPException:
+                    pass
+                await asyncio.sleep(600)
+        except asyncio.CancelledError:
+            pass
+    
+    def cancel_channel_name_refresh(self):
+        if self.channel_name_refresh_task :
+            self.channel_name_refresh_task.cancel()
+            self.channel_name_refresh_task = None
 
     async def send_signup(self):
         return await self.ctx.send(content="Click a button to manage your queue status!", view=self)
