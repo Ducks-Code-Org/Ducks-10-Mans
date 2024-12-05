@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import requests
 import random
+from table2ascii import table2ascii as t2a, PresetStyle
 
 from database import users, all_matches, mmr_collection
 from views.mode_vote_view import ModeVoteView
@@ -586,9 +587,7 @@ class BotCommands(commands.Cog):
             else:
                 names.append("Unknown")
 
-        max_name_length = max(len(name) for name in names)
-
-        leaderboard_entries = []
+        leaderboard_data = []
         for idx, (player_id, stats) in enumerate(sorted_mmr, start=1):
             #pull name from already gathered array names
             name = names[idx - 1]
@@ -601,15 +600,17 @@ class BotCommands(commands.Cog):
             avg_cs = stats.get('average_combat_score', 0)
             kd_ratio = stats.get('kill_death_ratio', 0)
             win_percent = (wins / matches_played) * 100 if matches_played > 0 else 0
+            
+            leaderboard_data.append([idx, name, mmr_value, wins, losses, f'{win_percent:.2f}', f'{avg_cs:.2f}', f'{kd_ratio:.2f}'])
 
-            leaderboard_entries.append(
-                f"{idx}. **`{name:<{max_name_length}}`** - MMR: {mmr_value:<4} | Wins: {wins:<3} | Losses: {losses:<3} | "
-                f"Win%: {win_percent:<6.1f}% | Avg CS: {avg_cs:<7.2f} | K/D: {kd_ratio:<5.2f}"
-            )
-
-
-        leaderboard_text = "\n".join(leaderboard_entries)
-        await ctx.send(f"## MMR Leaderboard (Top 10 Players): ##\n{leaderboard_text}")
+        # Use t2a Package to Convert Text to ASCII Table and send
+        table_output = t2a(
+            header=["Rank", "User", "MMR", "Wins", "Losses", "Win%", "Avg ACS", "K/D"],
+            body=leaderboard_data,
+            first_col_heading=True,
+            style=PresetStyle.thick_compact
+        )
+        await ctx.send(f"## MMR Leaderboard (Top 10 Players): ##\n```\n{table_output}\n```")
 
     @commands.command()
     @commands.has_role("Owner")  # Restrict this command to admins
