@@ -1,8 +1,13 @@
-import discord
-from discord.ui import Button
-from database import users
+"""This view allows users to interactively vote on the map to be played."""
+
 import asyncio
 import random
+
+import discord
+from discord.ui import Button
+
+from database import users
+
 
 class MapVoteView(discord.ui.View):
     def __init__(self, ctx, bot, map_choices):
@@ -25,14 +30,22 @@ class MapVoteView(discord.ui.View):
         self.chosen_maps = random_maps
         self.map_votes = {map_name: 0 for map_name in self.chosen_maps}
         for map_name in random_maps:
-            button = Button(label=f"{map_name} (0)", style=discord.ButtonStyle.secondary)
- 
+            button = Button(
+                label=f"{map_name} (0)", style=discord.ButtonStyle.secondary
+            )
+
             async def map_callback(interaction: discord.Interaction, map_name=map_name):
-                if interaction.user.id not in [player["id"] for player in self.bot.queue]:
-                    await interaction.response.send_message("You must be in the queue to vote!", ephemeral=True)
+                if interaction.user.id not in [
+                    player["id"] for player in self.bot.queue
+                ]:
+                    await interaction.response.send_message(
+                        "You must be in the queue to vote!", ephemeral=True
+                    )
                     return
                 if interaction.user.id in self.voters:
-                    await interaction.response.send_message("You have already voted!", ephemeral=True)
+                    await interaction.response.send_message(
+                        "You have already voted!", ephemeral=True
+                    )
                     return
                 self.map_votes[map_name] += 1
                 self.voters.add(interaction.user.id)
@@ -41,7 +54,9 @@ class MapVoteView(discord.ui.View):
                     if btn.label.startswith(map_name):
                         btn.label = f"{map_name} ({self.map_votes[map_name]})"
                 await interaction.message.edit(view=self)
-                await interaction.response.send_message(f"You voted for {map_name}.", ephemeral=True)
+                await interaction.response.send_message(
+                    f"You voted for {map_name}.", ephemeral=True
+                )
 
             button.callback = map_callback
             self.map_buttons.append(button)
@@ -54,13 +69,12 @@ class MapVoteView(discord.ui.View):
         await asyncio.sleep(25)
 
         winning_map = max(self.map_votes, key=self.map_votes.get)
-        selected_map_name = winning_map
         await self.ctx.send(f"The selected map is **{winning_map}**!")
         self.bot.selected_map = winning_map
         teams_embed = discord.Embed(
             title=f"Teams for the match on {winning_map}",
             description="Good luck to both teams!",
-            color=discord.Color.blue()
+            color=discord.Color.blue(),
         )
 
         attackers = []
@@ -86,14 +100,10 @@ class MapVoteView(discord.ui.View):
                 defenders.append(f"{player['name']} (MMR: {mmr})")
 
         teams_embed.add_field(
-            name="**Attackers:**",
-            value='\n'.join(attackers),
-            inline=False
+            name="**Attackers:**", value="\n".join(attackers), inline=False
         )
         teams_embed.add_field(
-            name="**Defenders:**",
-            value='\n'.join(defenders),
-            inline=False
+            name="**Defenders:**", value="\n".join(defenders), inline=False
         )
 
         # Send the finalized teams again

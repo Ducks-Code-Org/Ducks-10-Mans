@@ -1,8 +1,12 @@
+"""This view is generated, allowing players to interactively draft team members in 'Captains' mode."""
+
+import asyncio
+
 import discord
 from discord.ui import Select
+
 from database import users
 from views.map_type_vote_view import MapTypeVoteView
-import asyncio
 
 
 class CaptainsDraftingView(discord.ui.View):
@@ -16,7 +20,9 @@ class CaptainsDraftingView(discord.ui.View):
             options=[],
         )
         self.add_item(self.player_select)
-        self.remaining_players = [p for p in self.bot.queue if p not in [self.bot.captain1, self.bot.captain2]]
+        self.remaining_players = [
+            p for p in self.bot.queue if p not in [self.bot.captain1, self.bot.captain2]
+        ]
         self.pick_order = [
             self.bot.captain1,
             self.bot.captain2,
@@ -86,17 +92,16 @@ class CaptainsDraftingView(discord.ui.View):
 
         # Create embed for the final teams
         final_teams_embed = discord.Embed(
-            title="Final Teams",
-            color=discord.Color.green()
+            title="Final Teams", color=discord.Color.green()
         )
         final_teams_embed.add_field(
             name=f"Attackers (Captain: {self.captain1_name})",
-            value='\n'.join(team1_names),
+            value="\n".join(team1_names),
             inline=False,
         )
         final_teams_embed.add_field(
             name=f"Defenders (Captain: {self.captain2_name})",
-            value='\n'.join(team2_names),
+            value="\n".join(team2_names),
             inline=False,
         )
 
@@ -108,19 +113,22 @@ class CaptainsDraftingView(discord.ui.View):
         # Begin vote for competitive or all maps
         await map_type_vote.send_view()
 
-
-
     async def select_callback(self, interaction: discord.Interaction):
         current_captain_id = self.pick_order[self.pick_count]["id"]
         if interaction.user.id != current_captain_id:
-            await interaction.response.send_message("It's not your turn to pick.", ephemeral=True)
+            await interaction.response.send_message(
+                "It's not your turn to pick.", ephemeral=True
+            )
             return
 
         selected_player_id = int(self.player_select.values[0])
-        player_dict = next((p for p in self.remaining_players if p["id"] == selected_player_id), None)
+        player_dict = next(
+            (p for p in self.remaining_players if p["id"] == selected_player_id), None
+        )
         if not player_dict:
-            await interaction.response.send_message("Player not available. Please select a valid player.",
-                                                    ephemeral=True)
+            await interaction.response.send_message(
+                "Player not available. Please select a valid player.", ephemeral=True
+            )
             return
 
         print(player_dict)
@@ -145,7 +153,6 @@ class CaptainsDraftingView(discord.ui.View):
             return
 
         await self.send_current_draft_view()
-
 
     async def send_current_draft_view(self):
         print("printing draft")
@@ -183,7 +190,7 @@ class CaptainsDraftingView(discord.ui.View):
 
         remaining_players_embed = discord.Embed(
             title="Remaining Players",
-            description='\n'.join(remaining_players_names),
+            description="\n".join(remaining_players_names),
             color=discord.Color.blue(),
         )
 
@@ -212,21 +219,18 @@ class CaptainsDraftingView(discord.ui.View):
                 name = p["name"]
             team2_names.append(name)
 
-
-
         # Get captains' Riot names (already obtained earlier)
         drafting_embed = discord.Embed(
-            title="Current Draft",
-            color=discord.Color.green()
+            title="Current Draft", color=discord.Color.green()
         )
         drafting_embed.add_field(
             name=f"**{self.captain1_name}'s Team**",
-            value='\n'.join(team1_names) if team1_names else "No players yet",
+            value="\n".join(team1_names) if team1_names else "No players yet",
             inline=False,
         )
         drafting_embed.add_field(
             name=f"**{self.captain2_name}'s Team**",
-            value='\n'.join(team2_names) if team2_names else "No players yet",
+            value="\n".join(team2_names) if team2_names else "No players yet",
             inline=False,
         )
 
@@ -237,8 +241,6 @@ class CaptainsDraftingView(discord.ui.View):
 
         if current_captain_data:
             current_captain_name = f"{current_captain_data.get('name', 'Unknown')}#{current_captain_data.get('tag', 'Unknown')}"
-        else:
-            current_captain_name = current_captain_name
 
         # Send message for the first time
         message = f"**{current_captain_name}**, please pick a player:"
@@ -248,7 +250,9 @@ class CaptainsDraftingView(discord.ui.View):
             await self.drafting_message.edit(embed=drafting_embed)
             await self.captain_pick_message.edit(content=message, view=self)
         else:
-            self.remaining_players_message = await self.ctx.send(embed=remaining_players_embed)
+            self.remaining_players_message = await self.ctx.send(
+                embed=remaining_players_embed
+            )
             self.drafting_message = await self.ctx.send(embed=drafting_embed)
             self.captain_pick_message = await self.ctx.send(content=message, view=self)
 
@@ -256,11 +260,14 @@ class CaptainsDraftingView(discord.ui.View):
         try:
             await self.bot.wait_for(
                 "interaction",
-                check=lambda i: i.data.get('component_type') == 3 and i.user.id == current_captain_id,
+                check=lambda i: i.data.get("component_type") == 3
+                and i.user.id == current_captain_id,
                 timeout=60,
             )
         except asyncio.TimeoutError:
-            await self.ctx.send(f"{current_captain_name} took too long to pick. Drafting canceled. Count: {self.pick_count}")
+            await self.ctx.send(
+                f"{current_captain_name} took too long to pick. Drafting canceled. Count: {self.pick_count}"
+            )
 
             self.bot.queue.clear()
             self.bot.signup_thread.delete()
