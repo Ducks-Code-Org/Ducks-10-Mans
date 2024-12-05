@@ -487,10 +487,11 @@ class BotCommands(commands.Cog):
             await self.bot.signup_thread_message.delete()
         except discord.NotFound:
             pass
-        try:
-            await self.bot.origin_ctx.channel.edit(name="10-mans")
-        except (discord.HTTPException, discord.NotFound):
-            pass
+        if "10-mans" in self.bot.origin_ctx.channel.name:
+            try:
+                await self.bot.origin_ctx.channel.edit(name="10-mans")
+            except (discord.HTTPException, discord.NotFound):
+                pass
 
 
     # Allow players to check their MMR and stats
@@ -810,10 +811,11 @@ class BotCommands(commands.Cog):
                 await self.bot.signup_thread_message.delete()
             except discord.NotFound:
                 pass
-            try:
-                await self.bot.origin_ctx.channel.edit(name="10-mans")
-            except (discord.HTTPException, discord.NotFound):
-                pass
+            if "10-mans" in self.bot.origin_ctx.channel.name:
+                try:
+                    await self.bot.origin_ctx.channel.edit(name="10-mans")
+                except (discord.HTTPException, discord.NotFound):
+                    pass
         else:
             await ctx.send("Nothing to cancel")
 
