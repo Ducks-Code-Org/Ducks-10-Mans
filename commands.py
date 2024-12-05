@@ -858,7 +858,7 @@ class BotCommands(commands.Cog):
 
     @commands.command()
     async def force_draft(self, ctx):
-        self.bot.queue = [
+        bot_queue = [
             {"name": "Player3", "id": 1},
             {"name": "Player4", "id": 2},
             {"name": "Player5", "id": 3},
@@ -868,6 +868,8 @@ class BotCommands(commands.Cog):
             {"name": "Player9", "id": 7},
             {"name": "Player10", "id": 8},
         ]
+        for bot in bot_queue:
+            self.bot.queue.append(bot)
         draft = CaptainsDraftingView(ctx, self.bot)
         await draft.send_current_draft_view()
 

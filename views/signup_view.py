@@ -73,6 +73,7 @@ class SignupView(discord.ui.View):
                     await interaction.channel.send(player_list_msg)
 
                     self.bot.signup_active = False
+                    self.ctx.channel = self.bot.signup_thread
 
                     mode_vote = ModeVoteView(self.ctx, self.bot)
                     await mode_vote.send_view()
