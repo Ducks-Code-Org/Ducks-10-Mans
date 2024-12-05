@@ -519,6 +519,12 @@ class BotCommands(commands.Cog):
                 if pid == player_id:
                     position = idx
                     break
+            
+            # Rank 1 tag
+            supersonicradiant = ""
+            if position == 1:
+                position = "*Supersonic Radiant!* (Rank 1)"
+                total_players = ""
 
             await ctx.send(
                 f"**{player_name}'s Stats:**\n"
