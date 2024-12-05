@@ -84,29 +84,30 @@ class CaptainsDraftingView(discord.ui.View):
             else:
                 team2_names.append(p["name"])
 
-                # Create embed for the final teams
-                final_teams_embed = discord.Embed(
-                    title="Final Teams",
-                    color=discord.Color.green()
-                )
-                final_teams_embed.add_field(
-                    name=f"Attackers (Captain: {self.captain1_name})",
-                    value='\n'.join(team1_names),
-                    inline=False,
-                )
-                final_teams_embed.add_field(
-                    name=f"Defenders (Captain: {self.captain2_name})",
-                    value='\n'.join(team2_names),
-                    inline=False,
-                )
+        # Create embed for the final teams
+        final_teams_embed = discord.Embed(
+            title="Final Teams",
+            color=discord.Color.green()
+        )
+        final_teams_embed.add_field(
+            name=f"Attackers (Captain: {self.captain1_name})",
+            value='\n'.join(team1_names),
+            inline=False,
+        )
+        final_teams_embed.add_field(
+            name=f"Defenders (Captain: {self.captain2_name})",
+            value='\n'.join(team2_names),
+            inline=False,
+        )
 
-                # Display final teams
-                await self.ctx.send(embed=final_teams_embed)
+        # Display final teams
+        await self.ctx.send(embed=final_teams_embed)
 
-                map_type_vote = MapTypeVoteView(self.ctx, self.bot)
+        map_type_vote = MapTypeVoteView(self.ctx, self.bot)
 
-                # Begin vote for competitive or all maps
-                await map_type_vote.send_view()
+        # Begin vote for competitive or all maps
+        await map_type_vote.send_view()
+
 
 
     async def select_callback(self, interaction: discord.Interaction):
@@ -138,6 +139,7 @@ class CaptainsDraftingView(discord.ui.View):
         await self.draft_next_player()
 
     async def draft_next_player(self):
+        print(self.remaining_players)
         if len(self.remaining_players) == 0:
             await self.finalize_draft()
             return
@@ -146,6 +148,7 @@ class CaptainsDraftingView(discord.ui.View):
 
 
     async def send_current_draft_view(self):
+        print("printing draft")
         if self.bot.captain1 is None:
             await self.ctx.send("No captain 1 set. use !setcaptain1 <name>")
             return
@@ -257,6 +260,6 @@ class CaptainsDraftingView(discord.ui.View):
                 timeout=60,
             )
         except asyncio.TimeoutError:
-            await self.ctx.send(f"{current_captain_name} took too long to pick. Drafting canceled.")
+            await self.ctx.send(f"{current_captain_name} took too long to pick. Drafting canceled. Count: {self.pick_count}")
 
             self.bot.queue.clear()
