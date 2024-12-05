@@ -198,6 +198,11 @@ class BotCommands(commands.Cog):
                     await ctx.send("The queue is now full, proceeding to the voting stage.")
                     self.bot.signup_view.cancel_signup_refresh()
 
+                    # Pings all users in the active queue (intended for afk mfs)
+                    await ctx.send("Players:")
+                    for player in self.bot.queue:
+                        await ctx.send(f'<@{player.id}>')
+
                     voting_view = ModeVoteView(ctx, self.bot)
 
                     # Start vote for how teams will be decided
