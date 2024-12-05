@@ -515,6 +515,7 @@ class BotCommands(commands.Cog):
             total_players = len(self.bot.player_mmr)
             sorted_mmr = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
             position = None
+            slash = "/"
             for idx, (pid, _) in enumerate(sorted_mmr, start=1):
                 if pid == player_id:
                     position = idx
@@ -525,11 +526,12 @@ class BotCommands(commands.Cog):
             if position == 1:
                 position = "*Supersonic Radiant!* (Rank 1)"
                 total_players = ""
+                slash = ""
 
             await ctx.send(
                 f"**{player_name}'s Stats:**\n"
                 f"MMR: {mmr_value}\n"
-                f"Rank: {position}/{total_players}\n"
+                f"Rank: {position}{slash}{total_players}\n"
                 f"Wins: {wins}\n"
                 f"Losses: {losses}\n"
                 f"Win%: {win_percent:.2f}%\n"
