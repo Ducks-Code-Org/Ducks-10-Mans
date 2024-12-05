@@ -8,6 +8,7 @@ from views.mode_vote_view import ModeVoteView
 from views.signup_view import SignupView
 from stats_helper import update_stats
 import os
+import copy # To make a copy of player_mmr
 
 # Initialize API
 api_key = os.getenv("api_key")
@@ -441,6 +442,12 @@ class BotCommands(commands.Cog):
         for player in winning_team + losing_team:
             self.bot.ensure_player_mmr(player["id"])
 
+        # Get top players
+        pre_update_mmr = copy.deepcopy(self.bot.player_mmr)
+        sorted_mmr_before = sorted(pre_update_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+        top_mmr_before = sorted_mmr_before[0][1]["mmr"]
+        top_players_before = [pid for pid, stats in sorted_mmr_before if stats["mmr"] == top_mmr_before]
+
         # Adjust MMR
         self.bot.adjust_mmr(winning_team, losing_team)
         await ctx.send("MMR Updated!")
@@ -448,6 +455,21 @@ class BotCommands(commands.Cog):
         # Update stats for each player
         for player_stats in match_players:
             update_stats(player_stats, total_rounds, self.bot.player_mmr, self.bot.player_names)
+
+        # Get new top players
+        sorted_mmr_after = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+        top_mmr_after = sorted_mmr_after[0][1]["mmr"]
+        top_players_after = [pid for pid, stats in sorted_mmr_after if stats["mmr"] == top_mmr_after]
+
+        # Determine if theres a new top player
+        new_top_players = set(top_players_after) - set(top_players_before)
+        if new_top_players:
+            for new_top_player_id in new_top_players:
+                user_data = users.find_one({"discord_id": str(new_top_player_id)})
+                if user_data:
+                    riot_name = user_data.get("name", "Unknown")
+                    riot_tag = user_data.get("tag", "Unknown")
+                    await ctx.send(f"{riot_name}#{riot_tag} is now supersonic radiant!")
 
         # Now save all updates to the database
         self.bot.save_mmr_data()
