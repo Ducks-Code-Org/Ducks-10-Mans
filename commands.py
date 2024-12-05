@@ -148,6 +148,7 @@ mock_match_data = {
 class BotCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.dev_mode = False
 
     # Signup Command
     @commands.command()
@@ -702,6 +703,17 @@ class BotCommands(commands.Cog):
 
         self.bot.captain2 = player_in_queue
         await ctx.send(f"Captain 2 set to {riot_name}#{riot_tag}")
+
+    # Set the bot to development mode
+    @commands.command()
+    @commands.has_role("blood")  
+    async def toggledev(self, ctx):
+        if not self.dev_mode:
+            self.dev_mode = True
+            await ctx.change_presence(activity=discord.Status.do_not_disturb, command_prefix="^")
+        else:
+            self.dev_mode = False
+            await ctx.change_presence(activity=discord.Status.online, command_prefix="!")
 
     # Stop the signup process, only owner can do this
     @commands.command()
