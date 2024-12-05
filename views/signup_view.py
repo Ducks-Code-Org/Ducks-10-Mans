@@ -43,6 +43,13 @@ class SignupView(discord.ui.View):
                     await interaction.channel.send("The queue is now full, proceeding to the voting stage.")
                     self.cancel_signup_refresh()
 
+                    # Pings all users in the active queue (intended for afk mfs)
+                    await interaction.channel.send("__Players:__")
+                    player_list_msg = ""
+                    for player in self.bot.queue:
+                        player_list_msg += f"<@{player["id"]}> "
+                    await interaction.channel.send(player_list_msg)
+
                     self.bot.signup_active = False
 
                     mode_vote = ModeVoteView(self.ctx, self.bot)
