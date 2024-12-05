@@ -163,6 +163,7 @@ class BotCommands(commands.Cog):
             await ctx.send("Report the last match before starting another one (credits to dshocc for bug testing)")
 
         self.bot.signup_active = True
+        self.bot.queue = []
 
         self.bot.current_signup_message = await ctx.send("Click a button to manage your queue status!", view=self.bot.signup_view)
         
@@ -170,6 +171,7 @@ class BotCommands(commands.Cog):
         self.bot.signup_thread = await self.bot.current_signup_message.create_thread(name=f"10-Man Match #{random.randrange(1, 10**4):04}", auto_archive_duration=60)
         self.bot.signup_thread_message = await ctx.send(f"Queue Started! Join via the queue thread: <#{self.bot.signup_thread.id}>")
         await self.bot.signup_thread_message.pin()
+        self.bot.origin_ctx = ctx
         ctx = self.bot.signup_thread
 
         # Check if we need to create the view
@@ -464,6 +466,7 @@ class BotCommands(commands.Cog):
             await self.bot.signup_thread_message.delete()
         except discord.NotFound:
                 pass
+        await self.bot.origin_ctx.channel.edit(name=f"10-mans")
 
     # Allow players to check their MMR and stats
     @commands.command()
@@ -735,10 +738,12 @@ class BotCommands(commands.Cog):
         if not self.dev_mode:
             self.dev_mode = True
             await self.bot.change_presence(status=discord.Status.do_not_disturb)
+            await ctx.send("Developer Mode Enabled")
             self.bot.command_prefix="^"
         else:
             self.dev_mode = False
             await self.bot.change_presence(status=discord.Status.online)
+            await ctx.send("Developer Mode Disabled")
             self.bot.command_prefix="!"
 
     # Stop the signup process, only owner can do this
@@ -756,6 +761,7 @@ class BotCommands(commands.Cog):
                 await self.bot.signup_thread_message.delete()
             except discord.NotFound:
                 pass
+            await self.bot.origin_ctx.channel.edit(name=f"10-mans")
             self.bot.current_signup_message = None
             await ctx.send("Canceled Signup")
             self.bot.signup_active = False
