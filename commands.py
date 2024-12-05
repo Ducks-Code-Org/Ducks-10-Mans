@@ -489,7 +489,7 @@ class BotCommands(commands.Cog):
             pass
         try:
             await self.bot.origin_ctx.channel.edit(name="10-mans")
-        except discord.HTTPException:
+        except (discord.HTTPException, discord.NotFound):
             pass
 
 
@@ -812,7 +812,7 @@ class BotCommands(commands.Cog):
                 pass
             try:
                 await self.bot.origin_ctx.channel.edit(name="10-mans")
-            except discord.HTTPException:
+            except (discord.HTTPException, discord.NotFound):
                 pass
         else:
             await ctx.send("Nothing to cancel")
