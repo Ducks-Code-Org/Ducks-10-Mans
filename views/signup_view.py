@@ -84,6 +84,7 @@ class SignupView(discord.ui.View):
     async def refresh_signup_message(self):
         try:
             while self.bot.signup_active:
+                await self.bot.origin_ctx.channel.edit(name=f"10-mans《{len(self.bot.queue)}∕10》")
                 if self.bot.current_signup_message:
                     try:
                         await self.bot.current_signup_message.delete()
