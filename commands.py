@@ -708,10 +708,12 @@ class BotCommands(commands.Cog):
     async def toggledev(self, ctx):
         if not self.dev_mode:
             self.dev_mode = True
-            await ctx.change_presence(activity=discord.Status.do_not_disturb, command_prefix="^")
+            await self.bot.change_presence(status=discord.Status.do_not_disturb)
+            self.bot.command_prefix="^"
         else:
             self.dev_mode = False
-            await ctx.change_presence(activity=discord.Status.online, command_prefix="!")
+            await self.bot.change_presence(status=discord.Status.online)
+            self.bot.command_prefix="!"
 
     # Stop the signup process, only owner can do this
     @commands.command()
