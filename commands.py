@@ -199,11 +199,11 @@ class BotCommands(commands.Cog):
                     self.bot.signup_view.cancel_signup_refresh()
 
                     # Pings all users in the active queue (intended for afk mfs)
-                    await interaction.channel.send("__Players:__")
+                    await ctx.send("__Players:__")
                     player_list_msg = ""
                     for player in self.bot.queue:
                         player_list_msg += f"<@{player["id"]}> "
-                    await interaction.channel.send(player_list_msg)
+                    await ctx.send(player_list_msg)
 
                     voting_view = ModeVoteView(ctx, self.bot)
 
