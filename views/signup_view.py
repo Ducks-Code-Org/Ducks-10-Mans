@@ -111,7 +111,7 @@ class SignupView(discord.ui.View):
                         await self.bot.origin_ctx.channel.edit(name=f"10-mans《{len(self.bot.queue)}∕10》")
                 except discord.HTTPException:
                     pass
-                await asyncio.sleep(600)
+                await asyncio.sleep(720)
         except asyncio.CancelledError:
             pass
     
