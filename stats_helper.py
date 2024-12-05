@@ -1,4 +1,7 @@
+"""This file provides functions for updating players stats."""
+
 from database import users, mmr_collection
+
 
 # Update stats
 def update_stats(player_stats, total_rounds, player_mmr, player_names):
@@ -17,7 +20,7 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names):
     score = stats.get("score", 0)
     kills = stats.get("kills", 0)
     deaths = stats.get("deaths", 0)
-    assists = stats.get("assists", 0)
+    _assists = stats.get("assists", 0)
 
     if discord_id in player_mmr:
         player_data = player_mmr[discord_id]
@@ -27,18 +30,24 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names):
         total_deaths = player_data.get("total_deaths", 0) + deaths
         total_rounds_played = player_data.get("total_rounds_played", 0) + total_rounds
 
-        average_combat_score = total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
-        kill_death_ratio = total_kills / total_deaths if total_deaths > 0 else total_kills
+        average_combat_score = (
+            total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
+        )
+        kill_death_ratio = (
+            total_kills / total_deaths if total_deaths > 0 else total_kills
+        )
 
-        player_mmr[discord_id].update({
-            "total_combat_score": total_combat_score,
-            "total_kills": total_kills,
-            "total_deaths": total_deaths,
-            "matches_played": total_matches,
-            "total_rounds_played": total_rounds_played,
-            "average_combat_score": average_combat_score,
-            "kill_death_ratio": kill_death_ratio
-        })
+        player_mmr[discord_id].update(
+            {
+                "total_combat_score": total_combat_score,
+                "total_kills": total_kills,
+                "total_deaths": total_deaths,
+                "matches_played": total_matches,
+                "total_rounds_played": total_rounds_played,
+                "average_combat_score": average_combat_score,
+                "kill_death_ratio": kill_death_ratio,
+            }
+        )
 
     else:
         total_matches = 1
@@ -46,37 +55,43 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names):
         total_kills = kills
         total_deaths = deaths
         total_rounds_played = total_rounds
-        average_combat_score = total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
-        kill_death_ratio = total_kills / total_deaths if total_deaths > 0 else total_kills
+        average_combat_score = (
+            total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
+        )
+        kill_death_ratio = (
+            total_kills / total_deaths if total_deaths > 0 else total_kills
+        )
 
         player_mmr[discord_id] = {
-            'mmr': 1000,
-            'wins': 0,
-            'losses': 0,
-            'total_combat_score': total_combat_score,
-            'total_kills': total_kills,
-            'total_deaths': total_deaths,
-            'matches_played': total_matches,
-            'total_rounds_played': total_rounds_played,
-            'average_combat_score': average_combat_score,
-            'kill_death_ratio': kill_death_ratio
+            "mmr": 1000,
+            "wins": 0,
+            "losses": 0,
+            "total_combat_score": total_combat_score,
+            "total_kills": total_kills,
+            "total_deaths": total_deaths,
+            "matches_played": total_matches,
+            "total_rounds_played": total_rounds_played,
+            "average_combat_score": average_combat_score,
+            "kill_death_ratio": kill_death_ratio,
         }
         player_names[discord_id] = name
 
         mmr_collection.update_one(
-            {'player_id': discord_id},
-            {'$set': {
-                'mmr': 1000,
-                'wins': 0,
-                'losses': 0,
-                'name': name,
-                'total_combat_score': total_combat_score,
-                'total_kills': total_kills,
-                'total_deaths': total_deaths,
-                'matches_played': total_matches,
-                'total_rounds_played': total_rounds_played,
-                'average_combat_score': average_combat_score,
-                'kill_death_ratio': kill_death_ratio
-            }},
-            upsert=True
+            {"player_id": discord_id},
+            {
+                "$set": {
+                    "mmr": 1000,
+                    "wins": 0,
+                    "losses": 0,
+                    "name": name,
+                    "total_combat_score": total_combat_score,
+                    "total_kills": total_kills,
+                    "total_deaths": total_deaths,
+                    "matches_played": total_matches,
+                    "total_rounds_played": total_rounds_played,
+                    "average_combat_score": average_combat_score,
+                    "kill_death_ratio": kill_death_ratio,
+                }
+            },
+            upsert=True,
         )

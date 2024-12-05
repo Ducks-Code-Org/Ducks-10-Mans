@@ -1,17 +1,26 @@
-import discord
-from discord.ui import Button
-from views.map_type_vote_view import MapTypeVoteView
-from views.captains_drafting_view import CaptainsDraftingView
+"""This view allows users to interactively vote on the team draft mode."""
+
 import asyncio
 import random
+
+import discord
+from discord.ui import Button
+
+from views.map_type_vote_view import MapTypeVoteView
+from views.captains_drafting_view import CaptainsDraftingView
+
 
 class ModeVoteView(discord.ui.View):
     def __init__(self, ctx, bot):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
-        self.balanced_button = Button(label="Balanced Teams (0)", style=discord.ButtonStyle.green)
-        self.captains_button = Button(label="Captains (0)", style=discord.ButtonStyle.blurple)
+        self.balanced_button = Button(
+            label="Balanced Teams (0)", style=discord.ButtonStyle.green
+        )
+        self.captains_button = Button(
+            label="Captains (0)", style=discord.ButtonStyle.blurple
+        )
         self.add_item(self.balanced_button)
         self.add_item(self.captains_button)
 
@@ -19,19 +28,21 @@ class ModeVoteView(discord.ui.View):
         self.voters = set()
         self.dummy = False
 
-
         # Link callbacks to buttons
         self.setup_callbacks()
-
 
     async def balanced_callback(self, interaction: discord.Interaction):
         # make sure the user is in the queue
         if interaction.user.id not in [player["id"] for player in self.bot.queue]:
-            await interaction.response.send_message("You must be in the queue to vote!", ephemeral=True)
+            await interaction.response.send_message(
+                "You must be in the queue to vote!", ephemeral=True
+            )
             return
         # make sure the user has not already voted
         if interaction.user.id in self.voters:
-            await interaction.response.send_message("You have already voted!", ephemeral=True)
+            await interaction.response.send_message(
+                "You have already voted!", ephemeral=True
+            )
             return
 
         self.votes["Balanced Teams"] += 1
@@ -45,10 +56,14 @@ class ModeVoteView(discord.ui.View):
 
     async def captains_callback(self, interaction: discord.Interaction):
         if interaction.user.id not in [player["id"] for player in self.bot.queue]:
-            await interaction.response.send_message("You must be in the queue to vote!", ephemeral=True)
+            await interaction.response.send_message(
+                "You must be in the queue to vote!", ephemeral=True
+            )
             return
         if interaction.user.id in self.voters:
-            await interaction.response.send_message("You have already voted!", ephemeral=True)
+            await interaction.response.send_message(
+                "You have already voted!", ephemeral=True
+            )
             return
 
         self.votes["Captains"] += 1
@@ -62,7 +77,7 @@ class ModeVoteView(discord.ui.View):
 
     def balanced_teams(self, players):
         players.sort(key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], reverse=True)
-        match_ongoing = True
+        self.bot.match_ongoing = True
         team1, team2 = [], []
         team1_mmr, team2_mmr = 0, 0
 
@@ -79,7 +94,8 @@ class ModeVoteView(discord.ui.View):
     async def balanced_teams_logic(self):
         team1, team2 = self.balanced_teams(self.bot.queue)
         await self.ctx.send(
-            f"**Balanced Teams:**\nAttackers: {', '.join([p['name'] for p in team1])}\nDefenders: {', '.join([p['name'] for p in team2])}")
+            f"**Balanced Teams:**\nAttackers: {', '.join([p['name'] for p in team1])}\nDefenders: {', '.join([p['name'] for p in team2])}"
+        )
 
         self.bot.match_ongoing = True
 
@@ -100,7 +116,11 @@ class ModeVoteView(discord.ui.View):
 
         # Fill captains with highest MMR if not set
         if len(captains) < 2:
-            sorted_players = sorted(self.bot.queue, key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], reverse=True)
+            sorted_players = sorted(
+                self.bot.queue,
+                key=lambda p: self.bot.player_mmr[p["id"]]["mmr"],
+                reverse=True,
+            )
             for player in sorted_players:
                 if player not in captains:
                     captains.append(player)
@@ -121,7 +141,7 @@ class ModeVoteView(discord.ui.View):
         await asyncio.sleep(25)
 
         # Determine voting results
-        if self.dummy == True:
+        if self.dummy is True:
             await self.ctx.send("Balanced Teams wins the vote!")
             await self.balanced_teams_logic()
         else:
@@ -133,16 +153,18 @@ class ModeVoteView(discord.ui.View):
                 captains_drafting = CaptainsDraftingView(self.ctx, self.bot)
                 await captains_drafting.send_current_draft_view()
             else:
-                decision = "Balanced Teams" if random.choice([True, False]) else "Captains"
+                decision = (
+                    "Balanced Teams" if random.choice([True, False]) else "Captains"
+                )
                 await self.ctx.send(f"It's a tie! Flipping a coin... {decision} wins!")
                 if decision == "Balanced Teams":
                     await self.balanced_teams_logic()
                 else:
                     captains_drafting = CaptainsDraftingView(self.ctx, self.bot)
                     await captains_drafting.send_current_draft_view()
-        match_ongoing = True
+        self.bot.match_ongoing = True
         dummy = False
+
     def setup_callbacks(self):
         self.balanced_button.callback = self.balanced_callback
         self.captains_button.callback = self.captains_callback
-

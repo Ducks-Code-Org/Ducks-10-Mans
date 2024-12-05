@@ -1,14 +1,20 @@
+"""This file holds all bot commands. <prefix><function_name> is the full command for each function."""
+
+import os
+import copy  # To make a copy of player_mmr
+import random
+
 import discord
 from discord.ext import commands
 import requests
-import random
+from table2ascii import table2ascii as t2a, PresetStyle
 
 from database import users, all_matches, mmr_collection
+from views.captains_drafting_view import CaptainsDraftingView
 from views.mode_vote_view import ModeVoteView
 from views.signup_view import SignupView
 from stats_helper import update_stats
-import os
-import copy # To make a copy of player_mmr
+
 
 # Initialize API
 api_key = os.getenv("api_key")
@@ -23,127 +29,67 @@ mock_match_data = {
             "name": "SSL Wheel",
             "tag": "7126",
             "team_id": "Red",
-            "stats": {
-                "score": 8188,
-                "kills": 31,
-                "deaths": 12,
-                "assists": 4
-            }
+            "stats": {"score": 8188, "kills": 31, "deaths": 12, "assists": 4},
         },
         {
             "name": "MetALz",
             "tag": "AZoN",
             "team_id": "Red",
-            "stats": {
-                "score": 6233,
-                "kills": 22,
-                "deaths": 11,
-                "assists": 6
-            }
+            "stats": {"score": 6233, "kills": 22, "deaths": 11, "assists": 6},
         },
         {
             "name": "Luh4r",
             "tag": "i0n",
             "team_id": "Red",
-            "stats": {
-                "score": 5405,
-                "kills": 19,
-                "deaths": 17,
-                "assists": 8
-            }
+            "stats": {"score": 5405, "kills": 19, "deaths": 17, "assists": 8},
         },
         {
             "name": "Crimsyn",
             "tag": "Rose",
             "team_id": "Red",
-            "stats": {
-                "score": 3772,
-                "kills": 14,
-                "deaths": 12,
-                "assists": 4
-            }
+            "stats": {"score": 3772, "kills": 14, "deaths": 12, "assists": 4},
         },
         {
             "name": "ItzFitz",
             "tag": "1738",
             "team_id": "Red",
-            "stats": {
-                "score": 2829,
-                "kills": 8,
-                "deaths": 14,
-                "assists": 9
-            }
+            "stats": {"score": 2829, "kills": 8, "deaths": 14, "assists": 9},
         },
         {
             "name": "Duck",
             "tag": "MST",
             "team_id": "Blue",
-            "stats": {
-                "score": 5405,
-                "kills": 17,
-                "deaths": 18,
-                "assists": 3
-            }
+            "stats": {"score": 5405, "kills": 17, "deaths": 18, "assists": 3},
         },
         {
             "name": "NBK2003",
             "tag": "1584",
             "team_id": "Blue",
-            "stats": {
-                "score": 4416,
-                "kills": 16,
-                "deaths": 20,
-                "assists": 3
-            }
+            "stats": {"score": 4416, "kills": 16, "deaths": 20, "assists": 3},
         },
         {
             "name": "galaxy",
             "tag": "KUJG",
             "team_id": "Blue",
-            "stats": {
-                "score": 3703,
-                "kills": 11,
-                "deaths": 20,
-                "assists": 7
-            }
+            "stats": {"score": 3703, "kills": 11, "deaths": 20, "assists": 7},
         },
         {
             "name": "dShocc1",
             "tag": "LNEUP",
             "team_id": "Blue",
-            "stats": {
-                "score": 3174,
-                "kills": 10,
-                "deaths": 17,
-                "assists": 3
-            }
+            "stats": {"score": 3174, "kills": 10, "deaths": 17, "assists": 3},
         },
         {
             "name": "mintychewinggum",
             "tag": "8056",
             "team_id": "Blue",
-            "stats": {
-                "score": 3082,
-                "kills": 11,
-                "deaths": 19,
-                "assists": 5
-            }
+            "stats": {"score": 3082, "kills": 11, "deaths": 19, "assists": 5},
         },
     ],
     "teams": [
-        {
-            "team_id": "Red",
-            "won": True,
-            "rounds_won": 13,
-            "rounds_lost": 11
-        },
-        {
-            "team_id": "Blue",
-            "won": False,
-            "rounds_won": 11,
-            "rounds_lost": 13
-        }
-    ]
+        {"team_id": "Red", "won": True, "rounds_won": 13, "rounds_lost": 11},
+        {"team_id": "Blue", "won": False, "rounds_won": 11, "rounds_lost": 13},
+    ],
 }
 
 
@@ -157,20 +103,31 @@ class BotCommands(commands.Cog):
     async def signup(self, ctx):
         # Don't create a new signup if one is active
         if self.bot.signup_active:
-            await ctx.send("A signup is already in progress. Please wait for it to complete.")
+            await ctx.send(
+                "A signup is already in progress. Please wait for it to complete."
+            )
             return
 
         if self.bot.match_not_reported:
-            await ctx.send("Report the last match before starting another one (credits to dshocc for bug testing)")
+            await ctx.send(
+                "Report the last match before starting another one (credits to dshocc for bug testing)"
+            )
 
         self.bot.signup_active = True
         self.bot.queue = []
 
-        self.bot.current_signup_message = await ctx.send("Click a button to manage your queue status!", view=self.bot.signup_view)
-        
+        self.bot.current_signup_message = await ctx.send(
+            "Click a button to manage your queue status!", view=self.bot.signup_view
+        )
+
         # Generate Signup Thread
-        self.bot.signup_thread = await self.bot.current_signup_message.create_thread(name=f"10-Man Match #{random.randrange(1, 10**4):04}", auto_archive_duration=60)
-        self.bot.signup_thread_message = await ctx.send(f"Queue Started! Join via the queue thread: <#{self.bot.signup_thread.id}>")
+        self.bot.signup_thread = await self.bot.current_signup_message.create_thread(
+            name=f"10-Man Match #{random.randrange(1, 10**4):04}",
+            auto_archive_duration=60,
+        )
+        self.bot.signup_thread_message = await ctx.send(
+            f"Queue Started! Join via the queue thread: <#{self.bot.signup_thread.id}>"
+        )
         await self.bot.signup_thread_message.pin()
 
         # Check if we need to create the view
@@ -191,9 +148,15 @@ class BotCommands(commands.Cog):
         existing_user = users.find_one({"discord_id": str(ctx.author.id)})
         if existing_user:
             if ctx.author.id not in [player["id"] for player in self.bot.queue]:
-                self.bot.signup_view.add_player_to_queue({"id": ctx.author.id, "name": ctx.author.name})
+                self.bot.signup_view.add_player_to_queue(
+                    {"id": ctx.author.id, "name": ctx.author.name}
+                )
                 if ctx.author.id not in self.bot.player_mmr:
-                    self.bot.player_mmr[ctx.author.id] = {"mmr": 1000, "wins": 0, "losses": 0}
+                    self.bot.player_mmr[ctx.author.id] = {
+                        "mmr": 1000,
+                        "wins": 0,
+                        "losses": 0,
+                    }
                 self.bot.player_names[ctx.author.id] = ctx.author.name
 
                 # Update the button label
@@ -202,10 +165,13 @@ class BotCommands(commands.Cog):
                 await self.bot.signup_thread.add_user(ctx.author)
 
                 await ctx.send(
-                    f"{ctx.author.name} added to the queue! Current queue count: {len(self.bot.queue)}")
+                    f"{ctx.author.name} added to the queue! Current queue count: {len(self.bot.queue)}"
+                )
 
                 if len(self.bot.queue) == 10:
-                    await ctx.send("The queue is now full, proceeding to the voting stage.")
+                    await ctx.send(
+                        "The queue is now full, proceeding to the voting stage."
+                    )
                     self.bot.signup_view.cancel_signup_refresh()
 
                     # Pings all users in the active queue (intended for afk mfs)
@@ -225,7 +191,8 @@ class BotCommands(commands.Cog):
                 await ctx.send("You're already in the queue!")
         else:
             await ctx.send(
-                "You must link your Riot account to join the queue. Use !linkriot Name#Tag to link your account.")
+                "You must link your Riot account to join the queue. Use !linkriot Name#Tag to link your account."
+            )
 
     # Leave queue command without pressing button
     @commands.command()
@@ -239,8 +206,9 @@ class BotCommands(commands.Cog):
             return
 
         if ctx.author.id in [player["id"] for player in self.bot.queue]:
-            self.bot.queue[:] = [player for player in self.bot.queue if
-                                             player["id"] != ctx.author.id]
+            self.bot.queue[:] = [
+                player for player in self.bot.queue if player["id"] != ctx.author.id
+            ]
             # Update the button label
             await self.bot.signup_view.update_signup()
             await self.bot.signup_thread.remove_user(ctx.author)
@@ -261,7 +229,7 @@ class BotCommands(commands.Cog):
 
         riot_names = []
         for player in self.bot.queue:
-            discord_id = player['id']
+            discord_id = player["id"]
             user_data = users.find_one({"discord_id": str(discord_id)})
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
@@ -280,7 +248,9 @@ class BotCommands(commands.Cog):
 
         current_user = users.find_one({"discord_id": str(ctx.author.id)})
         if not current_user:
-            await ctx.send("You need to link your Riot account first using `!linkriot Name#Tag`")
+            await ctx.send(
+                "You need to link your Riot account first using `!linkriot Name#Tag`"
+            )
             return
 
         name = current_user.get("name")
@@ -289,7 +259,7 @@ class BotCommands(commands.Cog):
         platform = "pc"
 
         url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{name}/{tag}"
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=30)
         match_data = response.json()
         match = match_data["data"][0]
         metadata = match.get("metadata", {})
@@ -299,7 +269,7 @@ class BotCommands(commands.Cog):
 
         if testing_mode:
             match = mock_match_data
-            match_ongoing = True
+            self.bot.match_ongoing = True
 
             # Reconstruct queue, team1, and team2 from mock_match_data
             queue = []
@@ -323,17 +293,25 @@ class BotCommands(commands.Cog):
                         team2.append(player)
 
                     if discord_id not in self.bot.player_mmr:
-                        self.bot.player_mmr[discord_id] = {"mmr": 1000, "wins": 0, "losses": 0}
+                        self.bot.player_mmr[discord_id] = {
+                            "mmr": 1000,
+                            "wins": 0,
+                            "losses": 0,
+                        }
                     self.bot.player_names[discord_id] = player_name
                 else:
-                    await ctx.send(f"Player {player_name}#{player_tag} is not linked to any Discord account.")
+                    await ctx.send(
+                        f"Player {player_name}#{player_tag} is not linked to any Discord account."
+                    )
                     return
 
             # For mocking match data, set to amount of rounds played
             total_rounds = 24
         else:
             if not self.bot.match_ongoing:
-                await ctx.send("No match is currently active, use `!signup` to start one")
+                await ctx.send(
+                    "No match is currently active, use `!signup` to start one"
+                )
                 return
 
             if not self.bot.selected_map:
@@ -341,7 +319,9 @@ class BotCommands(commands.Cog):
                 return
 
             if self.bot.selected_map.lower() != map_name:
-                await ctx.send("Map doesn't match your most recent match. Unable to report it.")
+                await ctx.send(
+                    "Map doesn't match your most recent match. Unable to report it."
+                )
                 return
 
             if "data" not in match_data or not match_data["data"]:
@@ -351,9 +331,8 @@ class BotCommands(commands.Cog):
             match = match_data["data"][0]
 
             # Get total rounds played from the match data
-            teams = match.get('teams', [])
+            teams = match.get("teams", [])
             if teams:
-                team1_data = teams[0]
                 total_rounds = metadata.get("total_rounds")
             else:
                 await ctx.send("No team data found in match data.")
@@ -399,10 +378,7 @@ class BotCommands(commands.Cog):
             await ctx.send("Could not determine the winning team.")
             return
 
-        match_team_players = {
-            'Red': set(),
-            'Blue': set()
-        }
+        match_team_players = {"Red": set(), "Blue": set()}
 
         for player in match_players:
             team_id = player.get("team_id")
@@ -444,9 +420,13 @@ class BotCommands(commands.Cog):
 
         # Get top players
         pre_update_mmr = copy.deepcopy(self.bot.player_mmr)
-        sorted_mmr_before = sorted(pre_update_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+        sorted_mmr_before = sorted(
+            pre_update_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
+        )
         top_mmr_before = sorted_mmr_before[0][1]["mmr"]
-        top_players_before = [pid for pid, stats in sorted_mmr_before if stats["mmr"] == top_mmr_before]
+        top_players_before = [
+            pid for pid, stats in sorted_mmr_before if stats["mmr"] == top_mmr_before
+        ]
 
         # Adjust MMR
         self.bot.adjust_mmr(winning_team, losing_team)
@@ -454,12 +434,18 @@ class BotCommands(commands.Cog):
 
         # Update stats for each player
         for player_stats in match_players:
-            update_stats(player_stats, total_rounds, self.bot.player_mmr, self.bot.player_names)
+            update_stats(
+                player_stats, total_rounds, self.bot.player_mmr, self.bot.player_names
+            )
 
         # Get new top players
-        sorted_mmr_after = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+        sorted_mmr_after = sorted(
+            self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
+        )
         top_mmr_after = sorted_mmr_after[0][1]["mmr"]
-        top_players_after = [pid for pid, stats in sorted_mmr_after if stats["mmr"] == top_mmr_after]
+        top_players_after = [
+            pid for pid, stats in sorted_mmr_after if stats["mmr"] == top_mmr_after
+        ]
 
         # Determine if theres a new top player
         new_top_players = set(top_players_after) - set(top_players_before)
@@ -486,11 +472,11 @@ class BotCommands(commands.Cog):
             await self.bot.signup_thread_message.delete()
         except discord.NotFound:
             pass
-        try:
-            await self.bot.origin_ctx.channel.edit(name="10-mans")
-        except discord.HTTPException:
-            pass
-
+        if "10-mans" in self.bot.origin_ctx.channel.name:
+            try:
+                await self.bot.origin_ctx.channel.edit(name="10-mans")
+            except (discord.HTTPException, discord.NotFound):
+                pass
 
     # Allow players to check their MMR and stats
     @commands.command()
@@ -518,10 +504,10 @@ class BotCommands(commands.Cog):
             mmr_value = stats_data["mmr"]
             wins = stats_data["wins"]
             losses = stats_data["losses"]
-            matches_played = stats_data.get('matches_played', wins + losses)
-            total_rounds_played = stats_data.get('total_rounds_played', 0)
-            avg_cs = stats_data.get('average_combat_score', 0)
-            kd_ratio = stats_data.get('kill_death_ratio', 0)
+            matches_played = stats_data.get("matches_played", wins + losses)
+            total_rounds_played = stats_data.get("total_rounds_played", 0)
+            avg_cs = stats_data.get("average_combat_score", 0)
+            kd_ratio = stats_data.get("kill_death_ratio", 0)
             win_percent = (wins / matches_played) * 100 if matches_played > 0 else 0
 
             # Get Riot name and tag
@@ -535,16 +521,17 @@ class BotCommands(commands.Cog):
 
             # Find leaderboard position
             total_players = len(self.bot.player_mmr)
-            sorted_mmr = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+            sorted_mmr = sorted(
+                self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
+            )
             position = None
             slash = "/"
             for idx, (pid, _) in enumerate(sorted_mmr, start=1):
                 if pid == player_id:
                     position = idx
                     break
-            
+
             # Rank 1 tag
-            supersonicradiant = ""
             if position == 1:
                 position = "*Supersonic Radiant!* (Rank 1)"
                 total_players = ""
@@ -563,7 +550,9 @@ class BotCommands(commands.Cog):
                 f"Kill/Death Ratio: {kd_ratio:.2f}"
             )
         else:
-            await ctx.send("You do not have an MMR yet. Participate in matches to earn one!")
+            await ctx.send(
+                "You do not have an MMR yet. Participate in matches to earn one!"
+            )
 
     # Display leaderboard
     @commands.command()
@@ -573,7 +562,9 @@ class BotCommands(commands.Cog):
             return
 
         # Sort players by MMR and take the top 10
-        sorted_mmr = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)[:10]
+        sorted_mmr = sorted(
+            self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
+        )[:10]
 
         names = []
         # Get the Riot name and tag from the users collection
@@ -586,39 +577,52 @@ class BotCommands(commands.Cog):
             else:
                 names.append("Unknown")
 
-        max_name_length = max(len(name) for name in names)
-
-        leaderboard_entries = []
+        leaderboard_data = []
         for idx, (player_id, stats) in enumerate(sorted_mmr, start=1):
-            #pull name from already gathered array names
+            # pull name from already gathered array names
             name = names[idx - 1]
 
             mmr_value = stats["mmr"]
             wins = stats["wins"]
             losses = stats["losses"]
-            matches_played = stats.get('matches_played', wins + losses)
-            total_rounds_played = stats.get('total_rounds_played', 0)
-            avg_cs = stats.get('average_combat_score', 0)
-            kd_ratio = stats.get('kill_death_ratio', 0)
+            matches_played = stats.get("matches_played", wins + losses)
+            avg_cs = stats.get("average_combat_score", 0)
+            kd_ratio = stats.get("kill_death_ratio", 0)
             win_percent = (wins / matches_played) * 100 if matches_played > 0 else 0
 
-            leaderboard_entries.append(
-                f"{idx}. **`{name:<{max_name_length}}`** - MMR: {mmr_value:<4} | Wins: {wins:<3} | Losses: {losses:<3} | "
-                f"Win%: {win_percent:<6.1f}% | Avg CS: {avg_cs:<7.2f} | K/D: {kd_ratio:<5.2f}"
+            leaderboard_data.append(
+                [
+                    idx,
+                    name,
+                    mmr_value,
+                    wins,
+                    losses,
+                    f"{win_percent:.2f}",
+                    f"{avg_cs:.2f}",
+                    f"{kd_ratio:.2f}",
+                ]
             )
 
-
-        leaderboard_text = "\n".join(leaderboard_entries)
-        await ctx.send(f"## MMR Leaderboard (Top 10 Players): ##\n{leaderboard_text}")
+        # Use t2a Package to Convert Text to ASCII Table and send
+        table_output = t2a(
+            header=["Rank", "User", "MMR", "Wins", "Losses", "Win%", "Avg ACS", "K/D"],
+            body=leaderboard_data,
+            first_col_heading=True,
+            style=PresetStyle.thick_compact,
+        )
+        await ctx.send(
+            f"## MMR Leaderboard (Top 10 Players): ##\n```\n{table_output}\n```"
+        )
 
     @commands.command()
     @commands.has_role("Owner")  # Restrict this command to admins
     async def initialize_rounds(self, ctx):
         result = mmr_collection.update_many(
-            {},  # Update all documents
-            {'$set': {'total_rounds_played': 0}}
+            {}, {"$set": {"total_rounds_played": 0}}  # Update all documents
         )
-        await ctx.send(f"Initialized total_rounds_played for {result.modified_count} players.")
+        await ctx.send(
+            f"Initialized total_rounds_played for {result.modified_count} players."
+        )
 
     # To recalculate average combat score after bug
     @commands.command()
@@ -627,9 +631,9 @@ class BotCommands(commands.Cog):
         players = mmr_collection.find()
         updated_count = 0
         for player in players:
-            player_id = int(player.get('player_id'))
-            total_combat_score = player.get('total_combat_score', 0)
-            total_rounds_played = player.get('total_rounds_played', 0)
+            player_id = int(player.get("player_id"))
+            total_combat_score = player.get("total_combat_score", 0)
+            total_rounds_played = player.get("total_rounds_played", 0)
 
             if total_rounds_played > 0:
                 average_combat_score = total_combat_score / total_rounds_played
@@ -638,24 +642,28 @@ class BotCommands(commands.Cog):
 
             # Update the database
             mmr_collection.update_one(
-                {'player_id': player_id},
-                {'$set': {'average_combat_score': average_combat_score}}
+                {"player_id": player_id},
+                {"$set": {"average_combat_score": average_combat_score}},
             )
 
             # Update the in-memory player_mmr dictionary
             if player_id in self.bot.player_mmr:
-                self.bot.player_mmr[player_id]['average_combat_score'] = average_combat_score
+                self.bot.player_mmr[player_id][
+                    "average_combat_score"
+                ] = average_combat_score
             else:
                 # In case the player is not in player_mmr (should not happen)
                 self.bot.player_mmr[player_id] = {
-                    'average_combat_score': average_combat_score
+                    "average_combat_score": average_combat_score
                 }
 
             updated_count += 1
 
         self.bot.load_mmr_data()
 
-        await ctx.send(f"Recalculated average combat score for {updated_count} players.")
+        await ctx.send(
+            f"Recalculated average combat score for {updated_count} players."
+        )
 
     # Simulate a queue
     @commands.command()
@@ -663,7 +671,9 @@ class BotCommands(commands.Cog):
         if self.bot.signup_view is None:
             self.bot.signup_view = SignupView(ctx, self.bot)
         if self.bot.signup_active:
-            await ctx.send("A signup is already in progress. Resetting queue for simulation.")
+            await ctx.send(
+                "A signup is already in progress. Resetting queue for simulation."
+            )
             self.bot.queue.clear()
 
         # Add 10 dummy players to the queue
@@ -672,13 +682,19 @@ class BotCommands(commands.Cog):
         # Assign default MMR to the dummy players and map IDs to names
         for player in queue:
             if player["id"] not in self.bot.player_mmr:
-                self.bot.player_mmr[player["id"]] = {"mmr": 1000, "wins": 0, "losses": 0}
+                self.bot.player_mmr[player["id"]] = {
+                    "mmr": 1000,
+                    "wins": 0,
+                    "losses": 0,
+                }
             self.bot.player_names[player["id"]] = player["name"]
 
         self.bot.save_mmr_data()
 
-        signup_active = True
-        await ctx.send(f"Simulated full queue: {', '.join([player['name'] for player in queue])}")
+        self.bot.signup_active = True
+        await ctx.send(
+            f"Simulated full queue: {', '.join([player['name'] for player in queue])}"
+        )
 
         # Proceed to the voting stage
         await ctx.send("The queue is now full, proceeding to the voting stage.")
@@ -695,11 +711,17 @@ class BotCommands(commands.Cog):
             await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
             return
 
-        data = requests.get(f"https://api.henrikdev.xyz/valorant/v1/account/{riot_name}/{riot_tag}", headers=headers)
+        data = requests.get(
+            f"https://api.henrikdev.xyz/valorant/v1/account/{riot_name}/{riot_tag}",
+            headers=headers,
+            timeout=30,
+        )
         user = data.json()
 
         if "data" not in user:
-            await ctx.send("Could not find your Riot account. Please check the name and tag.")
+            await ctx.send(
+                "Could not find your Riot account. Please check the name and tag."
+            )
         else:
             user_data = {
                 "discord_id": str(ctx.author.id),
@@ -707,11 +729,11 @@ class BotCommands(commands.Cog):
                 "tag": riot_tag,
             }
             users.update_one(
-                {"discord_id": str(ctx.author.id)},
-                {"$set": user_data},
-                upsert=True
+                {"discord_id": str(ctx.author.id)}, {"$set": user_data}, upsert=True
             )
-            await ctx.send(f"Successfully linked {riot_name}#{riot_tag} to your Discord account.")
+            await ctx.send(
+                f"Successfully linked {riot_name}#{riot_tag} to your Discord account."
+            )
 
     # Set captain1
     @commands.command()
@@ -730,7 +752,10 @@ class BotCommands(commands.Cog):
             if user_data:
                 user_riot_name = user_data.get("name", "").lower()
                 user_riot_tag = user_data.get("tag", "").lower()
-                if user_riot_name == riot_name.lower() and user_riot_tag == riot_tag.lower():
+                if (
+                    user_riot_name == riot_name.lower()
+                    and user_riot_tag == riot_tag.lower()
+                ):
                     player_in_queue = player
                     break
         if not player_in_queue:
@@ -761,7 +786,10 @@ class BotCommands(commands.Cog):
             if user_data:
                 user_riot_name = user_data.get("name", "").lower()
                 user_riot_tag = user_data.get("tag", "").lower()
-                if user_riot_name == riot_name.lower() and user_riot_tag == riot_tag.lower():
+                if (
+                    user_riot_name == riot_name.lower()
+                    and user_riot_tag == riot_tag.lower()
+                ):
                     player_in_queue = player
                     break
         if not player_in_queue:
@@ -777,18 +805,29 @@ class BotCommands(commands.Cog):
 
     # Set the bot to development mode
     @commands.command()
-    @commands.has_role("blood")  
+    @commands.has_role("blood")
     async def toggledev(self, ctx):
         if not self.dev_mode:
             self.dev_mode = True
-            await self.bot.change_presence(status=discord.Status.do_not_disturb, )
             await ctx.send("Developer Mode Enabled")
-            self.bot.command_prefix="^"
+            self.bot.command_prefix = "^"
+            try:
+                await self.bot.change_presence(
+                    status=discord.Status.do_not_disturb,
+                    activity=discord.Game(name="Bot Maintenance"),
+                )
+            except discord.HTTPException:
+                pass
         else:
             self.dev_mode = False
-            await self.bot.change_presence(status=discord.Status.online)
             await ctx.send("Developer Mode Disabled")
-            self.bot.command_prefix="!"
+            self.bot.command_prefix = "!"
+            try:
+                await self.bot.change_presence(
+                    status=discord.Status.online, activity=discord.Game(name="10 Mans!")
+                )
+            except discord.HTTPException:
+                pass
 
     # Stop the signup process, only owner can do this
     @commands.command()
@@ -809,17 +848,17 @@ class BotCommands(commands.Cog):
                 await self.bot.signup_thread_message.delete()
             except discord.NotFound:
                 pass
-            try:
-                await self.bot.origin_ctx.channel.edit(name="10-mans")
-            except discord.HTTPException:
-                pass
+            if "10-mans" in self.bot.origin_ctx.channel.name:
+                try:
+                    await self.bot.origin_ctx.channel.edit(name="10-mans")
+                except (discord.HTTPException, discord.NotFound):
+                    pass
         else:
             await ctx.send("Nothing to cancel")
 
     @commands.command()
     async def force_draft(self, ctx):
-        from views.captains_drafting_view import CaptainsDraftingView
-        self.bot.queue = [
+        bot_queue = [
             {"name": "Player3", "id": 1},
             {"name": "Player4", "id": 2},
             {"name": "Player5", "id": 3},
@@ -829,9 +868,10 @@ class BotCommands(commands.Cog):
             {"name": "Player9", "id": 7},
             {"name": "Player10", "id": 8},
         ]
+        for bot in bot_queue:
+            self.bot.queue.append(bot)
         draft = CaptainsDraftingView(ctx, self.bot)
         await draft.send_current_draft_view()
-
 
     # Custom Help Command
     @commands.command()
@@ -839,21 +879,43 @@ class BotCommands(commands.Cog):
         help_embed = discord.Embed(
             title="Help Menu",
             description="Duck's 10 Mans Commands:",
-            color=discord.Color.blue()
+            color=discord.Color.blue(),
         )
 
-        help_embed.add_field(name="!signup", value="Start a signup session for matches.", inline=False)
-        help_embed.add_field(name="!report", value="Report the most recent match and update MMR.", inline=False)
-        help_embed.add_field(name="!stats", value="Check your MMR and match stats.", inline=False)
-        help_embed.add_field(name="!leaderboard", value="View the MMR leaderboard.", inline=False)
-        help_embed.add_field(name="!linkriot", value="Link or update your Riot account using `Name#Tag`.", inline=False)
+        help_embed.add_field(
+            name="!signup", value="Start a signup session for matches.", inline=False
+        )
+        help_embed.add_field(
+            name="!report",
+            value="Report the most recent match and update MMR.",
+            inline=False,
+        )
+        help_embed.add_field(
+            name="!stats", value="Check your MMR and match stats.", inline=False
+        )
+        help_embed.add_field(
+            name="!leaderboard", value="View the MMR leaderboard.", inline=False
+        )
+        help_embed.add_field(
+            name="!linkriot",
+            value="Link or update your Riot account using `Name#Tag`.",
+            inline=False,
+        )
         help_embed.add_field(name="!join", value="Joins the queue.", inline=False)
-        help_embed.add_field(name="!setcaptain1", value="Set Captain 1 using `Name#Tag` (only accessible by admins)",
-                             inline=False)
-        help_embed.add_field(name="!setcaptain2", value="Set Captain 2 using `Name#Tag` (only accessible by admins)",
-                             inline=False)
+        help_embed.add_field(
+            name="!setcaptain1",
+            value="Set Captain 1 using `Name#Tag` (only accessible by admins)",
+            inline=False,
+        )
+        help_embed.add_field(
+            name="!setcaptain2",
+            value="Set Captain 2 using `Name#Tag` (only accessible by admins)",
+            inline=False,
+        )
         help_embed.add_field(name="!leave", value="Leaves the queue", inline=False)
-        help_embed.add_field(name="!help", value="Display this help menu.", inline=False)
+        help_embed.add_field(
+            name="!help", value="Display this help menu.", inline=False
+        )
 
         # Send the embedded message
         await ctx.send(embed=help_embed)

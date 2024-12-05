@@ -1,7 +1,11 @@
+"""Hold various general functions of the bot."""
+
 from discord.ext import commands
+
 from commands import BotCommands
 from views.signup_view import SignupView
 from database import mmr_collection, users
+
 
 class CustomBot(commands.Bot):
     def __init__(self, *args, **kwargs):
@@ -24,22 +28,22 @@ class CustomBot(commands.Bot):
 
     def load_mmr_data(self):
         for doc in mmr_collection.find():
-            player_id = int(doc['player_id'])
+            player_id = int(doc["player_id"])
             self.player_mmr[player_id] = {
-                'mmr': doc.get('mmr', 1000),
-                'wins': doc.get('wins', 0),
-                'losses': doc.get('losses', 0),
-                'total_combat_score': doc.get('total_combat_score', 0),
-                'total_kills': doc.get('total_kills', 0),
-                'total_deaths': doc.get('total_deaths', 0),
-                'matches_played': doc.get('matches_played', 0),
-                'total_rounds_played': doc.get('total_rounds_played', 0),
-                'average_combat_score': doc.get('average_combat_score', 0),
-                'kill_death_ratio': doc.get('kill_death_ratio', 0)
+                "mmr": doc.get("mmr", 1000),
+                "wins": doc.get("wins", 0),
+                "losses": doc.get("losses", 0),
+                "total_combat_score": doc.get("total_combat_score", 0),
+                "total_kills": doc.get("total_kills", 0),
+                "total_deaths": doc.get("total_deaths", 0),
+                "matches_played": doc.get("matches_played", 0),
+                "total_rounds_played": doc.get("total_rounds_played", 0),
+                "average_combat_score": doc.get("average_combat_score", 0),
+                "kill_death_ratio": doc.get("kill_death_ratio", 0),
             }
 
     def save_mmr_data(self):
-        for player_id, stats in self.player_mmr.items():
+        for player_id, _stats in self.player_mmr.items():
             # Get the Riot name and tag from the users collection
             user_data = users.find_one({"discord_id": str(player_id)})
             if user_data:
@@ -51,8 +55,12 @@ class CustomBot(commands.Bot):
         MMR_CONSTANT = 32
 
         # Calculate average MMR for winning and losing teams
-        winning_team_mmr = sum(self.player_mmr[player["id"]]["mmr"] for player in winning_team) / len(winning_team)
-        losing_team_mmr = sum(self.player_mmr[player["id"]]["mmr"] for player in losing_team) / len(losing_team)
+        winning_team_mmr = sum(
+            self.player_mmr[player["id"]]["mmr"] for player in winning_team
+        ) / len(winning_team)
+        losing_team_mmr = sum(
+            self.player_mmr[player["id"]]["mmr"] for player in losing_team
+        ) / len(losing_team)
 
         # Calculate expected results
         expected_win = 1 / (1 + 10 ** ((losing_team_mmr - winning_team_mmr) / 400))
@@ -78,16 +86,16 @@ class CustomBot(commands.Bot):
         if player_id not in self.player_mmr:
             # Initialize
             self.player_mmr[player_id] = {
-                'mmr': 1000,
-                'wins': 0,
-                'losses': 0,
-                'total_combat_score': 0,
-                'total_kills': 0,
-                'total_deaths': 0,
-                'matches_played': 0,
-                'total_rounds_played': 0,
-                'average_combat_score': 0,
-                'kill_death_ratio': 0
+                "mmr": 1000,
+                "wins": 0,
+                "losses": 0,
+                "total_combat_score": 0,
+                "total_kills": 0,
+                "total_deaths": 0,
+                "matches_played": 0,
+                "total_rounds_played": 0,
+                "average_combat_score": 0,
+                "kill_death_ratio": 0,
             }
             # Update player names
             user_data = users.find_one({"discord_id": str(player_id)})
@@ -95,6 +103,7 @@ class CustomBot(commands.Bot):
                 player_names[player_id] = user_data.get("name", "Unknown")
             else:
                 player_names[player_id] = "Unknown"
+
     async def setup_hook(self):
         # This is the recommended place for loading cogs
         await self.add_cog(BotCommands(self))
