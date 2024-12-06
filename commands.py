@@ -295,8 +295,8 @@ class BotCommands(commands.Cog):
             self.bot.team2 = team2
 
             for player_data in match["players"]:
-                player_name = player_data["name"]
-                player_tag = player_data["tag"]
+                player_name = player_data["name"].lower()
+                player_tag = player_data["tag"].lower()
 
                 user = users.find_one({"name": player_name, "tag": player_tag})
                 if user:
