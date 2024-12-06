@@ -418,7 +418,7 @@ class BotCommands(commands.Cog):
             return
 
         for player in winning_team + losing_team:
-            self.bot.ensure_player_mmr(player["id"])
+            self.bot.ensure_player_mmr(player["id"], self.bot.player_names)
 
         # Get top players
         pre_update_mmr = copy.deepcopy(self.bot.player_mmr)
