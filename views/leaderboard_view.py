@@ -8,8 +8,8 @@ from table2ascii import table2ascii as t2a, PresetStyle
 
 
 class LeaderboardView(View):
-    def __init__(self, ctx, bot, sorted_mmr, players_per_page=10):
-        super().__init__(timeout=None)
+    def __init__(self, ctx, bot, sorted_mmr, players_per_page=10, timeout = None):
+        super().__init__(timeout=timeout)
         self.ctx = ctx
         self.bot = bot
         self.sorted_mmr = sorted_mmr

@@ -1,5 +1,6 @@
 """This file holds all bot commands. <prefix><function_name> is the full command for each function."""
 
+import asyncio
 import os
 import copy  # To make a copy of player_mmr
 import random
@@ -98,6 +99,9 @@ class BotCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.dev_mode = False
+        self.leaderboard_message = None
+        self.leaderboard_view = None
+        self.refresh_task = None
 
     # Signup Command
     @commands.command()
@@ -561,52 +565,26 @@ class BotCommands(commands.Cog):
     # Display leaderboard
     @commands.command()
     async def leaderboard(self, ctx):
-        if not self.bot.player_mmr:
-            await ctx.send("No MMR data available yet.")
-            return
-
-        # Sort all players by MMR
         sorted_mmr = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
 
-        # Create the view for pages
-        view = LeaderboardView(ctx, self.bot, sorted_mmr, players_per_page=10)
-
-        # Calculate the page indexes
-        start_index = view.current_page * view.players_per_page
-        end_index = start_index + view.players_per_page
-        page_data = sorted_mmr[start_index:end_index]
-
-        names = []
+        # Create leaderboard data
         leaderboard_data = []
-        for player_id, stats in page_data:
-            user_data = users.find_one({"discord_id": str(player_id)})
-            if user_data:
-                riot_name = user_data.get("name", "Unknown")
-                riot_tag = user_data.get("tag", "Unknown")
-                names.append(f"{riot_name}#{riot_tag}")
-            else:
-                names.append("Unknown")
-
-        # Stats for leaderboard
-        for idx, ((player_id, stats), name) in enumerate(zip(page_data, names), start=start_index + 1):
+        for idx, (player_id, stats) in enumerate(sorted_mmr[:10], start=1):
             mmr_value = stats["mmr"]
             wins = stats["wins"]
             losses = stats["losses"]
             matches_played = stats.get("matches_played", wins + losses)
             avg_cs = stats.get("average_combat_score", 0)
             kd_ratio = stats.get("kill_death_ratio", 0)
-            win_percent = (wins / matches_played * 100) if matches_played > 0 else 0
-
-            leaderboard_data.append([
-                idx,
-                name,
-                mmr_value,
-                wins,
-                losses,
-                f"{win_percent:.2f}",
-                f"{avg_cs:.2f}",
-                f"{kd_ratio:.2f}"
-            ])
+            win_percent = (wins / matches_played) * 100 if matches_played > 0 else 0
+            user_data = users.find_one({"discord_id": str(player_id)})
+            if user_data:
+                riot_name = user_data.get("name", "Unknown")
+                riot_tag = user_data.get("tag", "Unknown")
+                player_name = f"{riot_name}#{riot_tag}"
+            else:
+                player_name = "Unknown"
+            leaderboard_data.append([idx, player_name, mmr_value, wins, losses, f"{win_percent:.2f}", f"{avg_cs:.2f}", f"{kd_ratio:.2f}"])
 
         table_output = t2a(
             header=["Rank", "User", "MMR", "Wins", "Losses", "Win%", "Avg ACS", "K/D"],
@@ -615,8 +593,45 @@ class BotCommands(commands.Cog):
             style=PresetStyle.thick_compact,
         )
 
-        content = f"## MMR Leaderboard (Page {view.current_page+1}/{view.total_pages}) ##\n```\n{table_output}\n```"
-        await ctx.send(content=content, view=view)
+        # Create the view
+        self.leaderboard_view = LeaderboardView(ctx, self.bot, sorted_mmr, players_per_page=10, timeout=None)
+        
+        content = f"## MMR Leaderboard (Page {self.leaderboard_view.current_page+1}/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
+        self.leaderboard_message = await ctx.send(content=content, view=self.leaderboard_view)
+
+        # Start the refresh
+        if self.refresh_task is not None:
+            self.refresh_task.cancel()
+        self.refresh_task = asyncio.create_task(self.periodic_refresh())
+
+    async def periodic_refresh(self):
+        await self.bot.wait_until_ready()
+        try:
+            while True:
+                await asyncio.sleep(30)
+                if self.leaderboard_message and self.leaderboard_view:
+                    # Just edit with the same content and view
+                    await self.leaderboard_message.edit(
+                        content=self.leaderboard_message.content, 
+                        view=self.leaderboard_view
+                    )
+                else:
+                    break
+        except asyncio.CancelledError:
+            pass
+
+    @commands.command()
+    @commands.has_role("Owner")
+    async def stop_leaderboard(self, ctx):
+        # Stop the refresh
+        if self.refresh_task:
+            self.refresh_task.cancel()
+            self.refresh_task = None
+        if self.leaderboard_message:
+            await self.leaderboard_message.edit(content="Leaderboard closed.", view=None)
+            self.leaderboard_message = None
+            self.leaderboard_view = None
+        await ctx.send("Leaderboard closed and refresh stopped.")
 
     #leaderboard sorted by K/D
     @commands.command() 
