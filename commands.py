@@ -28,64 +28,64 @@ headers = {
 mock_match_data = {
     "players": [
         {
-            "name": "SSL Wheel",
-            "tag": "7126",
+            "name": "Pyr",
+            "tag": "10219",
             "team_id": "Red",
-            "stats": {"score": 8188, "kills": 31, "deaths": 12, "assists": 4},
+            "stats": {"score": 5358, "kills": 22, "deaths": 11, "assists": 4},
         },
         {
-            "name": "MetALz",
-            "tag": "AZoN",
+            "name": "DeagleG",
+            "tag": "Y33T",
             "team_id": "Red",
-            "stats": {"score": 6233, "kills": 22, "deaths": 11, "assists": 6},
+            "stats": {"score": 4446, "kills": 17, "deaths": 10, "assists": 9},
         },
         {
-            "name": "Luh4r",
-            "tag": "i0n",
+            "name": "GunnerTDog",
+            "tag": "NA1",
             "team_id": "Red",
-            "stats": {"score": 5405, "kills": 19, "deaths": 17, "assists": 8},
-        },
-        {
-            "name": "Crimsyn",
-            "tag": "Rose",
-            "team_id": "Red",
-            "stats": {"score": 3772, "kills": 14, "deaths": 12, "assists": 4},
-        },
-        {
-            "name": "ItzFitz",
-            "tag": "1738",
-            "team_id": "Red",
-            "stats": {"score": 2829, "kills": 8, "deaths": 14, "assists": 9},
+            "stats": {"score": 4085, "kills": 15, "deaths": 6, "assists": 10},
         },
         {
             "name": "Duck",
             "tag": "MST",
-            "team_id": "Blue",
-            "stats": {"score": 5405, "kills": 17, "deaths": 18, "assists": 3},
+            "team_id": "Red",
+            "stats": {"score": 4047, "kills": 12, "deaths": 17, "assists": 7},
         },
         {
-            "name": "NBK2003",
-            "tag": "1584",
-            "team_id": "Blue",
-            "stats": {"score": 4416, "kills": 16, "deaths": 20, "assists": 3},
+            "name": "TreeTops",
+            "tag": "IMH",
+            "team_id": "Red",
+            "stats": {"score": 3648, "kills": 13, "deaths": 15, "assists": 7},
         },
         {
-            "name": "galaxy",
-            "tag": "KUJG",
+            "name": "Samurai",
+            "tag": "Mai",
             "team_id": "Blue",
-            "stats": {"score": 3703, "kills": 11, "deaths": 20, "assists": 7},
+            "stats": {"score": 4617, "kills": 16, "deaths": 18, "assists": 1},
+        },
+        {
+            "name": "TheAlphaEw0k",
+            "tag": "MST",
+            "team_id": "Blue",
+            "stats": {"score": 3990, "kills": 13, "deaths": 14, "assists": 10},
+        },
+        {
+            "name": "Luh4r",
+            "tag": "i0n",
+            "team_id": "Blue",
+            "stats": {"score": 3857, "kills": 13, "deaths": 17, "assists": 4},
         },
         {
             "name": "dShocc1",
             "tag": "LNEUP",
             "team_id": "Blue",
-            "stats": {"score": 3174, "kills": 10, "deaths": 17, "assists": 3},
+            "stats": {"score": 2014, "kills": 5, "deaths": 16, "assists": 10},
         },
         {
-            "name": "mintychewinggum",
+            "name": "Konax",
             "tag": "8056",
             "team_id": "Blue",
-            "stats": {"score": 3082, "kills": 11, "deaths": 19, "assists": 5},
+            "stats": {"score": 3648, "kills": 12, "deaths": 14, "assists": 5},
         },
     ],
     "teams": [
@@ -267,7 +267,7 @@ class BotCommands(commands.Cog):
         metadata = match.get("metadata", {})
         map_name = metadata.get("map", {}).get("name", "").lower()
 
-        testing_mode = False  # TRUE WHILE TESTING
+        testing_mode = True  # TRUE WHILE TESTING
 
         if testing_mode:
             match = mock_match_data
@@ -277,6 +277,8 @@ class BotCommands(commands.Cog):
             queue = []
             team1 = []
             team2 = []
+            self.bot.team1 = team1
+            self.bot.team2 = team2
 
             for player_data in match["players"]:
                 player_name = player_data["name"]
