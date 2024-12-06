@@ -688,8 +688,12 @@ class BotCommands(commands.Cog):
             await ctx.send("No MMR data available yet.")
             return
 
-        # Sort all players by MMR
-        sorted_wins = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["wins"], reverse=True)
+        # Sort all players by wins
+        sorted_wins = sorted(
+        self.bot.player_mmr.items(),
+        key=lambda x: x[1].get("wins", 0.0),  # Default to 0.0 if key is missing
+        reverse=True,
+        )
 
         # Create the view for pages
         view = LeaderboardView(ctx, self.bot, sorted_wins, players_per_page=10)
@@ -748,8 +752,12 @@ class BotCommands(commands.Cog):
             await ctx.send("No MMR data available yet.")
             return
 
-        # Sort all players by MMR
-        sorted_acs = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["average_combat_score"], reverse=True)
+        # Sort all players by ACS
+        sorted_acs = sorted(
+        self.bot.player_mmr.items(),
+        key=lambda x: x[1].get("average_combat_score", 0.0),  # Default to 0.0 if key is missing
+        reverse=True,
+        )
 
         # Create the view for pages
         view = LeaderboardView(ctx, self.bot, sorted_acs, players_per_page=10)
