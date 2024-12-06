@@ -99,9 +99,19 @@ class BotCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.dev_mode = False
+        #variables related to refreshing the leaderboard
         self.leaderboard_message = None
         self.leaderboard_view = None
         self.refresh_task = None
+        self.leaderboard_message_kd = None
+        self.leaderboard_view_kd = None
+        self.refresh_task_kd = None
+        self.leaderboard_message_wins = None
+        self.leaderboard_view_wins = None
+        self.refresh_task_wins = None
+        self.leaderboard_message_acs = None
+        self.leaderboard_view_acs = None
+        self.refresh_task_acs = None
 
     # Signup Command
     @commands.command()
@@ -597,7 +607,7 @@ class BotCommands(commands.Cog):
         self.leaderboard_view = LeaderboardView(ctx, self.bot, sorted_mmr, players_per_page=10, timeout=None)
         
         content = f"## MMR Leaderboard (Page {self.leaderboard_view.current_page+1}/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
-        self.leaderboard_message = await ctx.send(content=content, view=self.leaderboard_view)
+        self.leaderboard_message = await ctx.send(content=content, view=self.leaderboard_view) #########
 
         # Start the refresh
         if self.refresh_task is not None:
@@ -693,8 +703,15 @@ class BotCommands(commands.Cog):
             style=PresetStyle.thick_compact,
         )
 
-        content = f"## K/D Leaderboard (Page {view.current_page+1}/{view.total_pages}) ##\n```\n{table_output}\n```"
-        await ctx.send(content=content, view=view)
+        self.leaderboard_view_kd = LeaderboardView(ctx, self.bot, sorted_kd, players_per_page=10, timeout=None)
+        
+        content = f"## K/D Leaderboard (Page {self.leaderboard_view.current_page+1}/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
+        self.leaderboard_message_kd = await ctx.send(content=content, view=self.leaderboard_view_kd) #########
+
+        # Start the refresh
+        if self.refresh_task_kd is not None:
+            self.refresh_task_kd.cancel()
+        self.refresh_task_kd = asyncio.create_task(self.periodic_refresh())
 
     #Gives a leaderboard sorted by wins
     @commands.command()
@@ -757,8 +774,15 @@ class BotCommands(commands.Cog):
             style=PresetStyle.thick_compact,
         )
 
-        content = f"## Wins Leaderboard (Page {view.current_page+1}/{view.total_pages}) ##\n```\n{table_output}\n```"
-        await ctx.send(content=content, view=view)
+        self.leaderboard_view_wins = LeaderboardView(ctx, self.bot, sorted_wins, players_per_page=10, timeout=None)
+        
+        content = f"## Wins Leaderboard (Page {self.leaderboard_view.current_page+1}/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
+        self.leaderboard_message_wins = await ctx.send(content=content, view=self.leaderboard_view_wins) #########
+
+        # Start the refresh
+        if self.refresh_task_kd is not None:
+            self.refresh_task_kd.cancel()
+        self.refresh_task_kd = asyncio.create_task(self.periodic_refresh())
 
     #Gives a leaderboard sorted by ACS
     @commands.command()
@@ -821,8 +845,15 @@ class BotCommands(commands.Cog):
             style=PresetStyle.thick_compact,
         )
 
-        content = f"## ACS Leaderboard (Page {view.current_page+1}/{view.total_pages}) ##\n```\n{table_output}\n```"
-        await ctx.send(content=content, view=view)
+        self.leaderboard_view_acs = LeaderboardView(ctx, self.bot, sorted_acs, players_per_page=10, timeout=None)
+        
+        content = f"## K/D Leaderboard (Page {self.leaderboard_view.current_page+1}/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
+        self.leaderboard_message_acs = await ctx.send(content=content, view=self.leaderboard_view_acs) #########
+
+        # Start the refresh
+        if self.refresh_task_kd is not None:
+            self.refresh_task_kd.cancel()
+        self.refresh_task_kd = asyncio.create_task(self.periodic_refresh())
 
 
     @commands.command()
