@@ -1,3 +1,5 @@
+"""This view allows users to see a stats leaderboard of all the users currently in the database."""
+
 import discord
 from discord.ui import View, Button
 import math
