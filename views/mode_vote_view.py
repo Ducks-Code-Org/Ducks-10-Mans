@@ -109,10 +109,10 @@ class ModeVoteView(discord.ui.View):
 
     async def captains_mode(self):
         captains = []
-        if self.bot.selected_captain1:
-            captains.append(self.bot.selected_captain1)
-        if self.bot.selected_captain2:
-            captains.append(self.bot.selected_captain2)
+        if self.bot.captain1:
+            captains.append(self.bot.captain1)
+        if self.bot.captain2:
+            captains.append(self.bot.captain2)
 
         # Fill captains with highest MMR if not set
         if len(captains) < 2:
