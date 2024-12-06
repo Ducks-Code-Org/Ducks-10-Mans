@@ -129,6 +129,10 @@ class ModeVoteView(discord.ui.View):
 
         captain1, captain2 = captains[:2]
 
+        # Ensure captains are set in the bot
+        self.bot.captain1 = captain1
+        self.bot.captain2 = captain2
+
         await self.ctx.send(
             f"**Captains Mode Selected:**\n"
             f"Captain 1: {captain1['name']} (MMR: {self.bot.player_mmr[captain1['id']]['mmr']})\n"
