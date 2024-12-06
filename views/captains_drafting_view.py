@@ -67,6 +67,9 @@ class CaptainsDraftingView(discord.ui.View):
         if self.captain_pick_message:
             await self.captain_pick_message.delete()
 
+        self.bot.team1.insert(0, self.bot.captain1)
+        self.bot.team2.insert(0, self.bot.captain2)
+
         print(f"Final team 1: {self.bot.team1}")
         print(f"Final team 2: {self.bot.team2}")
         # Get Riot names for team members
