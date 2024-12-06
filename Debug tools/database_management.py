@@ -1,11 +1,10 @@
 """This is an independent file. The purpose is to have functions that can easily manage the database if needed."""
 
 import os
-import requests
+
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-from datetime import datetime
-import pytz
+
 
 uri = os.getenv("uri_key")
 client = MongoClient(uri, server_api=ServerApi("1"))
