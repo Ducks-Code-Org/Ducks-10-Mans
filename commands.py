@@ -272,6 +272,7 @@ class BotCommands(commands.Cog):
                         player_list_msg += f"<@{player["id"]}> "
                     await ctx.send(player_list_msg)
 
+                    ctx.channel = self.bot.signup_thread
                     voting_view = ModeVoteView(ctx, self.bot)
 
                     # Start vote for how teams will be decided
