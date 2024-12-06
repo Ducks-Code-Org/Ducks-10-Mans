@@ -70,8 +70,6 @@ class CaptainsDraftingView(discord.ui.View):
         self.bot.team1.insert(0, self.bot.captain1)
         self.bot.team2.insert(0, self.bot.captain2)
 
-        print(f"Final team 1: {self.bot.team1}")
-        print(f"Final team 2: {self.bot.team2}")
         # Get Riot names for team members
         team1_names = []
         for p in self.bot.team1:
@@ -134,7 +132,6 @@ class CaptainsDraftingView(discord.ui.View):
             )
             return
 
-        print(player_dict)
         # Add the player to the right team
         if current_captain_id == self.bot.captain1["id"]:
             self.bot.team1.append(player_dict)
@@ -150,7 +147,6 @@ class CaptainsDraftingView(discord.ui.View):
         await self.draft_next_player()
 
     async def draft_next_player(self):
-        print(self.remaining_players)
         if len(self.remaining_players) == 0:
             await self.finalize_draft()
             return
@@ -158,7 +154,6 @@ class CaptainsDraftingView(discord.ui.View):
         await self.send_current_draft_view()
 
     async def send_current_draft_view(self):
-        print("printing draft")
         if self.bot.captain1 is None:
             await self.ctx.send("No captain 1 set. use !setcaptain1 <name>")
             return

@@ -24,73 +24,73 @@ headers = {
     "Authorization": api_key,
 }
 
-# FOR TESTING ONLY
+# FOR TESTING ONLY, REMEMBER TO SET WINNER AND total_rounds
 mock_match_data = {
     "players": [
         {
-            "name": "Pyr",
-            "tag": "10219",
-            "team_id": "Red",
-            "stats": {"score": 5358, "kills": 22, "deaths": 11, "assists": 4},
-        },
-        {
-            "name": "DeagleG",
-            "tag": "Y33T",
-            "team_id": "Red",
-            "stats": {"score": 4446, "kills": 17, "deaths": 10, "assists": 9},
-        },
-        {
-            "name": "GunnerTDog",
-            "tag": "NA1",
-            "team_id": "Red",
-            "stats": {"score": 4085, "kills": 15, "deaths": 6, "assists": 10},
-        },
-        {
-            "name": "Duck",
-            "tag": "MST",
-            "team_id": "Red",
-            "stats": {"score": 4047, "kills": 12, "deaths": 17, "assists": 7},
-        },
-        {
-            "name": "TreeTops",
-            "tag": "IMH",
-            "team_id": "Red",
-            "stats": {"score": 3648, "kills": 13, "deaths": 15, "assists": 7},
-        },
-        {
             "name": "Samurai",
             "tag": "Mai",
-            "team_id": "Blue",
-            "stats": {"score": 4617, "kills": 16, "deaths": 18, "assists": 1},
+            "team_id": "Red",
+            "stats": {"score": 7104, "kills": 23, "deaths": 16, "assists": 7},
         },
         {
-            "name": "TheAlphaEw0k",
-            "tag": "MST",
-            "team_id": "Blue",
-            "stats": {"score": 3990, "kills": 13, "deaths": 14, "assists": 10},
+            "name": "WaffIes",
+            "tag": "NA1",
+            "team_id": "Red",
+            "stats": {"score": 5472, "kills": 18, "deaths": 22, "assists": 3},
+        },
+        {
+            "name": "Konax",
+            "tag": "5629",
+            "team_id": "Red",
+            "stats": {"score": 3984, "kills": 15, "deaths": 16, "assists": 1},
         },
         {
             "name": "Luh4r",
             "tag": "i0n",
+            "team_id": "Red",
+            "stats": {"score": 3672, "kills": 12, "deaths": 16, "assists": 12},
+        },
+        {
+            "name": "mintychewinggum",
+            "tag": "8056",
+            "team_id": "Red",
+            "stats": {"score": 2784, "kills": 11, "deaths": 18, "assists": 4},
+        },
+        {
+            "name": "TreeTops",
+            "tag": "IMH",
             "team_id": "Blue",
-            "stats": {"score": 3857, "kills": 13, "deaths": 17, "assists": 4},
+            "stats": {"score": 4560, "kills": 14, "deaths": 17, "assists": 10},
+        },
+        {
+            "name": "mizu",
+            "tag": "yor",
+            "team_id": "Blue",
+            "stats": {"score": 7968, "kills": 28, "deaths": 18, "assists": 3},
+        },
+        {
+            "name": "Nisom",
+            "tag": "zia",
+            "team_id": "Blue",
+            "stats": {"score": 7704, "kills": 25, "deaths": 14, "assists": 4},
+        },
+        {
+            "name": "galaxy",
+            "tag": "KUJG",
+            "team_id": "Blue",
+            "stats": {"score": 2952, "kills": 12, "deaths": 16, "assists": 2},
         },
         {
             "name": "dShocc1",
             "tag": "LNEUP",
             "team_id": "Blue",
-            "stats": {"score": 2014, "kills": 5, "deaths": 16, "assists": 10},
-        },
-        {
-            "name": "Konax",
-            "tag": "5629",
-            "team_id": "Blue",
-            "stats": {"score": 3648, "kills": 12, "deaths": 14, "assists": 5},
+            "stats": {"score": 2496, "kills": 9, "deaths": 14, "assists": 4},
         },
     ],
     "teams": [
-        {"team_id": "Red", "won": True, "rounds_won": 13, "rounds_lost": 6},
-        {"team_id": "Blue", "won": False, "rounds_won": 6, "rounds_lost": 13},
+        {"team_id": "Red", "won": True, "rounds_won": 13, "rounds_lost": 11},
+        {"team_id": "Blue", "won": False, "rounds_won": 11, "rounds_lost": 13},
     ],
 }
 
@@ -267,7 +267,7 @@ class BotCommands(commands.Cog):
         metadata = match.get("metadata", {})
         map_name = metadata.get("map", {}).get("name", "").lower()
 
-        testing_mode = True  # TRUE WHILE TESTING
+        testing_mode = False  # TRUE WHILE TESTING
 
         if testing_mode:
             match = mock_match_data
@@ -310,7 +310,7 @@ class BotCommands(commands.Cog):
                     return
 
             # For mocking match data, set to amount of rounds played
-            total_rounds = 19
+            total_rounds = 24
         else:
             if not self.bot.match_ongoing:
                 await ctx.send(

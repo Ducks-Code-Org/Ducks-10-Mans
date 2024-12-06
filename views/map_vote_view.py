@@ -76,6 +76,7 @@ class MapVoteView(discord.ui.View):
             description="Good luck to both teams!",
             color=discord.Color.blue(),
         )
+        print(self.bot.selected_map)
 
         attackers = []
         for player in self.bot.team1:
