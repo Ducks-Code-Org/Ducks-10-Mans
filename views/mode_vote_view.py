@@ -4,10 +4,79 @@ import asyncio
 import random
 
 import discord
-from discord.ui import Button
-
-from views.map_type_vote_view import MapTypeVoteView
+from discord.ui import Button, View
 from views.captains_drafting_view import CaptainsDraftingView
+from views.map_type_vote_view import MapTypeVoteView
+
+
+class SecondCaptainChoiceView(View):
+    def __init__(self, ctx, bot):
+        super().__init__(timeout=None)
+        self.ctx = ctx
+        self.bot = bot
+        self.first_pick_button = Button(label="Single Pick (2nd MMR first)", style=discord.ButtonStyle.green)
+        self.double_pick_button = Button(label="Double Pick (2nd and 3rd picks)", style=discord.ButtonStyle.blurple)
+
+        self.first_pick_button.callback = self.first_pick_callback
+        self.double_pick_button.callback = self.double_pick_callback
+
+        self.add_item(self.first_pick_button)
+        self.add_item(self.double_pick_button)
+
+    async def first_pick_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.bot.captain2["id"]:
+            await interaction.response.send_message("Only the second captain can choose the draft order!", ephemeral=True)
+            return
+
+        await interaction.response.send_message("You chose single pick scenario (2nd highest MMR first). Starting the draft...", ephemeral=True)
+        # Start the drafting phase with single pick
+        await self.start_draft(single_pick=True)
+
+    async def double_pick_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.bot.captain2["id"]:
+            await interaction.response.send_message("Only the second captain can choose the draft order!", ephemeral=True)
+            return
+
+        await interaction.response.send_message("You chose double pick scenario. Starting the draft...", ephemeral=True)
+        # Start the drafting phase with double pick
+        await self.start_draft(single_pick=False)
+
+    async def start_draft(self, single_pick: bool):
+        drafting_view = CaptainsDraftingView(self.ctx, self.bot)
+        
+        # Highest MMR: self.bot.captain1
+        # Second highest MMR: self.bot.captain2
+        
+        if single_pick:
+            # Single pick scenario
+            drafting_view.pick_order = [
+                self.bot.captain2,
+                self.bot.captain1,
+                self.bot.captain1,
+                self.bot.captain2,
+                self.bot.captain2,
+                self.bot.captain1,
+                self.bot.captain1,
+                self.bot.captain2,
+            ]
+        else:
+            # Double pick scenario
+            drafting_view.pick_order = [
+                self.bot.captain2,
+                self.bot.captain1,
+                self.bot.captain1,
+                self.bot.captain2,
+                self.bot.captain2,
+                self.bot.captain1,
+                self.bot.captain1,
+                self.bot.captain2,
+            ]
+
+        await drafting_view.send_current_draft_view()
+
+        # Disable buttons after a choice is made
+        for child in self.children:
+            child.disabled = True
 
 
 class ModeVoteView(discord.ui.View):
@@ -15,12 +84,8 @@ class ModeVoteView(discord.ui.View):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
-        self.balanced_button = Button(
-            label="Balanced Teams (0)", style=discord.ButtonStyle.green
-        )
-        self.captains_button = Button(
-            label="Captains (0)", style=discord.ButtonStyle.blurple
-        )
+        self.balanced_button = Button(label="Balanced Teams (0)", style=discord.ButtonStyle.green)
+        self.captains_button = Button(label="Captains (0)", style=discord.ButtonStyle.blurple)
         self.add_item(self.balanced_button)
         self.add_item(self.captains_button)
 
@@ -28,21 +93,14 @@ class ModeVoteView(discord.ui.View):
         self.voters = set()
         self.dummy = False
 
-        # Link callbacks to buttons
         self.setup_callbacks()
 
     async def balanced_callback(self, interaction: discord.Interaction):
-        # make sure the user is in the queue
         if interaction.user.id not in [player["id"] for player in self.bot.queue]:
-            await interaction.response.send_message(
-                "You must be in the queue to vote!", ephemeral=True
-            )
+            await interaction.response.send_message("You must be in the queue to vote!", ephemeral=True)
             return
-        # make sure the user has not already voted
         if interaction.user.id in self.voters:
-            await interaction.response.send_message(
-                "You have already voted!", ephemeral=True
-            )
+            await interaction.response.send_message("You have already voted!", ephemeral=True)
             return
 
         self.votes["Balanced Teams"] += 1
@@ -56,14 +114,10 @@ class ModeVoteView(discord.ui.View):
 
     async def captains_callback(self, interaction: discord.Interaction):
         if interaction.user.id not in [player["id"] for player in self.bot.queue]:
-            await interaction.response.send_message(
-                "You must be in the queue to vote!", ephemeral=True
-            )
+            await interaction.response.send_message("You must be in the queue to vote!", ephemeral=True)
             return
         if interaction.user.id in self.voters:
-            await interaction.response.send_message(
-                "You have already voted!", ephemeral=True
-            )
+            await interaction.response.send_message("You have already voted!", ephemeral=True)
             return
 
         self.votes["Captains"] += 1
@@ -80,7 +134,6 @@ class ModeVoteView(discord.ui.View):
         self.bot.match_ongoing = True
         team1, team2 = [], []
         team1_mmr, team2_mmr = 0, 0
-
         for player in players:
             if team1_mmr <= team2_mmr:
                 team1.append(player)
@@ -88,7 +141,6 @@ class ModeVoteView(discord.ui.View):
             else:
                 team2.append(player)
                 team2_mmr += self.bot.player_mmr[player["id"]]["mmr"]
-
         return team1, team2
 
     async def balanced_teams_logic(self):
@@ -96,15 +148,11 @@ class ModeVoteView(discord.ui.View):
         await self.ctx.send(
             f"**Balanced Teams:**\nAttackers: {', '.join([p['name'] for p in team1])}\nDefenders: {', '.join([p['name'] for p in team2])}"
         )
-
         self.bot.match_ongoing = True
-
         self.bot.team1 = team1
         self.bot.team2 = team2
 
         vote_map_type = MapTypeVoteView(self.ctx, self.bot)
-
-        # vote for maps next
         await vote_map_type.send_view()
 
     async def captains_mode(self):
@@ -114,7 +162,6 @@ class ModeVoteView(discord.ui.View):
         if self.bot.captain2:
             captains.append(self.bot.captain2)
 
-        # Fill captains with highest MMR if not set
         if len(captains) < 2:
             sorted_players = sorted(
                 self.bot.queue,
@@ -129,7 +176,6 @@ class ModeVoteView(discord.ui.View):
 
         captain1, captain2 = captains[:2]
 
-        # Ensure captains are set in the bot
         self.bot.captain1 = captain1
         self.bot.captain2 = captain2
 
@@ -139,12 +185,17 @@ class ModeVoteView(discord.ui.View):
             f"Captain 2: {captain2['name']} (MMR: {self.bot.player_mmr[captain2['id']]['mmr']})"
         )
 
+        # Give second captain choice between first or second and third picks
+        choice_view = SecondCaptainChoiceView(self.ctx, self.bot)
+        await self.ctx.send(
+            f"{captain2['name']}, please choose the draft type:",
+            view=choice_view
+        )
+
     async def send_view(self):
         await self.ctx.send("Vote for how teams will be decided:", view=self)
-
         await asyncio.sleep(25)
 
-        # Determine voting results
         if self.dummy is True:
             await self.ctx.send("Balanced Teams wins the vote!")
             await self.balanced_teams_logic()
@@ -155,20 +206,14 @@ class ModeVoteView(discord.ui.View):
             elif self.votes["Captains"] > self.votes["Balanced Teams"]:
                 await self.ctx.send("Captains wins the vote!")
                 await self.captains_mode()
-                captains_drafting = CaptainsDraftingView(self.ctx, self.bot)
-                await captains_drafting.send_current_draft_view()
             else:
-                decision = (
-                    "Balanced Teams" if random.choice([True, False]) else "Captains"
-                )
+                decision = "Balanced Teams" if random.choice([True, False]) else "Captains"
                 await self.ctx.send(f"It's a tie! Flipping a coin... {decision} wins!")
                 if decision == "Balanced Teams":
                     await self.balanced_teams_logic()
                 else:
-                    captains_drafting = CaptainsDraftingView(self.ctx, self.bot)
-                    await captains_drafting.send_current_draft_view()
+                    await self.captains_mode()
         self.bot.match_ongoing = True
-        dummy = False
 
     def setup_callbacks(self):
         self.balanced_button.callback = self.balanced_callback
