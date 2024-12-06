@@ -706,6 +706,187 @@ class BotCommands(commands.Cog):
         content = f"## MMR Leaderboard (Page {view.current_page+1}/{view.total_pages}) ##\n```\n{table_output}\n```"
         await ctx.send(content=content, view=view)
 
+    #leaderboard sorted by K/D
+    @commands.command() 
+    async def leaderboard_KD(self, ctx): 
+        if not self.bot.player_mmr:
+            await ctx.send("No MMR data available yet.")
+            return
+
+        # Sort all players by MMR
+        sorted_kd = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["kill_death_ratio"], reverse=True)
+
+        # Create the view for pages
+        view = LeaderboardView(ctx, self.bot, sorted_kd, players_per_page=10)
+
+        # Calculate the page indexes
+        start_index = view.current_page * view.players_per_page
+        end_index = start_index + view.players_per_page
+        page_data = sorted_kd[start_index:end_index]
+
+        names = []
+        leaderboard_data = []
+        for player_id, stats in page_data:
+            user_data = users.find_one({"discord_id": str(player_id)})
+            if user_data:
+                riot_name = user_data.get("name", "Unknown")
+                riot_tag = user_data.get("tag", "Unknown")
+                names.append(f"{riot_name}#{riot_tag}")
+            else:
+                names.append("Unknown")
+
+        # Stats for leaderboard
+        for idx, ((player_id, stats), name) in enumerate(zip(page_data, names), start=start_index + 1):
+            mmr_value = stats["mmr"]
+            wins = stats["wins"]
+            losses = stats["losses"]
+            matches_played = stats.get("matches_played", wins + losses)
+            avg_cs = stats.get("average_combat_score", 0)
+            kd_ratio = stats.get("kill_death_ratio", 0)
+            win_percent = (wins / matches_played * 100) if matches_played > 0 else 0
+
+            leaderboard_data.append([
+                idx,
+                name,
+                f"{kd_ratio:.2f}",
+                mmr_value,
+                wins,
+                losses,
+                f"{win_percent:.2f}",
+                f"{avg_cs:.2f}"
+            ])
+
+        table_output = t2a(
+            header=["Rank", "User", "K/D", "MMR", "Wins", "Losses", "Win%", "Avg ACS"],
+            body=leaderboard_data,
+            first_col_heading=True,
+            style=PresetStyle.thick_compact,
+        )
+
+        content = f"## K/D Leaderboard (Page {view.current_page+1}/{view.total_pages}) ##\n```\n{table_output}\n```"
+        await ctx.send(content=content, view=view)
+
+    #Gives a leaderboard sorted by wins
+    @commands.command()
+    async def leaderboard_wins(self, ctx):
+        if not self.bot.player_mmr:
+            await ctx.send("No MMR data available yet.")
+            return
+
+        # Sort all players by MMR
+        sorted_wins = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["wins"], reverse=True)
+
+        # Create the view for pages
+        view = LeaderboardView(ctx, self.bot, sorted_wins, players_per_page=10)
+
+        # Calculate the page indexes
+        start_index = view.current_page * view.players_per_page
+        end_index = start_index + view.players_per_page
+        page_data = sorted_wins[start_index:end_index]
+
+        names = []
+        leaderboard_data = []
+        for player_id, stats in page_data:
+            user_data = users.find_one({"discord_id": str(player_id)})
+            if user_data:
+                riot_name = user_data.get("name", "Unknown")
+                riot_tag = user_data.get("tag", "Unknown")
+                names.append(f"{riot_name}#{riot_tag}")
+            else:
+                names.append("Unknown")
+
+        # Stats for leaderboard
+        for idx, ((player_id, stats), name) in enumerate(zip(page_data, names), start=start_index + 1):
+            mmr_value = stats["mmr"]
+            wins = stats["wins"]
+            losses = stats["losses"]
+            matches_played = stats.get("matches_played", wins + losses)
+            avg_cs = stats.get("average_combat_score", 0)
+            kd_ratio = stats.get("kill_death_ratio", 0)
+            win_percent = (wins / matches_played * 100) if matches_played > 0 else 0
+
+            leaderboard_data.append([
+                idx,
+                name,
+                wins,
+                mmr_value,
+                losses,
+                f"{win_percent:.2f}",
+                f"{avg_cs:.2f}",
+                f"{kd_ratio:.2f}"
+            ])
+
+        table_output = t2a(
+            header=["Rank", "User", "Wins", "MMR", "Losses", "Win%", "Avg ACS", "K/D"],
+            body=leaderboard_data,
+            first_col_heading=True,
+            style=PresetStyle.thick_compact,
+        )
+
+        content = f"## Wins Leaderboard (Page {view.current_page+1}/{view.total_pages}) ##\n```\n{table_output}\n```"
+        await ctx.send(content=content, view=view)
+
+    #Gives a leaderboard sorted by ACS
+    @commands.command()
+    async def leaderboard_ACS(self, ctx):
+        if not self.bot.player_mmr:
+            await ctx.send("No MMR data available yet.")
+            return
+
+        # Sort all players by MMR
+        sorted_acs = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["average_combat_score"], reverse=True)
+
+        # Create the view for pages
+        view = LeaderboardView(ctx, self.bot, sorted_acs, players_per_page=10)
+
+        # Calculate the page indexes
+        start_index = view.current_page * view.players_per_page
+        end_index = start_index + view.players_per_page
+        page_data = sorted_acs[start_index:end_index]
+
+        names = []
+        leaderboard_data = []
+        for player_id, stats in page_data:
+            user_data = users.find_one({"discord_id": str(player_id)})
+            if user_data:
+                riot_name = user_data.get("name", "Unknown")
+                riot_tag = user_data.get("tag", "Unknown")
+                names.append(f"{riot_name}#{riot_tag}")
+            else:
+                names.append("Unknown")
+
+        # Stats for leaderboard
+        for idx, ((player_id, stats), name) in enumerate(zip(page_data, names), start=start_index + 1):
+            mmr_value = stats["mmr"]
+            wins = stats["wins"]
+            losses = stats["losses"]
+            matches_played = stats.get("matches_played", wins + losses)
+            avg_cs = stats.get("average_combat_score", 0)
+            kd_ratio = stats.get("kill_death_ratio", 0)
+            win_percent = (wins / matches_played * 100) if matches_played > 0 else 0
+
+            leaderboard_data.append([
+                idx,
+                name,
+                f"{avg_cs:.2f}",
+                mmr_value,
+                wins,
+                losses,
+                f"{win_percent:.2f}",
+                f"{kd_ratio:.2f}"
+            ])
+
+        table_output = t2a(
+            header=["Rank", "User", "Avg ACS", "MMR", "Wins", "Losses", "Win%", "K/D"],
+            body=leaderboard_data,
+            first_col_heading=True,
+            style=PresetStyle.thick_compact,
+        )
+
+        content = f"## ACS Leaderboard (Page {view.current_page+1}/{view.total_pages}) ##\n```\n{table_output}\n```"
+        await ctx.send(content=content, view=view)
+
+
     @commands.command()
     @commands.has_role("Owner")  # Restrict this command to admins
     async def initialize_rounds(self, ctx):
@@ -987,6 +1168,15 @@ class BotCommands(commands.Cog):
         )
         help_embed.add_field(
             name="!leaderboard", value="View the MMR leaderboard.", inline=False
+        )
+        help_embed.add_field(
+            name="!leaderboard_KD", value="View the K/D leaderboard.", inline=False
+        )
+        help_embed.add_field(
+            name="!leaderboard_wins", value="View the wins leaderboard.", inline=False
+        )
+        help_embed.add_field(
+            name="!leaderboard_ACS", value="View the ACS leaderboard.", inline=False
         )
         help_embed.add_field(
             name="!linkriot",
