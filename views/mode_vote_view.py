@@ -150,6 +150,7 @@ class ModeVoteView(discord.ui.View):
                 await self.balanced_teams_logic()
             elif self.votes["Captains"] > self.votes["Balanced Teams"]:
                 await self.ctx.send("Captains wins the vote!")
+                await self.captains_mode()
                 captains_drafting = CaptainsDraftingView(self.ctx, self.bot)
                 await captains_drafting.send_current_draft_view()
             else:
