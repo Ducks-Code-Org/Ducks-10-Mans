@@ -626,8 +626,11 @@ class BotCommands(commands.Cog):
             return
 
         # Sort all players by MMR
-        sorted_kd = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["kill_death_ratio"], reverse=True)
-
+        sorted_kd = sorted(
+        self.bot.player_mmr.items(),
+        key=lambda x: x[1].get("kill_death_ratio", 0.0),  # Default to 0.0 if key is missing
+        reverse=True,
+        )
         # Create the view for pages
         view = LeaderboardView(ctx, self.bot, sorted_kd, players_per_page=10)
 
