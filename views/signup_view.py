@@ -69,7 +69,7 @@ class SignupView(discord.ui.View):
                     await interaction.channel.send("__Players:__")
                     player_list_msg = ""
                     for player in self.bot.queue:
-                        player_list_msg += f"<@{player["id"]}> "
+                        player_list_msg += f"<@{player['id']}>"
                     await interaction.channel.send(player_list_msg)
 
                     self.bot.signup_active = False
