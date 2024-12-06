@@ -1,4 +1,4 @@
-"""This is an independent file. The purpose to have functions to easily manage the database if needed."""
+"""This is an independent file. The purpose is to have functions that can easily manage the database if needed."""
 
 import os
 import requests
