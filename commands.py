@@ -83,14 +83,14 @@ mock_match_data = {
         },
         {
             "name": "Konax",
-            "tag": "8056",
+            "tag": "5629",
             "team_id": "Blue",
             "stats": {"score": 3648, "kills": 12, "deaths": 14, "assists": 5},
         },
     ],
     "teams": [
-        {"team_id": "Red", "won": True, "rounds_won": 13, "rounds_lost": 11},
-        {"team_id": "Blue", "won": False, "rounds_won": 11, "rounds_lost": 13},
+        {"team_id": "Red", "won": True, "rounds_won": 13, "rounds_lost": 6},
+        {"team_id": "Blue", "won": False, "rounds_won": 6, "rounds_lost": 13},
     ],
 }
 
@@ -310,7 +310,7 @@ class BotCommands(commands.Cog):
                     return
 
             # For mocking match data, set to amount of rounds played
-            total_rounds = 24
+            total_rounds = 19
         else:
             if not self.bot.match_ongoing:
                 await ctx.send(
