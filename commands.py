@@ -1090,52 +1090,63 @@ class BotCommands(commands.Cog):
         help_embed = discord.Embed(
             title="Help Menu",
             description="Duck's 10 Mans Commands:",
-            color=discord.Color.blue(),
+            color=discord.Color.green(),
         )
 
+        # General Commands
         help_embed.add_field(
-            name="!signup", value="Start a signup session for matches.", inline=False
-        )
-        help_embed.add_field(
-            name="!report",
-            value="Report the most recent match and update MMR.",
+            name="General Commands",
+            value=(
+                "**!signup** - Start a signup session for matches.\n"
+                "**!join** - Join the queue.\n"
+                "**!leave** - Leave the queue.\n"
+                "**!status** - View the current queue status.\n"
+                "**!report** - Report the most recent match and update MMR.\n"
+                "**!stats** - Check your MMR and match stats.\n"
+                "**!linkriot** - Link or update your Riot account using `Name#Tag`.\n"
+            ),
             inline=False,
         )
+
+        # Leaderboard Commands
         help_embed.add_field(
-            name="!stats", value="Check your MMR and match stats.", inline=False
-        )
-        help_embed.add_field(
-            name="!leaderboard", value="View the MMR leaderboard.", inline=False
-        )
-        help_embed.add_field(
-            name="!leaderboard_KD", value="View the K/D leaderboard.", inline=False
-        )
-        help_embed.add_field(
-            name="!leaderboard_wins", value="View the wins leaderboard.", inline=False
-        )
-        help_embed.add_field(
-            name="!leaderboard_ACS", value="View the ACS leaderboard.", inline=False
-        )
-        help_embed.add_field(
-            name="!linkriot",
-            value="Link or update your Riot account using `Name#Tag`.",
+            name="Leaderboard Commands",
+            value=(
+                "**!leaderboard** - View the MMR leaderboard.\n"
+                "**!leaderboard_KD** - View the K/D leaderboard.\n"
+                "**!leaderboard_wins** - View the wins leaderboard.\n"
+                "**!leaderboard_ACS** - View the ACS leaderboard.\n"
+            ),
             inline=False,
         )
-        help_embed.add_field(name="!join", value="Joins the queue.", inline=False)
+
+        # Admin Commands
         help_embed.add_field(
-            name="!setcaptain1",
-            value="Set Captain 1 using `Name#Tag` (only accessible by admins)",
+            name="Admin Commands",
+            value=(
+                "**!setcaptain1** - Set Captain 1 using `Name#Tag`.\n"
+                "**!setcaptain2** - Set Captain 2 using `Name#Tag`.\n"
+                "**!cancel** - Cancel the current signup session.\n"
+                "**!toggledev** - Toggle Developer Mode.\n"
+                "**!initialize_rounds** - Reset total rounds played for all players.\n"
+                "**!recalculate** - Recalculate average combat scores for all players.\n"
+                "**!simulate_queue** - Simulate a full queue for testing.\n"
+                "**!force_draft** - Force a drafting phase with bots.\n"
+            ),
             inline=False,
         )
+
+        # Owner Commands
         help_embed.add_field(
-            name="!setcaptain2",
-            value="Set Captain 2 using `Name#Tag` (only accessible by admins)",
+            name="Owner Commands",
+            value=(
+                "**!stop_leaderboard** - Stop the leaderboard refresh and close the leaderboard.\n"
+            ),
             inline=False,
         )
-        help_embed.add_field(name="!leave", value="Leaves the queue", inline=False)
-        help_embed.add_field(
-            name="!help", value="Display this help menu.", inline=False
-        )
+
+        # Footer
+        help_embed.set_footer(text="Use commands with the specified prefix (!).")
 
         # Send the embedded message
         await ctx.send(embed=help_embed)
