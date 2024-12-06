@@ -630,6 +630,54 @@ class BotCommands(commands.Cog):
         except asyncio.CancelledError:
             pass
 
+    async def periodic_refresh_kd(self):
+        await self.bot.wait_until_ready()
+        try:
+            while True:
+                await asyncio.sleep(30)
+                if self.leaderboard_message_kd and self.leaderboard_view_kd:
+                    # Just edit with the same content and view
+                    await self.leaderboard_message_kd.edit(
+                        content=self.leaderboard_message_kd.content, 
+                        view=self.leaderboard_view_kd
+                    )
+                else:
+                    break
+        except asyncio.CancelledError:
+            pass
+
+    async def periodic_refresh_wins(self):
+        await self.bot.wait_until_ready()
+        try:
+            while True:
+                await asyncio.sleep(30)
+                if self.leaderboard_message_wins and self.leaderboard_view_wins:
+                    # Just edit with the same content and view
+                    await self.leaderboard_message_wins.edit(
+                        content=self.leaderboard_message_wins.content, 
+                        view=self.leaderboard_view_wins
+                    )
+                else:
+                    break
+        except asyncio.CancelledError:
+            pass
+
+    async def periodic_refresh_acs(self):
+        await self.bot.wait_until_ready()
+        try:
+            while True:
+                await asyncio.sleep(30)
+                if self.leaderboard_message_acs and self.leaderboard_view_acs:
+                    # Just edit with the same content and view
+                    await self.leaderboard_message_acs.edit(
+                        content=self.leaderboard_message_acs.content, 
+                        view=self.leaderboard_view_acs
+                    )
+                else:
+                    break
+        except asyncio.CancelledError:
+            pass
+
     @commands.command()
     @commands.has_role("Owner")
     async def stop_leaderboard(self, ctx):
@@ -705,13 +753,13 @@ class BotCommands(commands.Cog):
 
         self.leaderboard_view_kd = LeaderboardView(ctx, self.bot, sorted_kd, players_per_page=10, timeout=None)
         
-        content = f"## K/D Leaderboard (Page {self.leaderboard_view.current_page+1}/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
+        content = f"## K/D Leaderboard (Page {self.leaderboard_view_kd.current_page+1}/{self.leaderboard_view_kd.total_pages}) ##\n```\n{table_output}\n```"
         self.leaderboard_message_kd = await ctx.send(content=content, view=self.leaderboard_view_kd) #########
 
         # Start the refresh
         if self.refresh_task_kd is not None:
             self.refresh_task_kd.cancel()
-        self.refresh_task_kd = asyncio.create_task(self.periodic_refresh())
+        self.refresh_task_kd = asyncio.create_task(self.periodic_refresh_kd())
 
     #Gives a leaderboard sorted by wins
     @commands.command()
@@ -776,13 +824,13 @@ class BotCommands(commands.Cog):
 
         self.leaderboard_view_wins = LeaderboardView(ctx, self.bot, sorted_wins, players_per_page=10, timeout=None)
         
-        content = f"## Wins Leaderboard (Page {self.leaderboard_view.current_page+1}/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
+        content = f"## Wins Leaderboard (Page {self.leaderboard_view_wins.current_page+1}/{self.leaderboard_view_wins.total_pages}) ##\n```\n{table_output}\n```"
         self.leaderboard_message_wins = await ctx.send(content=content, view=self.leaderboard_view_wins) #########
 
         # Start the refresh
-        if self.refresh_task_kd is not None:
-            self.refresh_task_kd.cancel()
-        self.refresh_task_kd = asyncio.create_task(self.periodic_refresh())
+        if self.refresh_task_wins is not None:
+            self.refresh_task_wins.cancel()
+        self.refresh_task_wins = asyncio.create_task(self.periodic_refresh_wins())
 
     #Gives a leaderboard sorted by ACS
     @commands.command()
@@ -847,13 +895,13 @@ class BotCommands(commands.Cog):
 
         self.leaderboard_view_acs = LeaderboardView(ctx, self.bot, sorted_acs, players_per_page=10, timeout=None)
         
-        content = f"## K/D Leaderboard (Page {self.leaderboard_view.current_page+1}/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
+        content = f"## K/D Leaderboard (Page {self.leaderboard_view_acs.current_page+1}/{self.leaderboard_view_acs.total_pages}) ##\n```\n{table_output}\n```"
         self.leaderboard_message_acs = await ctx.send(content=content, view=self.leaderboard_view_acs) #########
 
         # Start the refresh
-        if self.refresh_task_kd is not None:
-            self.refresh_task_kd.cancel()
-        self.refresh_task_kd = asyncio.create_task(self.periodic_refresh())
+        if self.refresh_task_acs is not None:
+            self.refresh_task_acs.cancel()
+        self.refresh_task_acs = asyncio.create_task(self.periodic_refresh_acs())
 
 
     @commands.command()
