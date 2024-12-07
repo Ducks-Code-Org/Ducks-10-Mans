@@ -268,4 +268,4 @@ class CaptainsDraftingView(discord.ui.View):
             )
 
             self.bot.queue.clear()
-            await self.bot.signup_thread.delete()
+            await self.bot.match_channel.delete()

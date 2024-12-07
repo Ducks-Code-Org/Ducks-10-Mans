@@ -135,19 +135,19 @@ class BotCommands(commands.Cog):
         self.bot.signup_active = True
         self.bot.queue = []
 
-        self.bot.current_signup_message = await ctx.send(
+        # Generate Match Channel
+        self.bot.match_channel = await ctx.guild.create_text_channel(
+            name=f"Match-{random.randrange(1, 10**4):04}",
+            category=ctx.channel.category,
+            position=0,
+        )
+        self.bot.current_signup_message = await self.bot.match_channel.send(
             "Click a button to manage your queue status!", view=self.bot.signup_view
         )
 
-        # Generate Signup Thread
-        self.bot.signup_thread = await self.bot.current_signup_message.create_thread(
-            name=f"10-Man Match #{random.randrange(1, 10**4):04}",
-            auto_archive_duration=60,
+        await ctx.send(
+            f"Queue started! Signup can be found here: <#{self.bot.match_channel.id}>"
         )
-        self.bot.signup_thread_message = await ctx.send(
-            f"Queue Started! Join via the queue thread: <#{self.bot.signup_thread.id}>"
-        )
-        await self.bot.signup_thread_message.pin()
 
         # Check if we need to create the view
         if self.bot.signup_view is None:
@@ -181,7 +181,8 @@ class BotCommands(commands.Cog):
                 # Update the button label
                 await self.bot.signup_view.update_signup()
 
-                await self.bot.signup_thread.add_user(ctx.author)
+                # await self.bot.match_channel.add_user(ctx.author)
+                # TODO: Give user role to type in match channel
 
                 await ctx.send(
                     f"{ctx.author.name} added to the queue! Current queue count: {len(self.bot.queue)}"
@@ -200,7 +201,7 @@ class BotCommands(commands.Cog):
                         player_list_msg += f"<@{player['id']}> "
                     await ctx.send(player_list_msg)
 
-                    ctx.channel = self.bot.signup_thread
+                    ctx.channel = self.bot.match_channel
                     voting_view = ModeVoteView(ctx, self.bot)
 
                     # Start vote for how teams will be decided
@@ -231,7 +232,8 @@ class BotCommands(commands.Cog):
             ]
             # Update the button label
             await self.bot.signup_view.update_signup()
-            await self.bot.signup_thread.remove_user(ctx.author)
+            # await self.bot.match_channel.remove_user(ctx.author)
+            # TODO: Remove user permissions to type in match channel
             await ctx.send("You have left the queue.")
 
         else:
@@ -260,7 +262,7 @@ class BotCommands(commands.Cog):
 
         queue_status = ", ".join(riot_names)
         await ctx.send(f"Current queue ({len(self.bot.queue)}/10): {queue_status}")
-        await ctx.send(f"Match Thread: <#{self.bot.signup_thread.id}>")
+        await ctx.send(f"Match Thread: <#{self.bot.match_channel.id}>")
 
     # Report the match
     @commands.command()
@@ -490,8 +492,7 @@ class BotCommands(commands.Cog):
         self.bot.match_ongoing = False
         try:
             await self.bot.current_signup_message.delete()
-            await self.bot.signup_thread.delete()
-            await self.bot.signup_thread_message.delete()
+            await self.bot.match_channel.delete()
         except discord.NotFound:
             pass
         if "10-mans" in self.bot.origin_ctx.channel.name:
@@ -1184,8 +1185,7 @@ class BotCommands(commands.Cog):
             self.bot.signup_view = None
             await ctx.send("Canceled Signup")
             try:
-                await self.bot.signup_thread.delete()
-                await self.bot.signup_thread_message.delete()
+                await self.bot.match_channel.delete()
             except discord.NotFound:
                 pass
             if "10-mans" in self.bot.origin_ctx.channel.name:

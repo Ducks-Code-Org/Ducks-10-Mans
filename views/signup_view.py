@@ -57,7 +57,8 @@ class SignupView(discord.ui.View):
                     ephemeral=True,
                 )
 
-                await self.bot.signup_thread.add_user(interaction.user)
+                # await self.bot.match_channel.add_user(interaction.user)
+                # TODO: Give user role to type in match channel
 
                 if len(self.bot.queue) == 10:
                     await interaction.channel.send(
@@ -73,7 +74,7 @@ class SignupView(discord.ui.View):
                     await interaction.channel.send(player_list_msg)
 
                     self.bot.signup_active = False
-                    self.ctx.channel = self.bot.signup_thread
+                    self.ctx.channel = self.bot.match_channel
 
                     mode_vote = ModeVoteView(self.ctx, self.bot)
                     await mode_vote.send_view()
@@ -101,7 +102,8 @@ class SignupView(discord.ui.View):
             ephemeral=True,
         )
 
-        await self.bot.signup_thread.remove_user(interaction.user)
+        # await self.bot.match_channel.remove_user(interaction.user)
+        # TODO: Remove user permissions to type in match channel
 
     def setup_callbacks(self):
         self.sign_up_button.callback = self.sign_up_callback
@@ -117,7 +119,7 @@ class SignupView(discord.ui.View):
                     except discord.NotFound:
                         pass
                 # Send new signup message
-                self.bot.current_signup_message = await self.bot.signup_thread.send(
+                self.bot.current_signup_message = await self.bot.match_channel.send(
                     "Click a button to manage your queue status!",
                     view=self,
                     silent=True,
