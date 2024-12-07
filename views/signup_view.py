@@ -1,4 +1,4 @@
-"""This view creates and maintains a signup interaction, contained within a signup thread."""
+"""This view creates and maintains a signup interaction, contained within its own channel."""
 
 import asyncio
 

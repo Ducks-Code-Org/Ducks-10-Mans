@@ -188,7 +188,7 @@ class BotCommands(commands.Cog):
 
         queue_status = ", ".join(riot_names)
         await ctx.send(f"Current queue ({len(self.bot.queue)}/10): {queue_status}")
-        await ctx.send(f"Match Thread: <#{self.bot.match_channel.id}>")
+        await ctx.send(f"Match Channel: <#{self.bot.match_channel.id}>")
 
     # Report the match
     @commands.command()
