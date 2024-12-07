@@ -17,7 +17,7 @@ from views.captains_drafting_view import CaptainsDraftingView
 from views.mode_vote_view import ModeVoteView
 from views.signup_view import SignupView
 from stats_helper import update_stats
-from views.leaderboard_view import LeaderboardView
+from views.leaderboard_view import LeaderboardView, LeaderboardViewKD, LeaderboardViewACS, LeaderboardViewWins
 
 # Initialize API
 api_key = os.getenv("api_key")
@@ -751,7 +751,7 @@ class BotCommands(commands.Cog):
             style=PresetStyle.thick_compact,
         )
 
-        self.leaderboard_view_kd = LeaderboardView(ctx, self.bot, sorted_kd, players_per_page=10, timeout=None)
+        self.leaderboard_view_kd = LeaderboardViewKD(ctx, self.bot, sorted_kd, players_per_page=10, timeout=None)
         
         content = f"## K/D Leaderboard (Page {self.leaderboard_view_kd.current_page+1}/{self.leaderboard_view_kd.total_pages}) ##\n```\n{table_output}\n```"
         self.leaderboard_message_kd = await ctx.send(content=content, view=self.leaderboard_view_kd) #########
@@ -822,7 +822,7 @@ class BotCommands(commands.Cog):
             style=PresetStyle.thick_compact,
         )
 
-        self.leaderboard_view_wins = LeaderboardView(ctx, self.bot, sorted_wins, players_per_page=10, timeout=None)
+        self.leaderboard_view_wins = LeaderboardViewWins(ctx, self.bot, sorted_wins, players_per_page=10, timeout=None)
         
         content = f"## Wins Leaderboard (Page {self.leaderboard_view_wins.current_page+1}/{self.leaderboard_view_wins.total_pages}) ##\n```\n{table_output}\n```"
         self.leaderboard_message_wins = await ctx.send(content=content, view=self.leaderboard_view_wins) #########
@@ -893,7 +893,7 @@ class BotCommands(commands.Cog):
             style=PresetStyle.thick_compact,
         )
 
-        self.leaderboard_view_acs = LeaderboardView(ctx, self.bot, sorted_acs, players_per_page=10, timeout=None)
+        self.leaderboard_view_acs = LeaderboardViewACS(ctx, self.bot, sorted_acs, players_per_page=10, timeout=None)
         
         content = f"## K/D Leaderboard (Page {self.leaderboard_view_acs.current_page+1}/{self.leaderboard_view_acs.total_pages}) ##\n```\n{table_output}\n```"
         self.leaderboard_message_acs = await ctx.send(content=content, view=self.leaderboard_view_acs) #########
