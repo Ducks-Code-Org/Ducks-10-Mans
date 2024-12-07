@@ -173,7 +173,11 @@ class LeaderboardViewKD(View):
     # Refresh the leaderboard
     @discord.ui.button(style=discord.ButtonStyle.blurple, emoji="🔄")
     async def refresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.sorted_mmr = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+        self.sorted_mmr = sorted(
+        self.bot.player_mmr.items(),
+        key=lambda x: x[1].get("kill_death_ratio", 0.0),  # Default to 0.0 if key is missing
+        reverse=True,
+        )
 
         # Recalculate total_pages if player count changed
         self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
@@ -263,7 +267,11 @@ class LeaderboardViewWins(View):
     # Refresh the leaderboard
     @discord.ui.button(style=discord.ButtonStyle.blurple, emoji="🔄")
     async def refresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.sorted_mmr = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+        self.sorted_mmr = sorted(
+        self.bot.player_mmr.items(),
+        key=lambda x: x[1].get("wins", 0.0),  # Default to 0.0 if key is missing
+        reverse=True,
+        )
 
         # Recalculate total_pages if player count changed
         self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
@@ -353,7 +361,11 @@ class LeaderboardViewACS(View):
     # Refresh the leaderboard
     @discord.ui.button(style=discord.ButtonStyle.blurple, emoji="🔄")
     async def refresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.sorted_mmr = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+        self.sorted_mmr = sorted(
+        self.bot.player_mmr.items(),
+        key=lambda x: x[1].get("average_combat_score", 0.0),  # Default to 0.0 if key is missing
+        reverse=True,
+        )
 
         # Recalculate total_pages if player count changed
         self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
