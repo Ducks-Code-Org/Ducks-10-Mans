@@ -11,10 +11,10 @@ import requests
 from table2ascii import table2ascii as t2a, PresetStyle
 
 from database import users, all_matches, mmr_collection
+from stats_helper import update_stats
 from views.captains_drafting_view import CaptainsDraftingView
 from views.mode_vote_view import ModeVoteView
 from views.signup_view import SignupView
-from stats_helper import update_stats
 from views.leaderboard_view import (
     LeaderboardView,
     LeaderboardViewKD,
