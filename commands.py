@@ -1146,8 +1146,6 @@ class BotCommands(commands.Cog):
             name="General Commands",
             value=(
                 "**!signup** - Start a signup session for matches.\n"
-                "**!join** - Join the queue.\n"
-                "**!leave** - Leave the queue.\n"
                 "**!status** - View the current queue status.\n"
                 "**!report** - Report the most recent match and update MMR.\n"
                 "**!stats** - Check your MMR and match stats.\n"
