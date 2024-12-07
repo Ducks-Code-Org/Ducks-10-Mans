@@ -4,20 +4,23 @@ import asyncio
 import os
 import copy  # To make a copy of player_mmr
 import random
-import math # for leaderboard pages
 
 import discord
-from discord.ui import View, Button
 from discord.ext import commands
 import requests
 from table2ascii import table2ascii as t2a, PresetStyle
 
 from database import users, all_matches, mmr_collection
+from stats_helper import update_stats
 from views.captains_drafting_view import CaptainsDraftingView
 from views.mode_vote_view import ModeVoteView
 from views.signup_view import SignupView
-from stats_helper import update_stats
-from views.leaderboard_view import LeaderboardView, LeaderboardViewKD, LeaderboardViewACS, LeaderboardViewWins
+from views.leaderboard_view import (
+    LeaderboardView,
+    LeaderboardViewKD,
+    LeaderboardViewACS,
+    LeaderboardViewWins,
+)
 
 # Initialize API
 api_key = os.getenv("api_key")
@@ -95,11 +98,12 @@ mock_match_data = {
     ],
 }
 
+
 class BotCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.dev_mode = False
-        #variables related to refreshing the leaderboard
+        # variables related to refreshing the leaderboard
         self.leaderboard_message = None
         self.leaderboard_view = None
         self.refresh_task = None
@@ -131,107 +135,35 @@ class BotCommands(commands.Cog):
         self.bot.signup_active = True
         self.bot.queue = []
 
-        self.bot.current_signup_message = await ctx.send(
+        # Generate Match Name and Setup Match Channel Permissions
+        self.bot.match_name = f"match-{random.randrange(1, 10**4):04}"
+        self.bot.match_role = await ctx.guild.create_role(
+            name=self.bot.match_name, hoist=True
+        )
+        await ctx.guild.edit_role_positions(positions={self.bot.match_role: 5})
+        match_channel_permissions = {
+            ctx.guild.default_role: discord.PermissionOverwrite(send_messages=False),
+            self.bot.match_role: discord.PermissionOverwrite(send_messages=True),
+        }
+
+        # Generate Match Channel and Send Signup Message
+        self.bot.match_channel = await ctx.guild.create_text_channel(
+            name=self.bot.match_name,
+            category=ctx.channel.category,
+            position=0,
+            overwrites=match_channel_permissions,
+        )
+        self.bot.current_signup_message = await self.bot.match_channel.send(
             "Click a button to manage your queue status!", view=self.bot.signup_view
         )
 
-        # Generate Signup Thread
-        self.bot.signup_thread = await self.bot.current_signup_message.create_thread(
-            name=f"10-Man Match #{random.randrange(1, 10**4):04}",
-            auto_archive_duration=60,
+        await ctx.send(
+            f"Queue started! Signup can be found here: <#{self.bot.match_channel.id}>"
         )
-        self.bot.signup_thread_message = await ctx.send(
-            f"Queue Started! Join via the queue thread: <#{self.bot.signup_thread.id}>"
-        )
-        await self.bot.signup_thread_message.pin()
 
         # Check if we need to create the view
         if self.bot.signup_view is None:
             self.bot.signup_view = SignupView(ctx, self.bot)
-
-    # Command to join queue without pressing the button
-    @commands.command()
-    async def join(self, ctx):
-        if self.bot.signup_view is None:
-            await ctx.send("No signup is currently active.")
-            return
-
-        if not self.bot.signup_active:
-            await ctx.send("No signup is currently active.")
-            return
-
-        existing_user = users.find_one({"discord_id": str(ctx.author.id)})
-        if existing_user:
-            if ctx.author.id not in [player["id"] for player in self.bot.queue]:
-                self.bot.signup_view.add_player_to_queue(
-                    {"id": ctx.author.id, "name": ctx.author.name}
-                )
-                if ctx.author.id not in self.bot.player_mmr:
-                    self.bot.player_mmr[ctx.author.id] = {
-                        "mmr": 1000,
-                        "wins": 0,
-                        "losses": 0,
-                    }
-                self.bot.player_names[ctx.author.id] = ctx.author.name
-
-                # Update the button label
-                await self.bot.signup_view.update_signup()
-
-                await self.bot.signup_thread.add_user(ctx.author)
-
-                await ctx.send(
-                    f"{ctx.author.name} added to the queue! Current queue count: {len(self.bot.queue)}"
-                )
-
-                if len(self.bot.queue) == 10:
-                    await ctx.send(
-                        "The queue is now full, proceeding to the voting stage."
-                    )
-                    self.bot.signup_view.cancel_signup_refresh()
-
-                    # Pings all users in the active queue (intended for afk mfs)
-                    await ctx.send("__Players:__")
-                    player_list_msg = ""
-                    for player in self.bot.queue:
-                        player_list_msg += f"<@{player['id']}> "
-                    await ctx.send(player_list_msg)
-
-                    ctx.channel = self.bot.signup_thread
-                    voting_view = ModeVoteView(ctx, self.bot)
-
-                    # Start vote for how teams will be decided
-                    await voting_view.send_view()
-
-                    self.bot.signup_active = False
-            else:
-                await ctx.send("You're already in the queue!")
-        else:
-            await ctx.send(
-                "You must link your Riot account to join the queue. Use !linkriot Name#Tag to link your account."
-            )
-
-    # Leave queue command without pressing button
-    @commands.command()
-    async def leave(self, ctx):
-        if self.bot.signup_view is None:
-            await ctx.send("No signup is currently active.")
-            return
-
-        if not self.bot.signup_active:
-            await ctx.send("No signup is currently active.")
-            return
-
-        if ctx.author.id in [player["id"] for player in self.bot.queue]:
-            self.bot.queue[:] = [
-                player for player in self.bot.queue if player["id"] != ctx.author.id
-            ]
-            # Update the button label
-            await self.bot.signup_view.update_signup()
-            await self.bot.signup_thread.remove_user(ctx.author)
-            await ctx.send("You have left the queue.")
-
-        else:
-            await ctx.send("You're not in the queue.")
 
     @commands.command()
     async def status(self, ctx):
@@ -256,7 +188,7 @@ class BotCommands(commands.Cog):
 
         queue_status = ", ".join(riot_names)
         await ctx.send(f"Current queue ({len(self.bot.queue)}/10): {queue_status}")
-        await ctx.send(f"Match Thread: <#{self.bot.signup_thread.id}>")
+        await ctx.send(f"Match Channel: <#{self.bot.match_channel.id}>")
 
     # Report the match
     @commands.command()
@@ -482,19 +414,15 @@ class BotCommands(commands.Cog):
         # Record every match played in a new collection
         all_matches.insert_one(match)
 
+        await asyncio.sleep(5)
         self.bot.match_not_reported = False
         self.bot.match_ongoing = False
         try:
             await self.bot.current_signup_message.delete()
-            await self.bot.signup_thread.delete()
-            await self.bot.signup_thread_message.delete()
+            await self.bot.match_channel.delete()
+            await self.bot.match_role.delete()
         except discord.NotFound:
             pass
-        if "10-mans" in self.bot.origin_ctx.channel.name:
-            try:
-                await self.bot.origin_ctx.channel.edit(name="10-mans")
-            except (discord.HTTPException, discord.NotFound):
-                pass
 
     # Allow players to check their MMR and stats
     @commands.command()
@@ -575,7 +503,9 @@ class BotCommands(commands.Cog):
     # Display leaderboard
     @commands.command()
     async def leaderboard(self, ctx):
-        sorted_mmr = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+        sorted_mmr = sorted(
+            self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
+        )
 
         # Create leaderboard data
         leaderboard_data = []
@@ -594,7 +524,18 @@ class BotCommands(commands.Cog):
                 player_name = f"{riot_name}#{riot_tag}"
             else:
                 player_name = "Unknown"
-            leaderboard_data.append([idx, player_name, mmr_value, wins, losses, f"{win_percent:.2f}", f"{avg_cs:.2f}", f"{kd_ratio:.2f}"])
+            leaderboard_data.append(
+                [
+                    idx,
+                    player_name,
+                    mmr_value,
+                    wins,
+                    losses,
+                    f"{win_percent:.2f}",
+                    f"{avg_cs:.2f}",
+                    f"{kd_ratio:.2f}",
+                ]
+            )
 
         table_output = t2a(
             header=["Rank", "User", "MMR", "Wins", "Losses", "Win%", "Avg ACS", "K/D"],
@@ -604,10 +545,14 @@ class BotCommands(commands.Cog):
         )
 
         # Create the view
-        self.leaderboard_view = LeaderboardView(ctx, self.bot, sorted_mmr, players_per_page=10, timeout=None)
-        
+        self.leaderboard_view = LeaderboardView(
+            ctx, self.bot, sorted_mmr, players_per_page=10, timeout=None
+        )
+
         content = f"## MMR Leaderboard (Page {self.leaderboard_view.current_page+1}/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
-        self.leaderboard_message = await ctx.send(content=content, view=self.leaderboard_view) #########
+        self.leaderboard_message = await ctx.send(
+            content=content, view=self.leaderboard_view
+        )  #########
 
         # Start the refresh
         if self.refresh_task is not None:
@@ -622,8 +567,8 @@ class BotCommands(commands.Cog):
                 if self.leaderboard_message and self.leaderboard_view:
                     # Just edit with the same content and view
                     await self.leaderboard_message.edit(
-                        content=self.leaderboard_message.content, 
-                        view=self.leaderboard_view
+                        content=self.leaderboard_message.content,
+                        view=self.leaderboard_view,
                     )
                 else:
                     break
@@ -638,8 +583,8 @@ class BotCommands(commands.Cog):
                 if self.leaderboard_message_kd and self.leaderboard_view_kd:
                     # Just edit with the same content and view
                     await self.leaderboard_message_kd.edit(
-                        content=self.leaderboard_message_kd.content, 
-                        view=self.leaderboard_view_kd
+                        content=self.leaderboard_message_kd.content,
+                        view=self.leaderboard_view_kd,
                     )
                 else:
                     break
@@ -654,8 +599,8 @@ class BotCommands(commands.Cog):
                 if self.leaderboard_message_wins and self.leaderboard_view_wins:
                     # Just edit with the same content and view
                     await self.leaderboard_message_wins.edit(
-                        content=self.leaderboard_message_wins.content, 
-                        view=self.leaderboard_view_wins
+                        content=self.leaderboard_message_wins.content,
+                        view=self.leaderboard_view_wins,
                     )
                 else:
                     break
@@ -670,8 +615,8 @@ class BotCommands(commands.Cog):
                 if self.leaderboard_message_acs and self.leaderboard_view_acs:
                     # Just edit with the same content and view
                     await self.leaderboard_message_acs.edit(
-                        content=self.leaderboard_message_acs.content, 
-                        view=self.leaderboard_view_acs
+                        content=self.leaderboard_message_acs.content,
+                        view=self.leaderboard_view_acs,
                     )
                 else:
                     break
@@ -686,23 +631,27 @@ class BotCommands(commands.Cog):
             self.refresh_task.cancel()
             self.refresh_task = None
         if self.leaderboard_message:
-            await self.leaderboard_message.edit(content="Leaderboard closed.", view=None)
+            await self.leaderboard_message.edit(
+                content="Leaderboard closed.", view=None
+            )
             self.leaderboard_message = None
             self.leaderboard_view = None
         await ctx.send("Leaderboard closed and refresh stopped.")
 
-    #leaderboard sorted by K/D
-    @commands.command() 
-    async def leaderboard_KD(self, ctx): 
+    # leaderboard sorted by K/D
+    @commands.command()
+    async def leaderboard_KD(self, ctx):
         if not self.bot.player_mmr:
             await ctx.send("No MMR data available yet.")
             return
 
         # Sort all players by MMR
         sorted_kd = sorted(
-        self.bot.player_mmr.items(),
-        key=lambda x: x[1].get("kill_death_ratio", 0.0),  # Default to 0.0 if key is missing
-        reverse=True,
+            self.bot.player_mmr.items(),
+            key=lambda x: x[1].get(
+                "kill_death_ratio", 0.0
+            ),  # Default to 0.0 if key is missing
+            reverse=True,
         )
         # Create the view for pages
         view = LeaderboardView(ctx, self.bot, sorted_kd, players_per_page=10)
@@ -724,7 +673,9 @@ class BotCommands(commands.Cog):
                 names.append("Unknown")
 
         # Stats for leaderboard
-        for idx, ((player_id, stats), name) in enumerate(zip(page_data, names), start=start_index + 1):
+        for idx, ((player_id, stats), name) in enumerate(
+            zip(page_data, names), start=start_index + 1
+        ):
             mmr_value = stats["mmr"]
             wins = stats["wins"]
             losses = stats["losses"]
@@ -733,16 +684,18 @@ class BotCommands(commands.Cog):
             kd_ratio = stats.get("kill_death_ratio", 0)
             win_percent = (wins / matches_played * 100) if matches_played > 0 else 0
 
-            leaderboard_data.append([
-                idx,
-                name,
-                f"{kd_ratio:.2f}",
-                mmr_value,
-                wins,
-                losses,
-                f"{win_percent:.2f}",
-                f"{avg_cs:.2f}"
-            ])
+            leaderboard_data.append(
+                [
+                    idx,
+                    name,
+                    f"{kd_ratio:.2f}",
+                    mmr_value,
+                    wins,
+                    losses,
+                    f"{win_percent:.2f}",
+                    f"{avg_cs:.2f}",
+                ]
+            )
 
         table_output = t2a(
             header=["Rank", "User", "K/D", "MMR", "Wins", "Losses", "Win%", "Avg ACS"],
@@ -751,17 +704,21 @@ class BotCommands(commands.Cog):
             style=PresetStyle.thick_compact,
         )
 
-        self.leaderboard_view_kd = LeaderboardViewKD(ctx, self.bot, sorted_kd, players_per_page=10, timeout=None)
-        
+        self.leaderboard_view_kd = LeaderboardViewKD(
+            ctx, self.bot, sorted_kd, players_per_page=10, timeout=None
+        )
+
         content = f"## K/D Leaderboard (Page {self.leaderboard_view_kd.current_page+1}/{self.leaderboard_view_kd.total_pages}) ##\n```\n{table_output}\n```"
-        self.leaderboard_message_kd = await ctx.send(content=content, view=self.leaderboard_view_kd) #########
+        self.leaderboard_message_kd = await ctx.send(
+            content=content, view=self.leaderboard_view_kd
+        )  #########
 
         # Start the refresh
         if self.refresh_task_kd is not None:
             self.refresh_task_kd.cancel()
         self.refresh_task_kd = asyncio.create_task(self.periodic_refresh_kd())
 
-    #Gives a leaderboard sorted by wins
+    # Gives a leaderboard sorted by wins
     @commands.command()
     async def leaderboard_wins(self, ctx):
         if not self.bot.player_mmr:
@@ -770,9 +727,9 @@ class BotCommands(commands.Cog):
 
         # Sort all players by wins
         sorted_wins = sorted(
-        self.bot.player_mmr.items(),
-        key=lambda x: x[1].get("wins", 0.0),  # Default to 0.0 if key is missing
-        reverse=True,
+            self.bot.player_mmr.items(),
+            key=lambda x: x[1].get("wins", 0.0),  # Default to 0.0 if key is missing
+            reverse=True,
         )
 
         # Create the view for pages
@@ -795,7 +752,9 @@ class BotCommands(commands.Cog):
                 names.append("Unknown")
 
         # Stats for leaderboard
-        for idx, ((player_id, stats), name) in enumerate(zip(page_data, names), start=start_index + 1):
+        for idx, ((player_id, stats), name) in enumerate(
+            zip(page_data, names), start=start_index + 1
+        ):
             mmr_value = stats["mmr"]
             wins = stats["wins"]
             losses = stats["losses"]
@@ -804,16 +763,18 @@ class BotCommands(commands.Cog):
             kd_ratio = stats.get("kill_death_ratio", 0)
             win_percent = (wins / matches_played * 100) if matches_played > 0 else 0
 
-            leaderboard_data.append([
-                idx,
-                name,
-                wins,
-                mmr_value,
-                losses,
-                f"{win_percent:.2f}",
-                f"{avg_cs:.2f}",
-                f"{kd_ratio:.2f}"
-            ])
+            leaderboard_data.append(
+                [
+                    idx,
+                    name,
+                    wins,
+                    mmr_value,
+                    losses,
+                    f"{win_percent:.2f}",
+                    f"{avg_cs:.2f}",
+                    f"{kd_ratio:.2f}",
+                ]
+            )
 
         table_output = t2a(
             header=["Rank", "User", "Wins", "MMR", "Losses", "Win%", "Avg ACS", "K/D"],
@@ -822,17 +783,21 @@ class BotCommands(commands.Cog):
             style=PresetStyle.thick_compact,
         )
 
-        self.leaderboard_view_wins = LeaderboardViewWins(ctx, self.bot, sorted_wins, players_per_page=10, timeout=None)
-        
+        self.leaderboard_view_wins = LeaderboardViewWins(
+            ctx, self.bot, sorted_wins, players_per_page=10, timeout=None
+        )
+
         content = f"## Wins Leaderboard (Page {self.leaderboard_view_wins.current_page+1}/{self.leaderboard_view_wins.total_pages}) ##\n```\n{table_output}\n```"
-        self.leaderboard_message_wins = await ctx.send(content=content, view=self.leaderboard_view_wins) #########
+        self.leaderboard_message_wins = await ctx.send(
+            content=content, view=self.leaderboard_view_wins
+        )  #########
 
         # Start the refresh
         if self.refresh_task_wins is not None:
             self.refresh_task_wins.cancel()
         self.refresh_task_wins = asyncio.create_task(self.periodic_refresh_wins())
 
-    #Gives a leaderboard sorted by ACS
+    # Gives a leaderboard sorted by ACS
     @commands.command()
     async def leaderboard_ACS(self, ctx):
         if not self.bot.player_mmr:
@@ -841,9 +806,11 @@ class BotCommands(commands.Cog):
 
         # Sort all players by ACS
         sorted_acs = sorted(
-        self.bot.player_mmr.items(),
-        key=lambda x: x[1].get("average_combat_score", 0.0),  # Default to 0.0 if key is missing
-        reverse=True,
+            self.bot.player_mmr.items(),
+            key=lambda x: x[1].get(
+                "average_combat_score", 0.0
+            ),  # Default to 0.0 if key is missing
+            reverse=True,
         )
 
         # Create the view for pages
@@ -866,7 +833,9 @@ class BotCommands(commands.Cog):
                 names.append("Unknown")
 
         # Stats for leaderboard
-        for idx, ((player_id, stats), name) in enumerate(zip(page_data, names), start=start_index + 1):
+        for idx, ((player_id, stats), name) in enumerate(
+            zip(page_data, names), start=start_index + 1
+        ):
             mmr_value = stats["mmr"]
             wins = stats["wins"]
             losses = stats["losses"]
@@ -875,16 +844,18 @@ class BotCommands(commands.Cog):
             kd_ratio = stats.get("kill_death_ratio", 0)
             win_percent = (wins / matches_played * 100) if matches_played > 0 else 0
 
-            leaderboard_data.append([
-                idx,
-                name,
-                f"{avg_cs:.2f}",
-                mmr_value,
-                wins,
-                losses,
-                f"{win_percent:.2f}",
-                f"{kd_ratio:.2f}"
-            ])
+            leaderboard_data.append(
+                [
+                    idx,
+                    name,
+                    f"{avg_cs:.2f}",
+                    mmr_value,
+                    wins,
+                    losses,
+                    f"{win_percent:.2f}",
+                    f"{kd_ratio:.2f}",
+                ]
+            )
 
         table_output = t2a(
             header=["Rank", "User", "Avg ACS", "MMR", "Wins", "Losses", "Win%", "K/D"],
@@ -893,16 +864,19 @@ class BotCommands(commands.Cog):
             style=PresetStyle.thick_compact,
         )
 
-        self.leaderboard_view_acs = LeaderboardViewACS(ctx, self.bot, sorted_acs, players_per_page=10, timeout=None)
-        
+        self.leaderboard_view_acs = LeaderboardViewACS(
+            ctx, self.bot, sorted_acs, players_per_page=10, timeout=None
+        )
+
         content = f"## ACS Leaderboard (Page {self.leaderboard_view_acs.current_page+1}/{self.leaderboard_view_acs.total_pages}) ##\n```\n{table_output}\n```"
-        self.leaderboard_message_acs = await ctx.send(content=content, view=self.leaderboard_view_acs) #########
+        self.leaderboard_message_acs = await ctx.send(
+            content=content, view=self.leaderboard_view_acs
+        )  #########
 
         # Start the refresh
         if self.refresh_task_acs is not None:
             self.refresh_task_acs.cancel()
         self.refresh_task_acs = asyncio.create_task(self.periodic_refresh_acs())
-
 
     @commands.command()
     @commands.has_role("Owner")  # Restrict this command to admins
@@ -1134,15 +1108,10 @@ class BotCommands(commands.Cog):
             self.bot.signup_view = None
             await ctx.send("Canceled Signup")
             try:
-                await self.bot.signup_thread.delete()
-                await self.bot.signup_thread_message.delete()
+                await self.bot.match_channel.delete()
+                await self.bot.match_role.delete()
             except discord.NotFound:
                 pass
-            if "10-mans" in self.bot.origin_ctx.channel.name:
-                try:
-                    await self.bot.origin_ctx.channel.edit(name="10-mans")
-                except (discord.HTTPException, discord.NotFound):
-                    pass
         else:
             await ctx.send("Nothing to cancel")
 
@@ -1177,8 +1146,6 @@ class BotCommands(commands.Cog):
             name="General Commands",
             value=(
                 "**!signup** - Start a signup session for matches.\n"
-                "**!join** - Join the queue.\n"
-                "**!leave** - Leave the queue.\n"
                 "**!status** - View the current queue status.\n"
                 "**!report** - Report the most recent match and update MMR.\n"
                 "**!stats** - Check your MMR and match stats.\n"

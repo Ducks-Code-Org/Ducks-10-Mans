@@ -1,4 +1,4 @@
-"""This view creates and maintains a signup interaction, contained within a signup thread."""
+"""This view creates and maintains a signup interaction, contained within its own channel."""
 
 import asyncio
 
@@ -57,7 +57,7 @@ class SignupView(discord.ui.View):
                     ephemeral=True,
                 )
 
-                await self.bot.signup_thread.add_user(interaction.user)
+                await interaction.user.add_roles(self.bot.match_role)
 
                 if len(self.bot.queue) == 10:
                     await interaction.channel.send(
@@ -73,7 +73,7 @@ class SignupView(discord.ui.View):
                     await interaction.channel.send(player_list_msg)
 
                     self.bot.signup_active = False
-                    self.ctx.channel = self.bot.signup_thread
+                    self.ctx.channel = self.bot.match_channel
 
                     mode_vote = ModeVoteView(self.ctx, self.bot)
                     await mode_vote.send_view()
@@ -101,7 +101,7 @@ class SignupView(discord.ui.View):
             ephemeral=True,
         )
 
-        await self.bot.signup_thread.remove_user(interaction.user)
+        await interaction.user.remove_roles(self.bot.match_role)
 
     def setup_callbacks(self):
         self.sign_up_button.callback = self.sign_up_callback
@@ -117,7 +117,7 @@ class SignupView(discord.ui.View):
                     except discord.NotFound:
                         pass
                 # Send new signup message
-                self.bot.current_signup_message = await self.bot.signup_thread.send(
+                self.bot.current_signup_message = await self.bot.match_channel.send(
                     "Click a button to manage your queue status!",
                     view=self,
                     silent=True,
@@ -136,10 +136,9 @@ class SignupView(discord.ui.View):
         try:
             while self.bot.signup_active:
                 try:
-                    if "10-mans" in self.bot.origin_ctx.channel.name:
-                        await self.bot.origin_ctx.channel.edit(
-                            name=f"10-mans《{len(self.bot.queue)}∕10》"
-                        )
+                    await self.bot.match_channel.edit(
+                        name=f"{self.bot.match_name}《{len(self.bot.queue)}∕10》"
+                    )
                 except discord.HTTPException:
                     pass
                 await asyncio.sleep(720)
