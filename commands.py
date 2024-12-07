@@ -4,10 +4,8 @@ import asyncio
 import os
 import copy  # To make a copy of player_mmr
 import random
-import math # for leaderboard pages
 
 import discord
-from discord.ui import View, Button
 from discord.ext import commands
 import requests
 from table2ascii import table2ascii as t2a, PresetStyle
@@ -17,7 +15,12 @@ from views.captains_drafting_view import CaptainsDraftingView
 from views.mode_vote_view import ModeVoteView
 from views.signup_view import SignupView
 from stats_helper import update_stats
-from views.leaderboard_view import LeaderboardView, LeaderboardViewKD, LeaderboardViewACS, LeaderboardViewWins
+from views.leaderboard_view import (
+    LeaderboardView,
+    LeaderboardViewKD,
+    LeaderboardViewACS,
+    LeaderboardViewWins,
+)
 
 # Initialize API
 api_key = os.getenv("api_key")
@@ -95,11 +98,12 @@ mock_match_data = {
     ],
 }
 
+
 class BotCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.dev_mode = False
-        #variables related to refreshing the leaderboard
+        # variables related to refreshing the leaderboard
         self.leaderboard_message = None
         self.leaderboard_view = None
         self.refresh_task = None
@@ -575,7 +579,9 @@ class BotCommands(commands.Cog):
     # Display leaderboard
     @commands.command()
     async def leaderboard(self, ctx):
-        sorted_mmr = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+        sorted_mmr = sorted(
+            self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
+        )
 
         # Create leaderboard data
         leaderboard_data = []
@@ -594,7 +600,18 @@ class BotCommands(commands.Cog):
                 player_name = f"{riot_name}#{riot_tag}"
             else:
                 player_name = "Unknown"
-            leaderboard_data.append([idx, player_name, mmr_value, wins, losses, f"{win_percent:.2f}", f"{avg_cs:.2f}", f"{kd_ratio:.2f}"])
+            leaderboard_data.append(
+                [
+                    idx,
+                    player_name,
+                    mmr_value,
+                    wins,
+                    losses,
+                    f"{win_percent:.2f}",
+                    f"{avg_cs:.2f}",
+                    f"{kd_ratio:.2f}",
+                ]
+            )
 
         table_output = t2a(
             header=["Rank", "User", "MMR", "Wins", "Losses", "Win%", "Avg ACS", "K/D"],
@@ -604,10 +621,14 @@ class BotCommands(commands.Cog):
         )
 
         # Create the view
-        self.leaderboard_view = LeaderboardView(ctx, self.bot, sorted_mmr, players_per_page=10, timeout=None)
-        
+        self.leaderboard_view = LeaderboardView(
+            ctx, self.bot, sorted_mmr, players_per_page=10, timeout=None
+        )
+
         content = f"## MMR Leaderboard (Page {self.leaderboard_view.current_page+1}/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
-        self.leaderboard_message = await ctx.send(content=content, view=self.leaderboard_view) #########
+        self.leaderboard_message = await ctx.send(
+            content=content, view=self.leaderboard_view
+        )  #########
 
         # Start the refresh
         if self.refresh_task is not None:
@@ -622,8 +643,8 @@ class BotCommands(commands.Cog):
                 if self.leaderboard_message and self.leaderboard_view:
                     # Just edit with the same content and view
                     await self.leaderboard_message.edit(
-                        content=self.leaderboard_message.content, 
-                        view=self.leaderboard_view
+                        content=self.leaderboard_message.content,
+                        view=self.leaderboard_view,
                     )
                 else:
                     break
@@ -638,8 +659,8 @@ class BotCommands(commands.Cog):
                 if self.leaderboard_message_kd and self.leaderboard_view_kd:
                     # Just edit with the same content and view
                     await self.leaderboard_message_kd.edit(
-                        content=self.leaderboard_message_kd.content, 
-                        view=self.leaderboard_view_kd
+                        content=self.leaderboard_message_kd.content,
+                        view=self.leaderboard_view_kd,
                     )
                 else:
                     break
@@ -654,8 +675,8 @@ class BotCommands(commands.Cog):
                 if self.leaderboard_message_wins and self.leaderboard_view_wins:
                     # Just edit with the same content and view
                     await self.leaderboard_message_wins.edit(
-                        content=self.leaderboard_message_wins.content, 
-                        view=self.leaderboard_view_wins
+                        content=self.leaderboard_message_wins.content,
+                        view=self.leaderboard_view_wins,
                     )
                 else:
                     break
@@ -670,8 +691,8 @@ class BotCommands(commands.Cog):
                 if self.leaderboard_message_acs and self.leaderboard_view_acs:
                     # Just edit with the same content and view
                     await self.leaderboard_message_acs.edit(
-                        content=self.leaderboard_message_acs.content, 
-                        view=self.leaderboard_view_acs
+                        content=self.leaderboard_message_acs.content,
+                        view=self.leaderboard_view_acs,
                     )
                 else:
                     break
@@ -686,23 +707,27 @@ class BotCommands(commands.Cog):
             self.refresh_task.cancel()
             self.refresh_task = None
         if self.leaderboard_message:
-            await self.leaderboard_message.edit(content="Leaderboard closed.", view=None)
+            await self.leaderboard_message.edit(
+                content="Leaderboard closed.", view=None
+            )
             self.leaderboard_message = None
             self.leaderboard_view = None
         await ctx.send("Leaderboard closed and refresh stopped.")
 
-    #leaderboard sorted by K/D
-    @commands.command() 
-    async def leaderboard_KD(self, ctx): 
+    # leaderboard sorted by K/D
+    @commands.command()
+    async def leaderboard_KD(self, ctx):
         if not self.bot.player_mmr:
             await ctx.send("No MMR data available yet.")
             return
 
         # Sort all players by MMR
         sorted_kd = sorted(
-        self.bot.player_mmr.items(),
-        key=lambda x: x[1].get("kill_death_ratio", 0.0),  # Default to 0.0 if key is missing
-        reverse=True,
+            self.bot.player_mmr.items(),
+            key=lambda x: x[1].get(
+                "kill_death_ratio", 0.0
+            ),  # Default to 0.0 if key is missing
+            reverse=True,
         )
         # Create the view for pages
         view = LeaderboardView(ctx, self.bot, sorted_kd, players_per_page=10)
@@ -724,7 +749,9 @@ class BotCommands(commands.Cog):
                 names.append("Unknown")
 
         # Stats for leaderboard
-        for idx, ((player_id, stats), name) in enumerate(zip(page_data, names), start=start_index + 1):
+        for idx, ((player_id, stats), name) in enumerate(
+            zip(page_data, names), start=start_index + 1
+        ):
             mmr_value = stats["mmr"]
             wins = stats["wins"]
             losses = stats["losses"]
@@ -733,16 +760,18 @@ class BotCommands(commands.Cog):
             kd_ratio = stats.get("kill_death_ratio", 0)
             win_percent = (wins / matches_played * 100) if matches_played > 0 else 0
 
-            leaderboard_data.append([
-                idx,
-                name,
-                f"{kd_ratio:.2f}",
-                mmr_value,
-                wins,
-                losses,
-                f"{win_percent:.2f}",
-                f"{avg_cs:.2f}"
-            ])
+            leaderboard_data.append(
+                [
+                    idx,
+                    name,
+                    f"{kd_ratio:.2f}",
+                    mmr_value,
+                    wins,
+                    losses,
+                    f"{win_percent:.2f}",
+                    f"{avg_cs:.2f}",
+                ]
+            )
 
         table_output = t2a(
             header=["Rank", "User", "K/D", "MMR", "Wins", "Losses", "Win%", "Avg ACS"],
@@ -751,17 +780,21 @@ class BotCommands(commands.Cog):
             style=PresetStyle.thick_compact,
         )
 
-        self.leaderboard_view_kd = LeaderboardViewKD(ctx, self.bot, sorted_kd, players_per_page=10, timeout=None)
-        
+        self.leaderboard_view_kd = LeaderboardViewKD(
+            ctx, self.bot, sorted_kd, players_per_page=10, timeout=None
+        )
+
         content = f"## K/D Leaderboard (Page {self.leaderboard_view_kd.current_page+1}/{self.leaderboard_view_kd.total_pages}) ##\n```\n{table_output}\n```"
-        self.leaderboard_message_kd = await ctx.send(content=content, view=self.leaderboard_view_kd) #########
+        self.leaderboard_message_kd = await ctx.send(
+            content=content, view=self.leaderboard_view_kd
+        )  #########
 
         # Start the refresh
         if self.refresh_task_kd is not None:
             self.refresh_task_kd.cancel()
         self.refresh_task_kd = asyncio.create_task(self.periodic_refresh_kd())
 
-    #Gives a leaderboard sorted by wins
+    # Gives a leaderboard sorted by wins
     @commands.command()
     async def leaderboard_wins(self, ctx):
         if not self.bot.player_mmr:
@@ -770,9 +803,9 @@ class BotCommands(commands.Cog):
 
         # Sort all players by wins
         sorted_wins = sorted(
-        self.bot.player_mmr.items(),
-        key=lambda x: x[1].get("wins", 0.0),  # Default to 0.0 if key is missing
-        reverse=True,
+            self.bot.player_mmr.items(),
+            key=lambda x: x[1].get("wins", 0.0),  # Default to 0.0 if key is missing
+            reverse=True,
         )
 
         # Create the view for pages
@@ -795,7 +828,9 @@ class BotCommands(commands.Cog):
                 names.append("Unknown")
 
         # Stats for leaderboard
-        for idx, ((player_id, stats), name) in enumerate(zip(page_data, names), start=start_index + 1):
+        for idx, ((player_id, stats), name) in enumerate(
+            zip(page_data, names), start=start_index + 1
+        ):
             mmr_value = stats["mmr"]
             wins = stats["wins"]
             losses = stats["losses"]
@@ -804,16 +839,18 @@ class BotCommands(commands.Cog):
             kd_ratio = stats.get("kill_death_ratio", 0)
             win_percent = (wins / matches_played * 100) if matches_played > 0 else 0
 
-            leaderboard_data.append([
-                idx,
-                name,
-                wins,
-                mmr_value,
-                losses,
-                f"{win_percent:.2f}",
-                f"{avg_cs:.2f}",
-                f"{kd_ratio:.2f}"
-            ])
+            leaderboard_data.append(
+                [
+                    idx,
+                    name,
+                    wins,
+                    mmr_value,
+                    losses,
+                    f"{win_percent:.2f}",
+                    f"{avg_cs:.2f}",
+                    f"{kd_ratio:.2f}",
+                ]
+            )
 
         table_output = t2a(
             header=["Rank", "User", "Wins", "MMR", "Losses", "Win%", "Avg ACS", "K/D"],
@@ -822,17 +859,21 @@ class BotCommands(commands.Cog):
             style=PresetStyle.thick_compact,
         )
 
-        self.leaderboard_view_wins = LeaderboardViewWins(ctx, self.bot, sorted_wins, players_per_page=10, timeout=None)
-        
+        self.leaderboard_view_wins = LeaderboardViewWins(
+            ctx, self.bot, sorted_wins, players_per_page=10, timeout=None
+        )
+
         content = f"## Wins Leaderboard (Page {self.leaderboard_view_wins.current_page+1}/{self.leaderboard_view_wins.total_pages}) ##\n```\n{table_output}\n```"
-        self.leaderboard_message_wins = await ctx.send(content=content, view=self.leaderboard_view_wins) #########
+        self.leaderboard_message_wins = await ctx.send(
+            content=content, view=self.leaderboard_view_wins
+        )  #########
 
         # Start the refresh
         if self.refresh_task_wins is not None:
             self.refresh_task_wins.cancel()
         self.refresh_task_wins = asyncio.create_task(self.periodic_refresh_wins())
 
-    #Gives a leaderboard sorted by ACS
+    # Gives a leaderboard sorted by ACS
     @commands.command()
     async def leaderboard_ACS(self, ctx):
         if not self.bot.player_mmr:
@@ -841,9 +882,11 @@ class BotCommands(commands.Cog):
 
         # Sort all players by ACS
         sorted_acs = sorted(
-        self.bot.player_mmr.items(),
-        key=lambda x: x[1].get("average_combat_score", 0.0),  # Default to 0.0 if key is missing
-        reverse=True,
+            self.bot.player_mmr.items(),
+            key=lambda x: x[1].get(
+                "average_combat_score", 0.0
+            ),  # Default to 0.0 if key is missing
+            reverse=True,
         )
 
         # Create the view for pages
@@ -866,7 +909,9 @@ class BotCommands(commands.Cog):
                 names.append("Unknown")
 
         # Stats for leaderboard
-        for idx, ((player_id, stats), name) in enumerate(zip(page_data, names), start=start_index + 1):
+        for idx, ((player_id, stats), name) in enumerate(
+            zip(page_data, names), start=start_index + 1
+        ):
             mmr_value = stats["mmr"]
             wins = stats["wins"]
             losses = stats["losses"]
@@ -875,16 +920,18 @@ class BotCommands(commands.Cog):
             kd_ratio = stats.get("kill_death_ratio", 0)
             win_percent = (wins / matches_played * 100) if matches_played > 0 else 0
 
-            leaderboard_data.append([
-                idx,
-                name,
-                f"{avg_cs:.2f}",
-                mmr_value,
-                wins,
-                losses,
-                f"{win_percent:.2f}",
-                f"{kd_ratio:.2f}"
-            ])
+            leaderboard_data.append(
+                [
+                    idx,
+                    name,
+                    f"{avg_cs:.2f}",
+                    mmr_value,
+                    wins,
+                    losses,
+                    f"{win_percent:.2f}",
+                    f"{kd_ratio:.2f}",
+                ]
+            )
 
         table_output = t2a(
             header=["Rank", "User", "Avg ACS", "MMR", "Wins", "Losses", "Win%", "K/D"],
@@ -893,16 +940,19 @@ class BotCommands(commands.Cog):
             style=PresetStyle.thick_compact,
         )
 
-        self.leaderboard_view_acs = LeaderboardViewACS(ctx, self.bot, sorted_acs, players_per_page=10, timeout=None)
-        
+        self.leaderboard_view_acs = LeaderboardViewACS(
+            ctx, self.bot, sorted_acs, players_per_page=10, timeout=None
+        )
+
         content = f"## ACS Leaderboard (Page {self.leaderboard_view_acs.current_page+1}/{self.leaderboard_view_acs.total_pages}) ##\n```\n{table_output}\n```"
-        self.leaderboard_message_acs = await ctx.send(content=content, view=self.leaderboard_view_acs) #########
+        self.leaderboard_message_acs = await ctx.send(
+            content=content, view=self.leaderboard_view_acs
+        )  #########
 
         # Start the refresh
         if self.refresh_task_acs is not None:
             self.refresh_task_acs.cancel()
         self.refresh_task_acs = asyncio.create_task(self.periodic_refresh_acs())
-
 
     @commands.command()
     @commands.has_role("Owner")  # Restrict this command to admins
