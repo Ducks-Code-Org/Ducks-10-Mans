@@ -895,7 +895,7 @@ class BotCommands(commands.Cog):
 
         self.leaderboard_view_acs = LeaderboardViewACS(ctx, self.bot, sorted_acs, players_per_page=10, timeout=None)
         
-        content = f"## K/D Leaderboard (Page {self.leaderboard_view_acs.current_page+1}/{self.leaderboard_view_acs.total_pages}) ##\n```\n{table_output}\n```"
+        content = f"## ACS Leaderboard (Page {self.leaderboard_view_acs.current_page+1}/{self.leaderboard_view_acs.total_pages}) ##\n```\n{table_output}\n```"
         self.leaderboard_message_acs = await ctx.send(content=content, view=self.leaderboard_view_acs) #########
 
         # Start the refresh
