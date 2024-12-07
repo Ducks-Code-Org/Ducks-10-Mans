@@ -266,6 +266,8 @@ class CaptainsDraftingView(discord.ui.View):
             await self.ctx.send(
                 f"{current_captain_name} took too long to pick. Drafting canceled. Count: {self.pick_count}"
             )
+            await asyncio.sleep(5)
 
             self.bot.queue.clear()
             await self.bot.match_channel.delete()
+            await self.bot.match_role.delete()

@@ -135,11 +135,23 @@ class BotCommands(commands.Cog):
         self.bot.signup_active = True
         self.bot.queue = []
 
-        # Generate Match Channel
+        # Generate Match Name and Setup Match Channel Permissions
+        self.bot.match_name = f"match-{random.randrange(1, 10**4):04}"
+        self.bot.match_role = await ctx.guild.create_role(
+            name=self.bot.match_name, hoist=True
+        )
+        await ctx.guild.edit_role_positions(positions={self.bot.match_role: 5})
+        match_channel_permissions = {
+            ctx.guild.default_role: discord.PermissionOverwrite(send_messages=False),
+            self.bot.match_role: discord.PermissionOverwrite(send_messages=True),
+        }
+
+        # Generate Match Channel and Send Signup Message
         self.bot.match_channel = await ctx.guild.create_text_channel(
-            name=f"Match-{random.randrange(1, 10**4):04}",
+            name=self.bot.match_name,
             category=ctx.channel.category,
             position=0,
+            overwrites=match_channel_permissions,
         )
         self.bot.current_signup_message = await self.bot.match_channel.send(
             "Click a button to manage your queue status!", view=self.bot.signup_view
@@ -402,18 +414,15 @@ class BotCommands(commands.Cog):
         # Record every match played in a new collection
         all_matches.insert_one(match)
 
+        await asyncio.sleep(5)
         self.bot.match_not_reported = False
         self.bot.match_ongoing = False
         try:
             await self.bot.current_signup_message.delete()
             await self.bot.match_channel.delete()
+            await self.bot.match_role.delete()
         except discord.NotFound:
             pass
-        if "10-mans" in self.bot.origin_ctx.channel.name:
-            try:
-                await self.bot.origin_ctx.channel.edit(name="10-mans")
-            except (discord.HTTPException, discord.NotFound):
-                pass
 
     # Allow players to check their MMR and stats
     @commands.command()
@@ -1100,13 +1109,9 @@ class BotCommands(commands.Cog):
             await ctx.send("Canceled Signup")
             try:
                 await self.bot.match_channel.delete()
+                await self.bot.match_role.delete()
             except discord.NotFound:
                 pass
-            if "10-mans" in self.bot.origin_ctx.channel.name:
-                try:
-                    await self.bot.origin_ctx.channel.edit(name="10-mans")
-                except (discord.HTTPException, discord.NotFound):
-                    pass
         else:
             await ctx.send("Nothing to cancel")
 
