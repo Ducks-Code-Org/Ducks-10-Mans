@@ -5,8 +5,8 @@ from database import users, mmr_collection
 
 # Update stats
 def update_stats(player_stats, total_rounds, player_mmr, player_names):
-    name = player_stats.get("name")
-    tag = player_stats.get("tag")
+    name = player_stats.get("name", "").lower()
+    tag = player_stats.get("tag", ""). lower()
 
     user_entry = users.find_one({"name": name, "tag": tag})
     if not user_entry:
