@@ -10,10 +10,11 @@ from views.map_type_vote_view import MapTypeVoteView
 
 
 class SecondCaptainChoiceView(View):
-    def __init__(self, ctx, bot):
+    def __init__(self, ctx, bot, map_object):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
+        self.map_object = map_object
         self.first_pick_button = Button(label="Single Pick (2nd MMR first)", style=discord.ButtonStyle.green)
         self.double_pick_button = Button(label="Double Pick (2nd and 3rd picks)", style=discord.ButtonStyle.blurple)
 
@@ -42,7 +43,7 @@ class SecondCaptainChoiceView(View):
         await self.start_draft(single_pick=False)
 
     async def start_draft(self, single_pick: bool):
-        drafting_view = CaptainsDraftingView(self.ctx, self.bot)
+        drafting_view = CaptainsDraftingView(self.ctx, self.bot, self.map_object)
         
         # Highest MMR: self.bot.captain1
         # Second highest MMR: self.bot.captain2
@@ -185,8 +186,13 @@ class ModeVoteView(discord.ui.View):
             f"Captain 2: {captain2['name']} (MMR: {self.bot.player_mmr[captain2['id']]['mmr']})"
         )
 
+        map_type_vote = MapTypeVoteView(self.ctx, self.bot)
+
+        # Begin vote for competitive or all maps
+        await map_type_vote.send_view()
+
         # Give second captain choice between first or second and third picks
-        choice_view = SecondCaptainChoiceView(self.ctx, self.bot)
+        choice_view = SecondCaptainChoiceView(self.ctx, self.bot, map_type_vote)
         await self.ctx.send(
             f"{captain2['name']}, please choose the draft type:",
             view=choice_view
