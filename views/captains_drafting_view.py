@@ -10,10 +10,11 @@ from views.map_type_vote_view import MapTypeVoteView
 
 
 class CaptainsDraftingView(discord.ui.View):
-    def __init__(self, ctx, bot):
+    def __init__(self, ctx, bot, map_object):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
+        self.map_object = map_object
 
         self.player_select = Select(
             placeholder="Select a player to pick",
@@ -109,10 +110,8 @@ class CaptainsDraftingView(discord.ui.View):
         # Display final teams
         await self.ctx.send(embed=final_teams_embed)
 
-        map_type_vote = MapTypeVoteView(self.ctx, self.bot)
-
         # Begin vote for competitive or all maps
-        await map_type_vote.send_view()
+        await self.map_object.finalize()
 
     async def select_callback(self, interaction: discord.Interaction):
         current_captain_id = self.pick_order[self.pick_count]["id"]
