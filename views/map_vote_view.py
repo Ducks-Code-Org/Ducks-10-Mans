@@ -20,6 +20,8 @@ class MapVoteView(discord.ui.View):
         self.map_votes = {}
         self.chosen_maps = []
 
+        self.winning_map = ""
+
         self.voters = set()
 
     async def setup(self):
@@ -68,11 +70,13 @@ class MapVoteView(discord.ui.View):
 
         await asyncio.sleep(25)
 
-        winning_map = max(self.map_votes, key=self.map_votes.get)
-        await self.ctx.send(f"The selected map is **{winning_map}**!")
-        self.bot.selected_map = winning_map
+        self.winning_map = max(self.map_votes, key=self.map_votes.get)
+        await self.ctx.send(f"The selected map is **{self.winning_map}**!")
+    
+    async def finalize(self):
+        self.bot.selected_map = self.winning_map
         teams_embed = discord.Embed(
-            title=f"Teams for the match on {winning_map}",
+            title=f"Teams for the match on {self.winning_map}",
             description="Good luck to both teams!",
             color=discord.Color.blue(),
         )
