@@ -62,14 +62,14 @@ class SecondCaptainChoiceView(View):
         else:
             # Double pick scenario
             drafting_view.pick_order = [
-                self.bot.captain2,
-                self.bot.captain1,
                 self.bot.captain1,
                 self.bot.captain2,
                 self.bot.captain2,
                 self.bot.captain1,
                 self.bot.captain1,
                 self.bot.captain2,
+                self.bot.captain2,
+                self.bot.captain1,
             ]
 
         await drafting_view.send_current_draft_view()
