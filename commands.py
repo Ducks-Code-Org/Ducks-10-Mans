@@ -34,67 +34,67 @@ mock_match_data = {
         {
             "name": "Samurai",
             "tag": "Mai",
-            "team_id": "Red",
-            "stats": {"score": 7104, "kills": 23, "deaths": 16, "assists": 7},
+            "team_id": "red",
+            "stats": {"score": 8136, "kills": 29, "deaths": 16, "assists": 8},
         },
         {
             "name": "WaffIes",
             "tag": "NA1",
-            "team_id": "Red",
-            "stats": {"score": 5472, "kills": 18, "deaths": 22, "assists": 3},
+            "team_id": "red",
+            "stats": {"score": 6048, "kills": 20, "deaths": 20, "assists": 6},
         },
         {
-            "name": "Konax",
-            "tag": "5629",
-            "team_id": "Red",
-            "stats": {"score": 3984, "kills": 15, "deaths": 16, "assists": 1},
+            "name": "DeagleG",
+            "tag": "Y33T",
+            "team_id": "red",
+            "stats": {"score": 5928, "kills": 24, "deaths": 14, "assists": 13},
         },
         {
-            "name": "Luh4r",
-            "tag": "i0n",
-            "team_id": "Red",
-            "stats": {"score": 3672, "kills": 12, "deaths": 16, "assists": 12},
-        },
-        {
-            "name": "mintychewinggum",
-            "tag": "8056",
-            "team_id": "Red",
-            "stats": {"score": 2784, "kills": 11, "deaths": 18, "assists": 4},
-        },
-        {
-            "name": "TreeTops",
-            "tag": "IMH",
-            "team_id": "Blue",
-            "stats": {"score": 4560, "kills": 14, "deaths": 17, "assists": 10},
-        },
-        {
-            "name": "mizu",
-            "tag": "yor",
-            "team_id": "Blue",
-            "stats": {"score": 7968, "kills": 28, "deaths": 18, "assists": 3},
-        },
-        {
-            "name": "Nisom",
-            "tag": "zia",
-            "team_id": "Blue",
-            "stats": {"score": 7704, "kills": 25, "deaths": 14, "assists": 4},
-        },
-        {
-            "name": "galaxy",
-            "tag": "KUJG",
-            "team_id": "Blue",
-            "stats": {"score": 2952, "kills": 12, "deaths": 16, "assists": 2},
+            "name": "TheAlphaEw0k",
+            "tag": "MST",
+            "team_id": "red",
+            "stats": {"score": 5688, "kills": 21, "deaths": 18, "assists": 3},
         },
         {
             "name": "dShocc1",
             "tag": "LNEUP",
-            "team_id": "Blue",
-            "stats": {"score": 2496, "kills": 9, "deaths": 14, "assists": 4},
+            "team_id": "red",
+            "stats": {"score": 1368, "kills": 3, "deaths": 15, "assists": 12},
+        },
+        {
+            "name": "Nisom",
+            "tag": "zia",
+            "team_id": "blue",
+            "stats": {"score": 8424, "kills": 30, "deaths": 19, "assists": 5},
+        },
+        {
+            "name": "mizu",
+            "tag": "yor",
+            "team_id": "blue",
+            "stats": {"score": 7368, "kills": 26, "deaths": 20, "assists": 3},
+        },
+        {
+            "name": "Duck",
+            "tag": "MST",
+            "team_id": "blue",
+            "stats": {"score": 3528, "kills": 11, "deaths": 19, "assists": 5},
+        },
+        {
+            "name": "twentytwo",
+            "tag": "4249",
+            "team_id": "blue",
+            "stats": {"score": 3240, "kills": 12, "deaths": 16, "assists": 3},
+        },
+        {
+            "name": "mintychewinggum",
+            "tag": "8056",
+            "team_id": "blue",
+            "stats": {"score": 1656, "kills": 4, "deaths": 21, "assists": 11},
         },
     ],
     "teams": [
-        {"team_id": "Red", "won": True, "rounds_won": 13, "rounds_lost": 11},
-        {"team_id": "Blue", "won": False, "rounds_won": 11, "rounds_lost": 13},
+        {"team_id": "red", "won": True, "rounds_won": 13, "rounds_lost": 11},
+        {"team_id": "blue", "won": False, "rounds_won": 11, "rounds_lost": 13},
     ],
 }
 
@@ -237,7 +237,7 @@ class BotCommands(commands.Cog):
 
                     queue.append(player)
 
-                    if player_data["team_id"] == "Red":
+                    if player_data["team_id"] == "red":
                         team1.append(player)
                     else:
                         team2.append(player)
@@ -328,7 +328,7 @@ class BotCommands(commands.Cog):
             await ctx.send("Could not determine the winning team.")
             return
 
-        match_team_players = {"Red": set(), "Blue": set()}
+        match_team_players = {"red": set(), "blue": set()}
 
         for player in match_players:
             team_id = player.get("team_id")
@@ -989,8 +989,8 @@ class BotCommands(commands.Cog):
         else:
             user_data = {
                 "discord_id": str(ctx.author.id),
-                "name": riot_name,
-                "tag": riot_tag,
+                "name": riot_name.lower(),
+                "tag": riot_tag.lower(),
             }
             users.update_one(
                 {"discord_id": str(ctx.author.id)}, {"$set": user_data}, upsert=True
