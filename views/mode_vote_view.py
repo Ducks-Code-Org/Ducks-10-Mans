@@ -200,17 +200,29 @@ class ModeVoteView(discord.ui.View):
 
     async def send_view(self):
         await self.ctx.send("Vote for how teams will be decided:", view=self)
-        await asyncio.sleep(25)
+        #await asyncio.sleep(25)
+        count = 0 #used to count passing of time
 
         if self.dummy is True:
             await self.ctx.send("Balanced Teams wins the vote!")
             await self.balanced_teams_logic()
-        else:
+        else: 
+            while count < 50:
+                if self.votes["Captains"] > 4:
+                    await self.ctx.send("Captains wins the vote!")
+                    await self.captains_mode()
+                elif self.votes["Balanced Teams"] > 4:
+                    await self.ctx.send("Balanced Teams wins the vote!")
+                    await self.balanced_teams_logic()
+
+                asyncio.sleep(0.5) #voting phase will time out after 50 iterations or roughly 25 seconds
+                count += 1
+
             if self.votes["Balanced Teams"] > self.votes["Captains"]:
-                await self.ctx.send("Balanced Teams wins the vote!")
+                await self.ctx.send("Balanced Teams wins the vote! - Voting Phase Timeout")
                 await self.balanced_teams_logic()
             elif self.votes["Captains"] > self.votes["Balanced Teams"]:
-                await self.ctx.send("Captains wins the vote!")
+                await self.ctx.send("Captains wins the vote! - Voting Phase Timeout")
                 await self.captains_mode()
             else:
                 decision = "Balanced Teams" if random.choice([True, False]) else "Captains"
@@ -219,6 +231,7 @@ class ModeVoteView(discord.ui.View):
                     await self.balanced_teams_logic()
                 else:
                     await self.captains_mode()
+
         self.bot.match_ongoing = True
 
     def setup_callbacks(self):
