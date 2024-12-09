@@ -19,6 +19,26 @@ class LeaderboardView(View):
         self.current_page = 0
         self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
 
+        self.previous_btn = None
+        self.next_btn = None
+        self.refresh_btn = None
+
+        # Find buttons
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                if child.emoji == "⏪":
+                    self.previous_btn = child
+                elif child.emoji == "⏩":
+                    self.next_btn = child
+                elif child.emoji == "🔄":
+                    self.refresh_btn = child
+
+        # Set initial states
+        if self.previous_btn:
+            self.previous_btn.disabled = True
+        if self.next_btn:
+            self.next_btn.disabled = (self.total_pages == 1)
+
         # Initialize button states
         # Will be updated on each page change
         self.previous_button.disabled = True  # On first page, can't go back
@@ -27,7 +47,6 @@ class LeaderboardView(View):
         )  # If only one page, disable Next
 
     async def update_message(self, interaction: discord.Interaction):
-        # Calculate the people on the page
         start_index = self.current_page * self.players_per_page
         end_index = start_index + self.players_per_page
         page_data = self.sorted_mmr[start_index:end_index]
@@ -78,19 +97,21 @@ class LeaderboardView(View):
         content = f"## MMR Leaderboard (Page {self.current_page + 1}/{self.total_pages}) ##\n```\n{table_output}\n```"
 
         # Update button based on the current page
-        self.previous_button.disabled = self.current_page == 0
-        self.next_button.disabled = self.current_page == self.total_pages - 1
+        if self.previous_btn:
+            self.previous_btn.disabled = (self.current_page == 0)
+        if self.next_btn:
+            self.next_btn.disabled = (self.current_page == self.total_pages - 1)
 
         await interaction.response.edit_message(content=content, view=self)
 
     @discord.ui.button(style=discord.ButtonStyle.blurple, disabled=True, emoji="⏪")
-    async def previous_button(self, interaction: discord.Interaction):
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.current_page -= 1
         await self.update_message(interaction)
 
     # Refresh the leaderboard
     @discord.ui.button(style=discord.ButtonStyle.blurple, emoji="🔄")
-    async def refresh_button(self, interaction: discord.Interaction):
+    async def refresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.sorted_mmr = sorted(
             self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
         )
@@ -103,7 +124,7 @@ class LeaderboardView(View):
         await self.update_message(interaction)
 
     @discord.ui.button(style=discord.ButtonStyle.blurple, disabled=False, emoji="⏩")
-    async def next_button(self, interaction: discord.Interaction):
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.current_page += 1
         await self.update_message(interaction)
 
