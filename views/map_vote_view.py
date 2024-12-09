@@ -68,11 +68,36 @@ class MapVoteView(discord.ui.View):
             self.add_item(button)
         await self.ctx.send("Vote for the map to play:", view=self)
 
-        await asyncio.sleep(25)
+        #await asyncio.sleep(25)
+
+        #self.winning_map = max(self.map_votes, key=self.map_votes.get)
+        #await self.ctx.send(f"The selected map is **{self.winning_map}**!")
+
+        count = 0
+
+        while count < 50: 
+            items = list(self.map_votes.items())
+            map1, votes1 = items[0]
+            map2, votes2 = items[1]
+            map3, votes3 = items[2]
+
+            votes_left = 10 - votes1 - votes2 - votes3
+            if votes1 - max(votes2, votes3) >= votes_left:
+                self.winning_map = map1
+                await self.ctx.send(f"The selected map is **{self.winning_map}**!")
+            elif votes2 - max(votes1, votes3) >= votes_left:
+                self.winning_map = map2
+                await self.ctx.send(f"The selected map is **{self.winning_map}**!")
+            elif votes3 - max(votes1, votes2) >= votes_left:
+                self.winning_map = map3
+                await self.ctx.send(f"The selected map is **{self.winning_map}**!")
+
+            asyncio.sleep(0.5)
+            count += 1
 
         self.winning_map = max(self.map_votes, key=self.map_votes.get)
-        await self.ctx.send(f"The selected map is **{self.winning_map}**!")
-    
+        await self.ctx.send(f"The selected map is **{self.winning_map}**! - Voting Phase Timeout")
+
     async def finalize(self):
         self.bot.selected_map = self.winning_map
         teams_embed = discord.Embed(
