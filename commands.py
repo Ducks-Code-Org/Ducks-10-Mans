@@ -408,6 +408,7 @@ class BotCommands(commands.Cog):
                     await ctx.send(f"{riot_name}#{riot_tag} is now supersonic radiant!")
 
         # Now save all updates to the database
+        print("Before player stats updated")
         self.bot.save_mmr_data()
         await ctx.send("Player stats updated!")
 

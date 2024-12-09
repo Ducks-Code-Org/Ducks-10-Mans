@@ -2,7 +2,6 @@
 
 from database import users, mmr_collection
 
-
 # Update stats
 def update_stats(player_stats, total_rounds, player_mmr, player_names):
     name = player_stats.get("name", "").lower()
