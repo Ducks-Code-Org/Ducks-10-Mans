@@ -68,6 +68,11 @@ class MapVoteView(discord.ui.View):
             self.add_item(button)
         await self.ctx.send("Vote for the map to play:", view=self)
 
+        #await asyncio.sleep(25)
+
+        #self.winning_map = max(self.map_votes, key=self.map_votes.get)
+        #await self.ctx.send(f"The selected map is **{self.winning_map}**!")
+
         count = 0
 
         while count < 50: 
@@ -89,6 +94,9 @@ class MapVoteView(discord.ui.View):
 
             asyncio.sleep(0.5)
             count += 1
+
+        self.winning_map = max(self.map_votes, key=self.map_votes.get)
+        await self.ctx.send(f"The selected map is **{self.winning_map}**! - Voting Phase Timeout")
 
     async def finalize(self):
         self.bot.selected_map = self.winning_map
