@@ -4,7 +4,7 @@ This is a discord bot that uses the Valorant API to create a really unique way t
 
 Henrikdev Valorant API: <https://docs.henrikdev.xyz/>
 
-![discord github](https://github.com/user-attachments/assets/0b7c3215-9f6a-4e75-b359-8440431ef7a2)
+![Screenshot 2024-12-10 175156](https://github.com/user-attachments/assets/a295117e-1f43-4002-ab3d-dc5740dc08e1)
 
 ## How It's Made
 
