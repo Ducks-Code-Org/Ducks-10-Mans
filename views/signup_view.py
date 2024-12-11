@@ -36,9 +36,7 @@ class SignupView(discord.ui.View):
         existing_user = users.find_one({"discord_id": str(interaction.user.id)})
         if existing_user:
             if interaction.user.id not in [player["id"] for player in self.bot.queue]:
-                self.bot.queue.append(
-                    {"id": interaction.user.id, "name": interaction.user.name}
-                )
+                self.bot.queue.append({"id": interaction.user.id, "name": interaction.user.name})
                 if interaction.user.id not in self.bot.player_mmr:
                     self.bot.player_mmr[interaction.user.id] = {
                         "mmr": 1000,
@@ -57,7 +55,18 @@ class SignupView(discord.ui.View):
                     ephemeral=True,
                 )
 
-                await interaction.user.add_roles(self.bot.match_role)
+                # Convert user to member before adding role
+                member = interaction.guild.get_member(interaction.user.id)
+                if member is None:
+                    member = await interaction.guild.fetch_member(interaction.user.id)
+                if member:
+                    await member.add_roles(self.bot.match_role)
+                else:
+                    await interaction.followup.send("Could not assign the role. Cannot find the member in the guild.", ephemeral=True)
+                if member:
+                    await member.add_roles(self.bot.match_role)
+                else:
+                    await interaction.followup.send("Could not assign the role. Please ensure the bot has necessary permissions.", ephemeral=True)
 
                 if len(self.bot.queue) == 10:
                     await interaction.channel.send(
@@ -65,7 +74,7 @@ class SignupView(discord.ui.View):
                     )
                     self.cancel_signup_refresh()
 
-                    # Pings all users in the active queue (intended for afk mfs)
+                    # Pings all users in the active queue
                     await interaction.channel.send("__Players:__")
                     player_list_msg = ""
                     for player in self.bot.queue:

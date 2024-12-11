@@ -215,7 +215,7 @@ class ModeVoteView(discord.ui.View):
                     await self.ctx.send("Balanced Teams wins the vote!")
                     await self.balanced_teams_logic()
 
-                asyncio.sleep(0.5) #voting phase will time out after 50 iterations or roughly 25 seconds
+                await asyncio.sleep(0.5) #voting phase will time out after 50 iterations or roughly 25 seconds
                 count += 1
 
             if self.votes["Balanced Teams"] > self.votes["Captains"]:
