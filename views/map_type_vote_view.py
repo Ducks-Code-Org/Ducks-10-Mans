@@ -1,7 +1,6 @@
 """This view allows players to interactively vote for map type."""
 
 import asyncio
-
 import discord
 from discord.ui import Button
 import random
@@ -24,10 +23,11 @@ class MapTypeVoteView(discord.ui.View):
 
         self.add_item(self.competitive_button)
         self.add_item(self.all_maps_button)
+
+        # Initialize votes for map pool
         self.map_pool_votes = {"Competitive Maps": 0, "All Maps": 0}
         self.voters = set()
 
-        # Link callbacks to buttons
         self.setup_callbacks()
 
     async def competitive_callback(self, interaction: discord.Interaction):
@@ -74,60 +74,41 @@ class MapTypeVoteView(discord.ui.View):
 
     async def send_view(self):
         await self.ctx.send("Vote for the map pool:", view=self)
-        #await asyncio.sleep(25)
 
         count = 0
+        # We loop and wait for votes, or break early if a clear winner emerges
         while count < 50:
+            # If one category exceeds 4 votes, they automatically win (assuming a 10-player match)
             if self.map_pool_votes["All Maps"] > 4:
                 await self.ctx.send("All Maps selected!")
-                map_vote = MapVoteView(self.ctx, self.bot, all_maps)
-                await map_vote.setup()
-
-                # Begin vote for specific map
-                await map_vote.send_view()
-            elif self.map_pool_votes["Competitive Maps"] > 4: 
+                chosen_maps = all_maps
+                break
+            elif self.map_pool_votes["Competitive Maps"] > 4:
                 await self.ctx.send("Competitive Maps selected!")
-                map_vote = MapVoteView(self.ctx, self.bot, official_maps)
-                await map_vote.setup()
+                chosen_maps = official_maps
+                break
 
-                # Begin vote for specific map
-                await map_vote.send_view()
-
-            asyncio.sleep(0.5)
+            await asyncio.sleep(0.5)
             count += 1
+        else:
+            # Timeout reached, decide by who has more votes
+            if self.map_pool_votes["Competitive Maps"] > self.map_pool_votes["All Maps"]:
+                await self.ctx.send("Competitive Maps selected! - Voting Phase Timeout")
+                chosen_maps = official_maps
+            elif self.map_pool_votes["All Maps"] > self.map_pool_votes["Competitive Maps"]:
+                await self.ctx.send("All Maps selected! - Voting Phase Timeout")
+                chosen_maps = all_maps
+            else:
+                # Tie breaker
+                decision = "All Maps" if random.choice([True, False]) else "Competitive Maps"
+                await self.ctx.send(f"It's a tie! The RNG gods say {decision} wins!")
+                chosen_maps = all_maps if decision == "All Maps" else official_maps
 
-        if self.map_pool_votes["Competitive Maps"] > self.map_pool_votes["All Maps"]:
-            await self.ctx.send("Competitive Maps selected! - Voting Phase Timeout")
-            map_vote = MapVoteView(self.ctx, self.bot, official_maps)
-            await map_vote.setup()
-
-            # Begin vote for specific map
-            await map_vote.send_view()
-        elif self.map_pool_votes["All Maps"] > self.map_pool_votes["Competitive Maps"]:
-            await self.ctx.send("All Maps selected! - Voting Phase Timeout")
-            map_vote = MapVoteView(self.ctx, self.bot, all_maps)
-            await map_vote.setup()
-
-            # Begin vote for specific map
-            await map_vote.send_view()
-        else: 
-            decision = "All Maps" if random.choice([True, False]) else "Competitive Maps"
-            await self.ctx.send(f"It's a tie! The RNG gods say {decision} wins!")
-            if decision == "All Maps":
-                map_vote = MapVoteView(self.ctx, self.bot, all_maps)
-                await map_vote.setup()
-
-                # Begin vote for specific map
-                await map_vote.send_view()
-            else: 
-                map_vote = MapVoteView(self.ctx, self.bot, official_maps)
-                await map_vote.setup()
-
-                # Begin vote for specific map
-                await map_vote.send_view()
+        # Now that chosen_maps is decided, call MapVoteView to pick the final map.
+        map_vote = MapVoteView(self.ctx, self.bot, chosen_maps)
+        await map_vote.setup()
+        await map_vote.send_view()  # MapVoteView handles the final map selection
 
     def setup_callbacks(self):
         self.competitive_button.callback = self.competitive_callback
         self.all_maps_button.callback = self.all_maps_callback
-
-    # refresh the signup message every minute
