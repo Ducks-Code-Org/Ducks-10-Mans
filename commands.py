@@ -103,91 +103,84 @@ class BotCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.dev_mode = False
-        # variables related to refreshing the leaderboard
         self.leaderboard_message = None
         self.leaderboard_view = None
         self.refresh_task = None
-        self.leaderboard_message_kd = None
-        self.leaderboard_view_kd = None
-        self.refresh_task_kd = None
-        self.leaderboard_message_wins = None
-        self.leaderboard_view_wins = None
-        self.refresh_task_wins = None
-        self.leaderboard_message_acs = None
-        self.leaderboard_view_acs = None
-        self.refresh_task_acs = None
+        # Store chosen_mode and selected_map as state
+        # chosen_mode will be either "Balanced" or "Captains"
+        # selected_map will be set after map vote
+        self.bot.chosen_mode = None
+        self.bot.selected_map = None
+        self.bot.match_not_reported = False
+        self.bot.match_ongoing = False
+        self.bot.player_mmr = {}
+        self.bot.player_names = {}
+        self.bot.signup_active = False
+        self.bot.queue = []
+        self.bot.captain1 = None
+        self.bot.captain2 = None
+        self.bot.team1 = []
+        self.bot.team2 = []
 
-    # Signup Command
     @commands.command()
     async def signup(self, ctx):
-        # Don't create a new signup if one is active
         if self.bot.signup_active:
-            await ctx.send(
-                "A signup is already in progress. Please wait for it to complete."
-            )
+            await ctx.send("A signup is already in progress.")
             return
 
         if self.bot.match_not_reported:
-            await ctx.send(
-                "Report the last match before starting another one (credits to dshocc for bug testing)"
-            )
+            await ctx.send("Report the last match before starting another one.")
+            return
 
         self.bot.signup_active = True
         self.bot.queue = []
+        self.bot.captain1 = None
+        self.bot.captain2 = None
+        self.bot.team1 = []
+        self.bot.team2 = []
+        self.bot.chosen_mode = None
+        self.bot.selected_map = None
 
-        # Generate Match Name and Setup Match Channel Permissions
         self.bot.match_name = f"match-{random.randrange(1, 10**4):04}"
-        self.bot.match_role = await ctx.guild.create_role(
-            name=self.bot.match_name, hoist=True
-        )
+        self.bot.match_role = await ctx.guild.create_role(name=self.bot.match_name, hoist=True)
         await ctx.guild.edit_role_positions(positions={self.bot.match_role: 5})
+
         match_channel_permissions = {
             ctx.guild.default_role: discord.PermissionOverwrite(send_messages=False),
             self.bot.match_role: discord.PermissionOverwrite(send_messages=True),
         }
 
-        # Generate Match Channel and Send Signup Message
         self.bot.match_channel = await ctx.guild.create_text_channel(
             name=self.bot.match_name,
             category=ctx.channel.category,
             position=0,
             overwrites=match_channel_permissions,
         )
+
+        # Create signup view if not already
+        if self.bot.signup_view is None:
+            from views.signup_view import SignupView
+            self.bot.signup_view = SignupView(ctx, self.bot)
+
         self.bot.current_signup_message = await self.bot.match_channel.send(
             "Click a button to manage your queue status!", view=self.bot.signup_view
         )
 
-        await ctx.send(
-            f"Queue started! Signup can be found here: <#{self.bot.match_channel.id}>"
-        )
-
-        # Check if we need to create the view
-        if self.bot.signup_view is None:
-            self.bot.signup_view = SignupView(ctx, self.bot)
+        await ctx.send(f"Queue started! Signup: <#{self.bot.match_channel.id}>")
 
     @commands.command()
     async def status(self, ctx):
-        if self.bot.signup_view is None:
-            await ctx.send("No signup is currently active.")
-            return
-
-        if not self.bot.signup_active:
-            await ctx.send("No signup is currently active.")
+        if not self.bot.signup_active or self.bot.signup_view is None:
+            await ctx.send("No signup currently active.")
             return
 
         riot_names = []
         for player in self.bot.queue:
             discord_id = player["id"]
             user_data = users.find_one({"discord_id": str(discord_id)})
-            if user_data:
-                riot_name = user_data.get("name", "Unknown")
-                riot_names.append(riot_name)
-            else:
-                # INCASE SOMEONE HASN'T LINKED ACCOUNT
-                riot_names.append("Unknown")
-
-        queue_status = ", ".join(riot_names)
-        await ctx.send(f"Current queue ({len(self.bot.queue)}/10): {queue_status}")
+            riot_name = user_data.get("name","Unknown") if user_data else "Unknown"
+            riot_names.append(riot_name)
+        await ctx.send(f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}")
         await ctx.send(f"Match Channel: <#{self.bot.match_channel.id}>")
 
     # Report the match
@@ -966,6 +959,113 @@ class BotCommands(commands.Cog):
 
         mode_vote = ModeVoteView(ctx, self.bot)
         await mode_vote.send_view()
+
+    @commands.command()
+    @commands.has_role("Owner")
+    async def test(self, ctx):
+        self.bot.signup_active = True
+        self.bot.queue = []
+        self.bot.captain1 = None
+        self.bot.captain2 = None
+        self.bot.team1 = []
+        self.bot.team2 = []
+        self.bot.chosen_mode = None
+        self.bot.selected_map = None
+        self.bot.match_not_reported = False
+        self.bot.match_ongoing = False
+
+        # Add 10 dummy players to the queue
+        queue = [{"id": i, "name": f"TestPlayer{i}"} for i in range(1, 11)]
+        for player in queue:
+            self.bot.queue.append(player)
+            if player["id"] not in self.bot.player_mmr:
+                self.bot.player_mmr[player["id"]] = {
+                    "mmr": random.randint(900,1100),  # Assign random MMR for testing
+                    "wins": 0,
+                    "losses": 0
+                }
+            self.bot.player_names[player["id"]] = player["name"]
+
+        self.bot.save_mmr_data()
+        await ctx.send("Simulated a full queue of 10 test players.")
+
+        self.bot.chosen_mode = "Captains"
+        await ctx.send("Forced chosen mode: Captains")
+
+        # If captains chosen and not set, pick top 2 MMR as captains
+        if self.bot.chosen_mode == "Captains":
+            sorted_players = sorted(self.bot.queue, key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], reverse=True)
+            self.bot.captain1 = sorted_players[0]
+            self.bot.captain2 = sorted_players[1]
+            await ctx.send(f"Captains chosen automatically: Captain1={self.bot.captain1['name']}, Captain2={self.bot.captain2['name']}")
+
+        # Force map pool
+        from globals import official_maps
+        chosen_maps = official_maps
+        await ctx.send("Map pool chosen: Competitive")
+
+        # Choose a random map from chosen_maps
+        self.bot.selected_map = random.choice(chosen_maps)
+        await ctx.send(f"Selected Map: {self.bot.selected_map}")
+
+        if self.bot.chosen_mode == "Captains":
+            remaining_players = [p for p in self.bot.queue if p not in [self.bot.captain1, self.bot.captain2]]
+            remaining_players.sort(key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], reverse=True)
+
+            self.bot.team1 = [self.bot.captain1]
+            self.bot.team2 = [self.bot.captain2]
+
+            turn = 0
+            for player in remaining_players:
+                if turn % 2 == 0:
+                    self.bot.team1.append(player)
+                else:
+                    self.bot.team2.append(player)
+                turn += 1
+
+            await ctx.send("Automatically assigned teams for captains mode.")
+
+        # Mark the match as ongoing so we can report later if needed
+        self.bot.match_ongoing = True
+
+        # Finalize
+        attackers = []
+        from database import users
+        for p in self.bot.team1:
+            ud = users.find_one({"discord_id": str(p["id"])})
+            mmr = self.bot.player_mmr[p["id"]]["mmr"]
+            if ud:
+                rn = ud.get("name", "Unknown")
+                rt = ud.get("tag", "Unknown")
+                attackers.append(f"{rn}#{rt} (MMR:{mmr})")
+            else:
+                attackers.append(f"{p['name']} (MMR:{mmr})")
+
+        defenders = []
+        for p in self.bot.team2:
+            ud = users.find_one({"discord_id": str(p["id"])})
+            mmr = self.bot.player_mmr[p["id"]]["mmr"]
+            if ud:
+                rn = ud.get("name", "Unknown")
+                rt = ud.get("tag", "Unknown")
+                defenders.append(f"{rn}#{rt} (MMR:{mmr})")
+            else:
+                defenders.append(f"{p['name']} (MMR:{mmr})")
+
+        teams_embed = discord.Embed(
+            title=f"Teams for the match on {self.bot.selected_map}",
+            description="Good luck to both teams!",
+            color=discord.Color.blue(),
+        )
+        teams_embed.add_field(
+            name="**Attackers:**", value="\n".join(attackers), inline=False
+        )
+        teams_embed.add_field(
+            name="**Defenders:**", value="\n".join(defenders), inline=False
+        )
+        await ctx.send(embed=teams_embed)
+
+        await ctx.send("Setup complete! You can now `!report` after a match is done.")
 
     # Link Riot Account
     @commands.command()
