@@ -1,142 +1,100 @@
-"""This view allows users to interactively vote on the map to be played."""
-
 import asyncio
-import random
-
 import discord
 from discord.ui import Button
-
 from database import users
+import random
 
+from views.captains_drafting_view import SecondCaptainChoiceView, CaptainsDraftingView
 
 class MapVoteView(discord.ui.View):
     def __init__(self, ctx, bot, map_choices):
         super().__init__(timeout=None)
-        self.ctx = ctx
-        self.bot = bot
-        self.map_choices = map_choices  # map choices passed from map type vote view
-        self.map_buttons = []
-
-        self.map_votes = {}
-        self.chosen_maps = []
-
-        self.winning_map = ""
-
-        self.voters = set()
+        self.ctx=ctx
+        self.bot=bot
+        self.map_choices=map_choices
+        self.map_buttons=[]
+        self.map_votes={}
+        self.chosen_maps=[]
+        self.winning_map=""
+        self.voters=set()
 
     async def setup(self):
-        await self.setup_map_buttons()
-
-    async def setup_map_buttons(self):
-        random_maps = random.sample(self.map_choices, 3)
-        self.chosen_maps = random_maps
-        self.map_votes = {map_name: 0 for map_name in self.chosen_maps}
-        for map_name in random_maps:
-            button = Button(
-                label=f"{map_name} (0)", style=discord.ButtonStyle.secondary
-            )
-
-            async def map_callback(interaction: discord.Interaction, map_name=map_name):
-                if interaction.user.id not in [
-                    player["id"] for player in self.bot.queue
-                ]:
-                    await interaction.response.send_message(
-                        "You must be in the queue to vote!", ephemeral=True
-                    )
+        random_maps=random.sample(self.map_choices,3)
+        self.chosen_maps=random_maps
+        self.map_votes={m:0 for m in random_maps}
+        for m in random_maps:
+            btn=Button(label=f"{m} (0)", style=discord.ButtonStyle.secondary)
+            async def cb(interaction: discord.Interaction, chosen=m):
+                if interaction.user.id not in [p["id"] for p in self.bot.queue]:
+                    await interaction.response.send_message("Must be in queue!", ephemeral=True)
                     return
                 if interaction.user.id in self.voters:
-                    await interaction.response.send_message(
-                        "You have already voted!", ephemeral=True
-                    )
+                    await interaction.response.send_message("Already voted!", ephemeral=True)
                     return
-                self.map_votes[map_name] += 1
+                self.map_votes[chosen]+=1
                 self.voters.add(interaction.user.id)
-                # Update the button label
-                for btn in self.map_buttons:
-                    if btn.label.startswith(map_name):
-                        btn.label = f"{map_name} ({self.map_votes[map_name]})"
+                for b in self.map_buttons:
+                    if b.label.startswith(chosen):
+                        b.label=f"{chosen} ({self.map_votes[chosen]})"
                 await interaction.message.edit(view=self)
-                await interaction.response.send_message(
-                    f"You voted for {map_name}.", ephemeral=True
-                )
-
-            button.callback = map_callback
-            self.map_buttons.append(button)
+                await interaction.response.send_message(f"Voted {chosen}.", ephemeral=True)
+            btn.callback=cb
+            self.map_buttons.append(btn)
 
     async def send_view(self):
-        for button in self.map_buttons:
-            self.add_item(button)
+        for b in self.map_buttons:
+            self.add_item(b)
         await self.ctx.send("Vote for the map to play:", view=self)
+        await asyncio.sleep(25)
+        self.winning_map = max(self.map_votes,key=self.map_votes.get)
+        await self.ctx.send(f"Selected map: **{self.winning_map}**")
 
-        #await asyncio.sleep(25)
+        self.bot.selected_map=self.winning_map
 
-        #self.winning_map = max(self.map_votes, key=self.map_votes.get)
-        #await self.ctx.send(f"The selected map is **{self.winning_map}**!")
-
-        count = 0
-
-        while count < 50: 
-            items = list(self.map_votes.items())
-            map1, votes1 = items[0]
-            map2, votes2 = items[1]
-            map3, votes3 = items[2]
-
-            votes_left = 10 - votes1 - votes2 - votes3
-            if votes1 - max(votes2, votes3) >= votes_left:
-                self.winning_map = map1
-                await self.ctx.send(f"The selected map is **{self.winning_map}**!")
-            elif votes2 - max(votes1, votes3) >= votes_left:
-                self.winning_map = map2
-                await self.ctx.send(f"The selected map is **{self.winning_map}**!")
-            elif votes3 - max(votes1, votes2) >= votes_left:
-                self.winning_map = map3
-                await self.ctx.send(f"The selected map is **{self.winning_map}**!")
-
-            asyncio.sleep(0.5)
-            count += 1
-
-        self.winning_map = max(self.map_votes, key=self.map_votes.get)
-        await self.ctx.send(f"The selected map is **{self.winning_map}**! - Voting Phase Timeout")
+        # Now check chosen_mode
+        if self.bot.chosen_mode=="Balanced":
+            # finalize directly
+            await self.finalize()
+        else:
+            # Captains mode chosen, now run SecondCaptainChoiceView for pick order and then drafting
+            await self.ctx.send("Captains mode chosen. Second captain, choose draft order.")
+            choice_view=SecondCaptainChoiceView(self.ctx,self.bot)
+            await self.ctx.send(f"<@{self.bot.captain2['id']}>, choose draft type:", view=choice_view)
+            # After drafting finalizes (in CaptainsDraftingView finalize_draft method), finalize is called
+            # The finalize will be called after drafting completes.
 
     async def finalize(self):
-        self.bot.selected_map = self.winning_map
-        teams_embed = discord.Embed(
-            title=f"Teams for the match on {self.winning_map}",
-            description="Good luck to both teams!",
-            color=discord.Color.blue(),
+        # Finalize teams after map chosen.
+        teams_embed=discord.Embed(
+            title=f"Teams on {self.winning_map}",
+            description="Good luck!",
+            color=discord.Color.blue()
         )
-        print(self.bot.selected_map)
 
-        attackers = []
-        for player in self.bot.team1:
-            user_data = users.find_one({"discord_id": str(player["id"])})
-            mmr = self.bot.player_mmr.get(player["id"], {}).get("mmr", 1000)
-            if user_data:
-                riot_name = user_data.get("name", "Unknown")
-                riot_tag = user_data.get("tag", "Unknown")
-                attackers.append(f"{riot_name}#{riot_tag} (MMR: {mmr})")
+        attackers=[]
+        for p in self.bot.team1:
+            ud=users.find_one({"discord_id": str(p["id"])})
+            mmr=self.bot.player_mmr.get(p["id"],{}).get("mmr",1000)
+            if ud:
+                rn=ud.get("name","Unknown")
+                rt=ud.get("tag","Unknown")
+                attackers.append(f"{rn}#{rt} (MMR:{mmr})")
             else:
-                attackers.append(f"{player['name']} (MMR: {mmr})")
+                attackers.append(f"{p['name']} (MMR:{mmr})")
 
-        defenders = []
-        for player in self.bot.team2:
-            user_data = users.find_one({"discord_id": str(player["id"])})
-            mmr = self.bot.player_mmr.get(player["id"], {}).get("mmr", 1000)
-            if user_data:
-                riot_name = user_data.get("name", "Unknown")
-                riot_tag = user_data.get("tag", "Unknown")
-                defenders.append(f"{riot_name}#{riot_tag} (MMR: {mmr})")
+        defenders=[]
+        for p in self.bot.team2:
+            ud=users.find_one({"discord_id": str(p["id"])})
+            mmr=self.bot.player_mmr.get(p["id"],{}).get("mmr",1000)
+            if ud:
+                rn=ud.get("name","Unknown")
+                rt=ud.get("tag","Unknown")
+                defenders.append(f"{rn}#{rt} (MMR:{mmr})")
             else:
-                defenders.append(f"{player['name']} (MMR: {mmr})")
+                defenders.append(f"{p['name']} (MMR:{mmr})")
 
-        teams_embed.add_field(
-            name="**Attackers:**", value="\n".join(attackers), inline=False
-        )
-        teams_embed.add_field(
-            name="**Defenders:**", value="\n".join(defenders), inline=False
-        )
+        teams_embed.add_field(name="**Attackers:**", value="\n".join(attackers), inline=False)
+        teams_embed.add_field(name="**Defenders:**", value="\n".join(defenders), inline=False)
 
-        # Send the finalized teams again
         await self.ctx.send(embed=teams_embed)
-
-        await self.ctx.send("Start the match, then use !report to finalize results")
+        await self.ctx.send("Start match, then `!report` to finalize results.")

@@ -15,10 +15,9 @@ class SignupView(discord.ui.View):
         self.ctx = ctx
         self.bot = bot
         self.bot.origin_ctx = ctx
+        # Start refresh tasks ONLY if needed
         self.signup_refresh_task = asyncio.create_task(self.refresh_signup_message())
-        self.channel_name_refresh_task = asyncio.create_task(
-            self.refresh_channel_name()
-        )
+        self.channel_name_refresh_task = asyncio.create_task(self.refresh_channel_name())
 
         self.sign_up_button = Button(
             label="Sign Up (0/10)", style=discord.ButtonStyle.green
@@ -29,103 +28,87 @@ class SignupView(discord.ui.View):
         self.add_item(self.sign_up_button)
         self.add_item(self.leave_queue_button)
 
-        # Link callbacks to buttons
         self.setup_callbacks()
 
     async def sign_up_callback(self, interaction: discord.Interaction):
         existing_user = users.find_one({"discord_id": str(interaction.user.id)})
         if existing_user:
-            if interaction.user.id not in [player["id"] for player in self.bot.queue]:
+            if interaction.user.id not in [p["id"] for p in self.bot.queue]:
                 self.bot.queue.append({"id": interaction.user.id, "name": interaction.user.name})
                 if interaction.user.id not in self.bot.player_mmr:
-                    self.bot.player_mmr[interaction.user.id] = {
-                        "mmr": 1000,
-                        "wins": 0,
-                        "losses": 0,
-                    }
+                    self.bot.player_mmr[interaction.user.id] = {"mmr": 1000, "wins": 0, "losses": 0}
                 self.bot.player_names[interaction.user.id] = interaction.user.name
 
                 self.sign_up_button.label = f"Sign Up ({len(self.bot.queue)}/10)"
                 await interaction.response.edit_message(
                     content="Click a button to manage your queue status!", view=self
                 )
-
                 await interaction.followup.send(
-                    f"{interaction.user.name} added to the queue! Current queue count: {len(self.bot.queue)}",
-                    ephemeral=True,
+                    f"{interaction.user.name} added to the queue! ({len(self.bot.queue)}/10)",
+                    ephemeral=True
                 )
 
-                # Convert user to member before adding role
-                member = interaction.guild.get_member(interaction.user.id)
-                if member is None:
-                    member = await interaction.guild.fetch_member(interaction.user.id)
+                # Add role
+                member = interaction.guild.get_member(interaction.user.id) or await interaction.guild.fetch_member(interaction.user.id)
                 if member:
-                    await member.add_roles(self.bot.match_role)
+                    try:
+                        await member.add_roles(self.bot.match_role)
+                    except discord.Forbidden:
+                        await interaction.followup.send("Could not assign the role due to permissions.", ephemeral=True)
                 else:
-                    await interaction.followup.send("Could not assign the role. Cannot find the member in the guild.", ephemeral=True)
-                if member:
-                    await member.add_roles(self.bot.match_role)
-                else:
-                    await interaction.followup.send("Could not assign the role. Please ensure the bot has necessary permissions.", ephemeral=True)
+                    await interaction.followup.send("Could not assign the role. Member not found in guild.", ephemeral=True)
 
                 if len(self.bot.queue) == 10:
-                    await interaction.channel.send(
-                        "The queue is now full, proceeding to the voting stage."
-                    )
+                    await interaction.channel.send("The queue is now full, proceeding to the voting stage.")
                     self.cancel_signup_refresh()
 
-                    # Pings all users in the active queue
-                    await interaction.channel.send("__Players:__")
-                    player_list_msg = ""
-                    for player in self.bot.queue:
-                        player_list_msg += f"<@{player['id']}>"
-                    await interaction.channel.send(player_list_msg)
+                    # Ping all players
+                    await interaction.channel.send("__Players:__ " + " ".join([f"<@{p['id']}>" for p in self.bot.queue]))
 
                     self.bot.signup_active = False
                     self.ctx.channel = self.bot.match_channel
 
+                    from views.mode_vote_view import ModeVoteView
                     mode_vote = ModeVoteView(self.ctx, self.bot)
                     await mode_vote.send_view()
             else:
-                await interaction.response.send_message(
-                    "You're already in the queue!", ephemeral=True
-                )
+                await interaction.response.send_message("You're already in the queue!", ephemeral=True)
         else:
             await interaction.response.send_message(
-                "You must link your Riot account to queue. Use `!linkriot Name#Tag` to link your account",
-                ephemeral=True,
+                "You must link your Riot account first. Use `!linkriot Name#Tag`",
+                ephemeral=True
             )
 
     async def leave_queue_callback(self, interaction: discord.Interaction):
-        self.bot.queue[:] = [
-            player for player in self.bot.queue if player["id"] != interaction.user.id
-        ]
+        self.bot.queue = [p for p in self.bot.queue if p["id"] != interaction.user.id]
         self.sign_up_button.label = f"Sign Up ({len(self.bot.queue)}/10)"
         await interaction.response.edit_message(
             content="Click a button to manage your queue status!", view=self
         )
 
-        await interaction.followup.send(
-            f"{interaction.user.name} removed from the queue! Current queue count: {len(self.bot.queue)}",
-            ephemeral=True,
-        )
-
-        await interaction.user.remove_roles(self.bot.match_role)
+        await interaction.followup.send(f"{interaction.user.name} left the queue. ({len(self.bot.queue)}/10)", ephemeral=True)
+        member = interaction.guild.get_member(interaction.user.id) or await interaction.guild.fetch_member(interaction.user.id)
+        if member:
+            try:
+                await member.remove_roles(self.bot.match_role)
+            except discord.Forbidden:
+                await interaction.followup.send("Could not remove role due to permissions.", ephemeral=True)
 
     def setup_callbacks(self):
         self.sign_up_button.callback = self.sign_up_callback
         self.leave_queue_button.callback = self.leave_queue_callback
 
-    # refresh the signup message every minute
     async def refresh_signup_message(self):
         try:
+            # Wait before first refresh to avoid immediate duplicate message
+            await asyncio.sleep(60)
             while self.bot.signup_active:
                 if self.bot.current_signup_message:
                     try:
                         await self.bot.current_signup_message.delete()
                     except discord.NotFound:
                         pass
-                # Send new signup message
+                # Re-send the signup message after 60 seconds
                 self.bot.current_signup_message = await self.bot.match_channel.send(
                     "Click a button to manage your queue status!",
                     view=self,
@@ -135,7 +118,6 @@ class SignupView(discord.ui.View):
         except asyncio.CancelledError:
             pass
 
-    # Function to cancel the signup refresh
     def cancel_signup_refresh(self):
         if self.signup_refresh_task:
             self.signup_refresh_task.cancel()
@@ -145,9 +127,7 @@ class SignupView(discord.ui.View):
         try:
             while self.bot.signup_active:
                 try:
-                    await self.bot.match_channel.edit(
-                        name=f"{self.bot.match_name}《{len(self.bot.queue)}∕10》"
-                    )
+                    await self.bot.match_channel.edit(name=f"{self.bot.match_name}《{len(self.bot.queue)}∕10》")
                 except discord.HTTPException:
                     pass
                 await asyncio.sleep(720)
