@@ -1,6 +1,6 @@
 # Duck's 10 Mans
 
-This is a discord bot that uses the Valorant API to create a really unique way to play Valorant with friends. It utilizes the Henrikdev Valorant API in order to function, currently serving the use of 30+ users.
+This is a discord bot that utilizes the Valorant API to create a unique way to play Valorant with friends. This project utilizes the Henrikdev Valorant API in order to function, currently serving 30+ users.
 
 Henrikdev Valorant API: <https://docs.henrikdev.xyz/>
 
