@@ -86,4 +86,28 @@ def lower_names():
 
     make_changes_to_database(name_changes)
 
-lower_names()
+def reset_collection_to_defaults():
+    """
+    Reset all documents in the MMR collection to their default values.
+    """
+    default_values = {
+        "mmr": 1000,
+        "wins": 0,
+        "losses": 0,
+        "total_combat_score": 0,
+        "total_kills": 0,
+        "total_deaths": 0,
+        "matches_played": 0,
+        "total_rounds_played": 0,
+        "average_combat_score": 0,
+        "kill_death_ratio": 0,
+    }
+
+    confirmation = input("Are you sure you want to reset the collection to default values? This action cannot be undone. (Y/n): ").strip().lower()
+    if confirmation == "y":
+        result = mmr_collection.update_many({}, {"$set": default_values})
+        print(f"Reset {result.modified_count} documents to default values.")
+    else:
+        print("No changes have been applied.")
+
+reset_collection_to_defaults()
