@@ -15,3 +15,5 @@ all_maps = [
     "Sunset",
     "Abyss",
 ]
+
+SEASON_2_START_DATE = "2024-12-15T00:00:00.000Z"

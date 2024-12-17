@@ -113,7 +113,6 @@ class BotCommands(commands.Cog):
         self.bot.selected_map = None
         self.bot.match_not_reported = False
         self.bot.match_ongoing = False
-        self.bot.player_mmr = {}
         self.bot.player_names = {}
         self.bot.signup_active = False
         self.bot.queue = []
@@ -500,7 +499,7 @@ class BotCommands(commands.Cog):
         sorted_mmr = sorted(
             self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
         )
-
+        print(self.bot.player_mmr)
         # Create leaderboard data
         leaderboard_data = []
         for idx, (player_id, stats) in enumerate(sorted_mmr[:10], start=1):
@@ -647,6 +646,7 @@ class BotCommands(commands.Cog):
             ),  # Default to 0.0 if key is missing
             reverse=True,
         )
+
         # Create the view for pages
         view = LeaderboardView(ctx, self.bot, sorted_kd, players_per_page=10)
 

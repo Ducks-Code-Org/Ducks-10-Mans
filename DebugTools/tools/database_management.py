@@ -109,5 +109,3 @@ def reset_collection_to_defaults():
         print(f"Reset {result.modified_count} documents to default values.")
     else:
         print("No changes have been applied.")
-
-reset_collection_to_defaults()
