@@ -52,7 +52,7 @@ def get_custom_matchlist(name, tag):
     response = requests.get(
         f"https://api.henrikdev.xyz/valorant/v4/matches/na/pc/{name}/{tag}?mode=custom",
         headers={
-            "Authorization": os.getenv("api_key"),
+            "Authorization": "HDEV-0f2e4072-7536-44a8-861b-e969b6837de7",
         },
     )
     data = response.json()["data"]
@@ -151,7 +151,7 @@ def get_mmr_changes(winning_team, losing_team) -> list[StatChange]:
         if not player_data:
             # Initialize missing player data in the database
             default_mmr = 1000
-            discord_id = users.find_one({"name": player["name"].lower, "tag": player["tag"].lower})
+            discord_id = users.find_one({"name": player["name"].lower(), "tag": player["tag"].lower()})
             player_data = {
                 "player_id": discord_id,
                 "name": riot_name,
@@ -360,7 +360,7 @@ def confirm_changes(changes: list[StatChange]):
 
 
 
-get_match_to_upload(get_custom_matchlist("Duck", "MST"))
+get_match_to_upload(get_custom_matchlist("Samurai", "Mai"))
 
 
 
