@@ -39,7 +39,7 @@ def convert_to_central_time(utc_timestamp):
     return central_time.isoformat()
 
 # MongoDB Connection
-uri = os.getenv("uri_key")
+uri = "mongodb+srv://x4skinniestduck:8QZOdjPrrgJkRGPX@rapid.12llf.mongodb.net/?retryWrites=true&w=majority&appName=Rapid"
 client = MongoClient(uri, server_api=ServerApi("1"))
 
 # Initialize MongoDB Collections
@@ -151,7 +151,9 @@ def get_mmr_changes(winning_team, losing_team) -> list[StatChange]:
         if not player_data:
             # Initialize missing player data in the database
             default_mmr = 1000
+            discord_id = users.find_one({"name": player["name"].lower, "tag": player["tag"].lower})
             player_data = {
+                "player_id": discord_id,
                 "name": riot_name,
                 "mmr": default_mmr,
                 "wins": 0,
