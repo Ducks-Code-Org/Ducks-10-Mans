@@ -98,16 +98,17 @@ class LeaderboardView(View):
 
         # Update button based on the current page
         if self.previous_btn:
-            self.previous_btn.disabled = (self.current_page == 0)
+            self.previous_btn.disabled = True  # Start disabled since you're on the first page
         if self.next_btn:
-            self.next_btn.disabled = (self.current_page == self.total_pages - 1)
+            self.next_btn.disabled = (self.total_pages <= 1)
 
         await interaction.response.edit_message(content=content, view=self)
 
     @discord.ui.button(style=discord.ButtonStyle.blurple, disabled=True, emoji="⏪")
     async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.current_page -= 1
-        await self.update_message(interaction)
+        if self.current_page > 0:
+            self.current_page -= 1
+            await self.update_message(interaction)
 
     # Refresh the leaderboard
     @discord.ui.button(style=discord.ButtonStyle.blurple, emoji="🔄")
@@ -125,8 +126,9 @@ class LeaderboardView(View):
 
     @discord.ui.button(style=discord.ButtonStyle.blurple, disabled=False, emoji="⏩")
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.current_page += 1
-        await self.update_message(interaction)
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            await self.update_message(interaction)
 
 
 class LeaderboardViewKD(View):
