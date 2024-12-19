@@ -33,7 +33,7 @@ def get_wins_from_match(match):
     wins = {}
 
     for player in match["players"]:
-        player_name = (player["name"].lower() + "#" + player["tag"].lower())
+        player_name = player["name"].lower() + "#" + player["tag"].lower()
         wins[player_name] = 1 if player["team_id"] == winning_team_id else 0
 
     return wins
@@ -44,8 +44,8 @@ def get_wins_from_matchlist(matchlist):
     for match in matchlist:
         winning_team_id = get_winning_team_id(match)
         for player in match["players"]:
-            player_name = (player["name"].lower() + "#" + player["tag"].lower())
-            wins[player_name] = wins.get(player_name, 0) + 1 if player["team_id"] == winning_team_id else 0
+            player_name = player["name"].lower() + "#" + player["tag"].lower()
+            wins[player_name] = wins.get(player_name, 0) + (1 if player["team_id"] == winning_team_id else 0)
 
     return wins
 
