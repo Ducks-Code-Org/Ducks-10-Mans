@@ -123,8 +123,13 @@ def get_matches_from_season(start_time, end_time=""):
                 "$gte": start_time
             }
         }
-
+    unique_matches_dict = {}
     # Execute the query and return the results
     matches = all_matches.find(query)
     matches_list = list(matches)
-    return matches_list
+    for match in matches_list:
+        match_id = match["metadata"]["matchid"]
+        if match_id not in unique_matches_dict:
+            unique_matches_dict[match_id] = match
+
+    return unique_matches_dict.values()
