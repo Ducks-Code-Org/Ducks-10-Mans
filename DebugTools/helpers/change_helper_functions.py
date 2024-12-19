@@ -383,7 +383,8 @@ def get_mmr_values_multiple_teams(winning_teams, losing_teams) -> dict:
                 }
                 mmr_collection.insert_one(player_data)
 
-            player_mmr_data[riot_name] = player_data["mmr"]
+            if riot_name not in player_mmr_data:
+                player_mmr_data[riot_name] = player_data["mmr"]
 
         # Calculate average MMR for winning and losing teams
         winning_team_mmr = sum(
