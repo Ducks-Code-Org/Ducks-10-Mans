@@ -128,7 +128,7 @@ def get_matches_from_season(start_time, end_time=""):
     matches = all_matches.find(query)
     matches_list = list(matches)
     for match in matches_list:
-        match_id = match["metadata"]["matchid"]
+        match_id = match["metadata"]["match_id"]
         if match_id not in unique_matches_dict:
             unique_matches_dict[match_id] = match
 
