@@ -11,7 +11,7 @@ class StatChange:
 
 
 # MongoDB Connection
-uri = os.getenv("uri_key")
+uri = "mongodb+srv://x4skinniestduck:8QZOdjPrrgJkRGPX@rapid.12llf.mongodb.net/?retryWrites=true&w=majority&appName=Rapid"
 client = MongoClient(uri, server_api=ServerApi("1"))
 
 # Initialize MongoDB Collections

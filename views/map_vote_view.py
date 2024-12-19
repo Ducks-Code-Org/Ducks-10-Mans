@@ -56,6 +56,16 @@ class MapVoteView(discord.ui.View):
             # finalize directly
             await self.finalize()
         else:
+            if self.bot.chosen_mode == "Captains":
+                if not self.bot.captain1 or not self.bot.captain2:
+                    # Sort the queue by MMR
+                    sorted_players = sorted(
+                        self.bot.queue, 
+                        key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], 
+                        reverse=True
+                    )
+                    self.bot.captain1 = sorted_players[0]
+                    self.bot.captain2 = sorted_players[1]
             # Captains mode chosen, now run SecondCaptainChoiceView for pick order and then drafting
             await self.ctx.send("Captains mode chosen. Second captain, choose draft order.")
             choice_view=SecondCaptainChoiceView(self.ctx,self.bot)
@@ -98,3 +108,4 @@ class MapVoteView(discord.ui.View):
 
         await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match, then `!report` to finalize results.")
+        self.bot.match_ongoing = True

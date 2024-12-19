@@ -6,7 +6,7 @@ from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 
 # MongoDB Connection
-uri = os.getenv("uri_key")
+uri = "mongodb+srv://x4skinniestduck:8QZOdjPrrgJkRGPX@rapid.12llf.mongodb.net/?retryWrites=true&w=majority&appName=Rapid"
 client = MongoClient(uri, server_api=ServerApi("1"))
 
 # Initialize MongoDB Collections
@@ -19,7 +19,7 @@ def get_custom_matchlist(name, tag):
     response = requests.get(
         f"https://api.henrikdev.xyz/valorant/v4/matches/na/pc/{name}/{tag}?mode=custom",
         headers={
-            "Authorization": os.getenv("api_key"),
+            "Authorization": "HDEV-0f2e4072-7536-44a8-861b-e969b6837de7",
         },
     )
     data = response.json()["data"]
