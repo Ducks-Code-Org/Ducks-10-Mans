@@ -51,7 +51,7 @@ class LeaderboardView(View):
         end_index = start_index + self.players_per_page
         page_data = self.sorted_mmr[start_index:end_index]
 
-        # make the leaderboard table for the page
+        # Build leaderboard_data as before
         leaderboard_data = []
         names = []
         for player_id, stats in page_data:
@@ -96,11 +96,11 @@ class LeaderboardView(View):
 
         content = f"## MMR Leaderboard (Page {self.current_page + 1}/{self.total_pages}) ##\n```\n{table_output}\n```"
 
-        # Update button based on the current page
+        # Update the navigation buttons based on the current page
         if self.previous_btn:
-            self.previous_btn.disabled = True  # Start disabled since you're on the first page
+            self.previous_btn.disabled = (self.current_page == 0)
         if self.next_btn:
-            self.next_btn.disabled = (self.total_pages <= 1)
+            self.next_btn.disabled = (self.current_page == self.total_pages - 1)
 
         await interaction.response.edit_message(content=content, view=self)
 
