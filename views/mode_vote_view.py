@@ -14,8 +14,6 @@ class ModeVoteView(discord.ui.View):
         self.add_item(self.balanced_button)
         self.add_item(self.captains_button)
 
-        self.start_time = time.time() #The time at which the voting view is sent and thus when voting started
-
         self.votes = {"Balanced":0, "Captains":0}
         self.voters = set()
 
@@ -23,14 +21,16 @@ class ModeVoteView(discord.ui.View):
         self.captains_button.callback = self.captains_callback
 
         self.voting_phase_ended = False
+        self.timeout = False
 
     async def balanced_callback(self, interaction: discord.Interaction):
-        if time.time() - self.start_time > 25 or self.voting_phase_ended: #prevents voting after mode selection
+        if self.voting_phase_ended: #doesn't allow for votes if phase has already ended
             await interaction.response.send_message("This voting phase has already ended", ephemeral=True)
 
         if interaction.user.id not in [p["id"] for p in self.bot.queue]:
             await interaction.response.send_message("Must be in queue!", ephemeral=True)
             return
+        
         if interaction.user.id in self.voters:
             await interaction.response.send_message("Already voted!", ephemeral=True)
             return
@@ -42,12 +42,13 @@ class ModeVoteView(discord.ui.View):
         await interaction.response.send_message("Voted Balanced!", ephemeral=True)
 
     async def captains_callback(self, interaction: discord.Interaction):
-        if time.time() - self.start_time > 25 or self.voting_phase_ended: #prevents voting after mode selection
+        if self.voting_phase_ended:
             await interaction.response.send_message("This voting phase has already ended", ephemeral=True)
 
         if interaction.user.id not in [p["id"] for p in self.bot.queue]:
             await interaction.response.send_message("Must be in queue!", ephemeral=True)
             return
+  
         if interaction.user.id in self.voters:
             await interaction.response.send_message("Already voted!", ephemeral=True)
             return
@@ -61,10 +62,11 @@ class ModeVoteView(discord.ui.View):
 
     async def send_view(self):
         await self.ctx.send("Vote for mode (Balanced/Captains):", view=self)
-        self.start_time = time.time()
+        asyncio.create_task(self.start_timer())
 
+    #check_vote checks if an option has mathemetically won after every vote callback, as well as handles voting phase timeout logic
     async def check_vote(self):
-        if time.time() - self.start_time > 25: #if true timeout has occured
+        if self.timeout: 
             if self.votes["Balanced"]>self.votes["Captains"]:
                 self.bot.chosen_mode="Balanced"
                 await self.ctx.send("Balanced Teams chosen!")
@@ -110,13 +112,14 @@ class ModeVoteView(discord.ui.View):
 
             return
 
-
         if self.votes["Captains"] > 4: #if captains reaches 5 votes first, it wins (reaching 5 first can be considered as a tiebreaker)
             self.bot.chosen_mode="Captains"
+            self.voting_phase_ended = True
             await self.ctx.send("Captains chosen! Captains will be set after map is chosen.")
             return
         elif self.votes["Balanced Teams"] > 4:
             self.bot.chosen_mode="Balanced"
+            self.voting_phase_ended = True
             await self.ctx.send("Balanced Teams chosen!")
             # Set balanced teams now
             # sort by mmr, alternate
@@ -136,6 +139,13 @@ class ModeVoteView(discord.ui.View):
             self.bot.team2=team2
             return
 
+    async def start_timer(self):
+        await asyncio.sleep(25)  # Wait 25 seconds
+        if not self.voting_phase_ended:  # Ensure we haven't already ended the voting phase
+            self.timeout = True
+            self.voting_phase_ended = True
+            await self.check_vote()
+            
 
         # After mode chosen, do map type vote
         from views.map_type_vote_view import MapTypeVoteView
