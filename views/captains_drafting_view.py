@@ -120,6 +120,7 @@ class CaptainsDraftingView(discord.ui.View):
 
         await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match and use `!report` to finalize results.")
+        self.bot.match_ongoing = True
 
     async def select_callback(self, interaction: discord.Interaction):
         current_captain_id=self.pick_order[self.pick_count]["id"]
