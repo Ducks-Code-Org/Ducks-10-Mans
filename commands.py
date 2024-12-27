@@ -193,14 +193,15 @@ class BotCommands(commands.Cog):
             )
             return
 
-        name = current_user.get("name")
-        tag = current_user.get("tag")
+        name = current_user.get("name", "").lower()
+        tag = current_user.get("tag", "").lower()
         region = "na"
         platform = "pc"
 
         url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{name}/{tag}"
         response = requests.get(url, headers=headers, timeout=30)
         match_data = response.json()
+
         match = match_data["data"][0]
         metadata = match.get("metadata", {})
         map_name = metadata.get("map", {}).get("name", "").lower()
