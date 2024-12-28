@@ -386,10 +386,6 @@ class BotCommands(commands.Cog):
             pid for pid, stats in sorted_mmr_before if stats["mmr"] == top_mmr_before
         ]
 
-        # Adjust MMR
-        self.bot.adjust_mmr(winning_team, losing_team)
-        await ctx.send("MMR Updated!")
-
         # Update stats for each player
         for player_stats in match_players:
             update_stats(
@@ -419,6 +415,10 @@ class BotCommands(commands.Cog):
         print("Before player stats updated")
         self.bot.save_mmr_data()
         await ctx.send("Player stats updated!")
+        
+        # Adjust MMR
+        self.bot.adjust_mmr(winning_team, losing_team)
+        await ctx.send("MMR Updated!")
 
         # Record every match played in a new collection
         all_matches.insert_one(match)
