@@ -37,7 +37,7 @@ class ModeVoteView(discord.ui.View):
         self.votes["Balanced"]+=1
         self.voters.add(interaction.user.id)
         self.balanced_button.label = f"Balanced Teams ({self.votes['Balanced']})"
-        self.check_vote() #check if an option has won
+        await self.check_vote() #check if an option has won
         await interaction.message.edit(view=self)
         await interaction.response.send_message("Voted Balanced!", ephemeral=True)
 
@@ -56,7 +56,7 @@ class ModeVoteView(discord.ui.View):
         self.votes["Captains"]+=1
         self.voters.add(interaction.user.id)
         self.captains_button.label = f"Captains ({self.votes['Captains']})"
-        self.check_vote() #check if an option has won
+        await self.check_vote() #check if an option has won
         await interaction.message.edit(view=self)
         await interaction.response.send_message("Voted Captains!", ephemeral=True)
 
