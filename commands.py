@@ -192,6 +192,8 @@ class BotCommands(commands.Cog):
                 "You need to link your Riot account first using `!linkriot Name#Tag`"
             )
             return
+        
+        print(f"[DEBUG] Current User: {current_user}")
 
         name = current_user.get("name", "").lower()
         tag = current_user.get("tag", "").lower()
@@ -205,6 +207,7 @@ class BotCommands(commands.Cog):
         match = match_data["data"][0]
         metadata = match.get("metadata", {})
         map_name = metadata.get("map", {}).get("name", "").lower()
+        print(f"[DEBUG] Map from API: {map_name}, Selected map: {self.bot.selected_map}")
 
         testing_mode = False  # TRUE WHILE TESTING
 
@@ -261,6 +264,9 @@ class BotCommands(commands.Cog):
                 await ctx.send("No map was selected for this match.")
                 return
 
+            # FOR TESTING PURPOSES
+            #self.bot.selected_map = map_name
+
             if self.bot.selected_map.lower() != map_name:
                 await ctx.send(
                     "Map doesn't match your most recent match. Unable to report it."
@@ -293,6 +299,8 @@ class BotCommands(commands.Cog):
                 player_name = user_data.get("name").lower()
                 player_tag = user_data.get("tag").lower()
                 queue_riot_ids.add((player_name, player_tag))
+        
+        print(f"[DEBUG] Queued players RIOT ID's: {queue_riot_ids}")
 
         # get the list of players in the match
         match_player_names = set()
@@ -301,9 +309,12 @@ class BotCommands(commands.Cog):
             player_tag = player.get("tag", "").lower()
             match_player_names.add((player_name, player_tag))
 
-        if not queue_riot_ids.issubset(match_player_names):
-            await ctx.send("The most recent match does not match the 10-man's match.")
-            return
+        print(f"[DEBUG] match_player_names from API: {match_player_names}")
+        print("THESE MUCH MATCH ^^^^")
+
+        #if not queue_riot_ids.issubset(match_player_names):
+        #    await ctx.send("The most recent match does not match the 10-man's match.")
+        #    return
 
         # Determine which team won
         teams = match.get("teams", [])
@@ -314,21 +325,21 @@ class BotCommands(commands.Cog):
         winning_team_id = None
         for team in teams:
             if team.get("won"):
-                winning_team_id = team.get("team_id")
+                winning_team_id = team.get("team_id", "").lower()
                 break
-
+        
+        print(f"[DEBUG]: Winning team: {winning_team_id}")
         if not winning_team_id:
             await ctx.send("Could not determine the winning team.")
             return
 
         match_team_players = {"red": set(), "blue": set()}
-
-        for player in match_players:
-            team_id = player.get("team_id")
-            player_name = player.get("name", "").lower()
-            player_tag = player.get("tag", "").lower()
-            if team_id in match_team_players:
-                match_team_players[team_id].add((player_name, player_tag))
+        for player_info in match_players:
+            raw_team_id = player_info.get("team_id", "").lower()  # "red" or "blue"
+            p_name = player_info.get("name", "").lower()
+            p_tag = player_info.get("tag", "").lower()
+            if raw_team_id in match_team_players:
+                match_team_players[raw_team_id].add((p_name, p_tag))
 
         team1_riot_ids = set()
         for player in self.bot.team1:
@@ -346,7 +357,11 @@ class BotCommands(commands.Cog):
                 player_tag = user_data.get("tag").lower()
                 team2_riot_ids.add((player_name, player_tag))
 
+        print(f"[DEBUG] team1_riot_ids: {team1_riot_ids}")
+        print(f"[DEBUG] team2_riot_ids: {team2_riot_ids}")
+
         winning_match_team_players = match_team_players.get(winning_team_id, set())
+        print(f"[DEBUG] Winning team Riot ID's: {winning_match_team_players}")
 
         if winning_match_team_players == team1_riot_ids:
             winning_team = self.bot.team1
