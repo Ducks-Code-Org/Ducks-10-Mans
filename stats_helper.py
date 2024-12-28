@@ -27,7 +27,11 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names):
         total_combat_score = player_data.get("total_combat_score", 0) + score
         total_kills = player_data.get("total_kills", 0) + kills
         total_deaths = player_data.get("total_deaths", 0) + deaths
-        total_rounds_played = player_data.get("total_rounds_played", 0) + total_rounds
+        existing_rounds = player_data.get("total_rounds_played", 0)
+        if existing_rounds is None:
+            existing_rounds = 0
+
+        total_rounds_played = existing_rounds + total_rounds
 
         average_combat_score = (
             total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
