@@ -40,8 +40,14 @@ class SignupView(discord.ui.View):
                 self.bot.player_names[interaction.user.id] = interaction.user.name
 
                 self.sign_up_button.label = f"Sign Up ({len(self.bot.queue)}/10)"
+                riot_names = []
+                for player in self.bot.queue:
+                    discord_id = player["id"]
+                    user_data = users.find_one({"discord_id": str(discord_id)})
+                    riot_name = user_data.get("name","Unknown") if user_data else "Unknown"
+                    riot_names.append(riot_name)
                 await interaction.response.edit_message(
-                    content="Click a button to manage your queue status!", view=self
+                    content="Click a button to manage your queue status!" + "\n" + f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}", view=self
                 )
                 await interaction.followup.send(
                     f"{interaction.user.name} added to the queue! ({len(self.bot.queue)}/10)",
@@ -82,8 +88,14 @@ class SignupView(discord.ui.View):
     async def leave_queue_callback(self, interaction: discord.Interaction):
         self.bot.queue = [p for p in self.bot.queue if p["id"] != interaction.user.id]
         self.sign_up_button.label = f"Sign Up ({len(self.bot.queue)}/10)"
+        riot_names = []
+        for player in self.bot.queue:
+            discord_id = player["id"]
+            user_data = users.find_one({"discord_id": str(discord_id)})
+            riot_name = user_data.get("name","Unknown") if user_data else "Unknown"
+            riot_names.append(riot_name)
         await interaction.response.edit_message(
-            content="Click a button to manage your queue status!", view=self
+            content="Click a button to manage your queue status!" + "\n" + f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}", view=self
         )
 
         await interaction.followup.send(f"{interaction.user.name} left the queue. ({len(self.bot.queue)}/10)", ephemeral=True)
@@ -109,8 +121,14 @@ class SignupView(discord.ui.View):
                     except discord.NotFound:
                         pass
                 # Re-send the signup message after 60 seconds
+                riot_names = []
+                for player in self.bot.queue:
+                    discord_id = player["id"]
+                    user_data = users.find_one({"discord_id": str(discord_id)})
+                    riot_name = user_data.get("name","Unknown") if user_data else "Unknown"
+                    riot_names.append(riot_name)
                 self.bot.current_signup_message = await self.bot.match_channel.send(
-                    "Click a button to manage your queue status!",
+                    "Click a button to manage your queue status!" + "\n" + f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}",
                     view=self,
                     silent=True,
                 )
