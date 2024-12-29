@@ -283,6 +283,8 @@ class BotCommands(commands.Cog):
             teams = match.get("teams", [])
             if teams:
                 total_rounds = metadata.get("total_rounds")
+                if total_rounds is None:
+                    total_rounds = 0 
             else:
                 await ctx.send("No team data found in match data.")
                 return

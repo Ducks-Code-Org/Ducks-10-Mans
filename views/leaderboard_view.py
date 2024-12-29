@@ -1,13 +1,32 @@
 """This view allows users to see a stats leaderboard of all the users currently in the database."""
 
 import math
-
 import discord
-from discord.ui import View
+from discord.ui import View, Button
 from table2ascii import table2ascii as t2a, PresetStyle
-
 from database import users
+import wcwidth
 
+def truncate_by_display_width(original_string, max_width=20, ellipsis=True):
+    display_len = wcwidth.wcswidth(original_string)
+    if display_len <= max_width:
+        return original_string
+
+    end_str = "..." if ellipsis else ""
+    target_width = max_width - wcwidth.wcswidth(end_str) if ellipsis else max_width
+
+    truncated = ""
+    current_width = 0
+    for ch in original_string:
+        ch_width = wcwidth.wcwidth(ch)
+        if not ch_width: 
+            ch_width = 1  
+        if current_width + ch_width > target_width:
+            break
+        truncated += ch
+        current_width += ch_width
+
+    return truncated + end_str
 
 class LeaderboardView(View):
     def __init__(self, ctx, bot, sorted_mmr, players_per_page=10, timeout=None):
@@ -19,117 +38,105 @@ class LeaderboardView(View):
         self.current_page = 0
         self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
 
-        self.previous_btn = None
-        self.next_btn = None
-        self.refresh_btn = None
+        self.previous_button = Button(
+            style=discord.ButtonStyle.blurple,
+            emoji="⏪",
+            disabled=(self.current_page == 0)
+        )
+        self.refresh_button = Button(
+            style=discord.ButtonStyle.blurple,
+            emoji="🔄",
+            disabled=False
+        )
+        self.next_button = Button(
+            style=discord.ButtonStyle.blurple,
+            emoji="⏩",
+            disabled=(self.total_pages == 1)
+        )
 
-        # Find buttons
-        for child in self.children:
-            if isinstance(child, discord.ui.Button):
-                if child.emoji == "⏪":
-                    self.previous_btn = child
-                elif child.emoji == "⏩":
-                    self.next_btn = child
-                elif child.emoji == "🔄":
-                    self.refresh_btn = child
+        self.previous_button.callback = self.on_previous
+        self.refresh_button.callback = self.on_refresh
+        self.next_button.callback    = self.on_next
 
-        # Set initial states
-        if self.previous_btn:
-            self.previous_btn.disabled = True
-        if self.next_btn:
-            self.next_btn.disabled = (self.total_pages == 1)
+        # Add them in the correct order
+        self.add_item(self.previous_button)
+        self.add_item(self.refresh_button)
+        self.add_item(self.next_button)
 
-        # Initialize button states
-        # Will be updated on each page change
-        self.previous_button.disabled = True  # On first page, can't go back
-        self.next_button.disabled = (
-            self.total_pages == 1
-        )  # If only one page, disable Next
+    async def on_previous(self, interaction: discord.Interaction):
+        if self.current_page > 0:
+            self.current_page -= 1
+        await self.update_message(interaction)
+
+    async def on_refresh(self, interaction: discord.Interaction):
+        self.sorted_mmr = sorted(
+            self.bot.player_mmr.items(), 
+            key=lambda x: x[1]["mmr"], 
+            reverse=True
+        )
+        self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
+        if self.current_page >= self.total_pages:
+            self.current_page = max(0, self.total_pages - 1)
+        await self.update_message(interaction)
+
+    async def on_next(self, interaction: discord.Interaction):
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+        await self.update_message(interaction)
 
     async def update_message(self, interaction: discord.Interaction):
+        # Build the content for the current page
         start_index = self.current_page * self.players_per_page
         end_index = start_index + self.players_per_page
         page_data = self.sorted_mmr[start_index:end_index]
 
-        # Build leaderboard_data as before
+        # Build the table
         leaderboard_data = []
-        names = []
-        for player_id, stats in page_data:
+        for idx, (player_id, stats) in enumerate(page_data, start=start_index+1):
             user_data = users.find_one({"discord_id": str(player_id)})
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
-                riot_tag = user_data.get("tag", "Unknown")
-                names.append(f"{riot_name}#{riot_tag}")
+                riot_tag  = user_data.get("tag", "Unknown")
+                # -- Use our custom truncate_by_display_width function:
+                display_name = truncate_by_display_width(f"{riot_name}#{riot_tag}", 20, ellipsis=True)
             else:
-                names.append("Unknown")
+                display_name = "Unknown"
 
-        for idx, ((player_id, stats), name) in enumerate(
-            zip(page_data, names), start=start_index + 1
-        ):
-            mmr_value = stats["mmr"]
-            wins = stats["wins"]
-            losses = stats["losses"]
+            mmr_value   = stats["mmr"]
+            wins        = stats["wins"]
+            losses      = stats["losses"]
             matches_played = stats.get("matches_played", wins + losses)
-            avg_cs = stats.get("average_combat_score", 0)
-            kd_ratio = stats.get("kill_death_ratio", 0)
+            avg_cs      = stats.get("average_combat_score", 0)
+            kd_ratio    = stats.get("kill_death_ratio", 0)
             win_percent = (wins / matches_played * 100) if matches_played > 0 else 0
 
-            leaderboard_data.append(
-                [
-                    idx,
-                    name,
-                    mmr_value,
-                    wins,
-                    losses,
-                    f"{win_percent:.2f}",
-                    f"{avg_cs:.2f}",
-                    f"{kd_ratio:.2f}",
-                ]
-            )
+            leaderboard_data.append([
+                idx, 
+                display_name, 
+                mmr_value, 
+                wins, 
+                losses, 
+                f"{win_percent:.2f}", 
+                f"{avg_cs:.2f}", 
+                f"{kd_ratio:.2f}"
+            ])
 
         table_output = t2a(
             header=["Rank", "User", "MMR", "Wins", "Losses", "Win%", "Avg ACS", "K/D"],
             body=leaderboard_data,
             first_col_heading=True,
-            style=PresetStyle.thick_compact,
+            style=PresetStyle.thick_compact
         )
+        content = f"## MMR Leaderboard (Page {self.current_page+1}/{self.total_pages}) ##\n```\n{table_output}\n```"
 
-        content = f"## MMR Leaderboard (Page {self.current_page + 1}/{self.total_pages}) ##\n```\n{table_output}\n```"
+        # Update button states
+        self.previous_button.disabled = (self.current_page == 0)
+        self.next_button.disabled = (self.current_page == self.total_pages - 1)
 
-        # Update the navigation buttons based on the current page
-        if self.previous_btn:
-            self.previous_btn.disabled = (self.current_page == 0)
-        if self.next_btn:
-            self.next_btn.disabled = (self.current_page == self.total_pages - 1)
-
-        await interaction.response.edit_message(content=content, view=self)
-
-    @discord.ui.button(style=discord.ButtonStyle.blurple, disabled=True, emoji="⏪")
-    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page > 0:
-            self.current_page -= 1
-            await self.update_message(interaction)
-
-    # Refresh the leaderboard
-    @discord.ui.button(style=discord.ButtonStyle.blurple, emoji="🔄")
-    async def refresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.sorted_mmr = sorted(
-            self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
+        await interaction.response.edit_message(
+            content=content, 
+            view=self
         )
-
-        # Recalculate total_pages if player count changed
-        self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
-        if self.current_page >= self.total_pages:
-            self.current_page = max(0, self.total_pages - 1)
-
-        await self.update_message(interaction)
-
-    @discord.ui.button(style=discord.ButtonStyle.blurple, disabled=False, emoji="⏩")
-    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page < self.total_pages - 1:
-            self.current_page += 1
-            await self.update_message(interaction)
-
 
 class LeaderboardViewKD(View):
     def __init__(self, ctx, bot, sorted_kd, players_per_page=10, timeout=None):
