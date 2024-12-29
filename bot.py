@@ -28,6 +28,7 @@ class CustomBot(commands.Bot):
 
         self.load_mmr_data()
 
+
     def load_mmr_data(self):
         for doc in mmr_collection.find():
             player_id = int(doc["player_id"])

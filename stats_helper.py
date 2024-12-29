@@ -52,6 +52,23 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names):
             }
         )
 
+        mmr_collection.update_one(
+        {"player_id": discord_id},
+        {
+            "$set": {
+                "mmr": player_mmr[discord_id].get("mmr", 1000),
+                "wins": player_mmr[discord_id].get("wins", 0),
+                "losses": player_mmr[discord_id].get("losses", 0),
+                "total_combat_score": total_combat_score,
+                "total_rounds_played": total_rounds_played,
+                "matches_played": total_matches,
+                "average_combat_score": average_combat_score,
+                "kill_death_ratio": kill_death_ratio,
+            }
+        },
+        upsert=True
+    )
+
     else:
         total_matches = 1
         total_combat_score = score

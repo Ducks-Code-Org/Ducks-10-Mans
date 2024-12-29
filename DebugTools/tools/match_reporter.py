@@ -26,6 +26,6 @@ def get_match_to_upload(matchlist):
 
 
 if __name__ == "__main__":
-    recent_matches = get_custom_matchlist("dShocc1", "LNEUP")
+    recent_matches = get_custom_matchlist("set h", "chese")
 
     get_match_to_upload(recent_matches)

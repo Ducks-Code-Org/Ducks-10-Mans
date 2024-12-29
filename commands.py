@@ -106,6 +106,7 @@ class BotCommands(commands.Cog):
         self.leaderboard_message = None
         self.leaderboard_view = None
         self.refresh_task = None
+
         # Store chosen_mode and selected_map as state
         # chosen_mode will be either "Balanced" or "Captains"
         # selected_map will be set after map vote
@@ -120,6 +121,13 @@ class BotCommands(commands.Cog):
         self.bot.captain2 = None
         self.bot.team1 = []
         self.bot.team2 = []
+        print("[DEBUG] Checking the last match document in 'matches' DB for total rounds via 'rounds' array:")
+        last_match_doc = all_matches.find_one(sort=[("_id", -1)])  # fetch the most recent match
+        if last_match_doc:
+            rounds_array = last_match_doc.get("rounds", [])
+            print(f"  [DEBUG DB] The last match in 'matches' had {len(rounds_array)} rounds (via last_match_doc['rounds']).")
+        else:
+            print("  [DEBUG DB] No matches found in the 'matches' collection.")
 
     @commands.command()
     async def signup(self, ctx):
@@ -283,8 +291,13 @@ class BotCommands(commands.Cog):
             teams = match.get("teams", [])
             if teams:
                 total_rounds = metadata.get("total_rounds")
-                if total_rounds is None:
-                    total_rounds = 0 
+                if not total_rounds:
+                    # fallback to length of the "rounds" array
+                    rounds_data = match.get("rounds", [])
+                    total_rounds = len(rounds_data)
+                    print(f"[DEBUG] total_rounds fallback to match['rounds'] length = {total_rounds}")
+                else:
+                    print(f"[DEBUG] total_rounds from metadata = {total_rounds}")
             else:
                 await ctx.send("No team data found in match data.")
                 return
@@ -1250,6 +1263,150 @@ class BotCommands(commands.Cog):
             self.bot.queue.append(bot)
         draft = CaptainsDraftingView(ctx, self.bot)
         await draft.send_current_draft_view()
+
+    # Recalculate every stat from matches database
+    @commands.command()
+    @commands.has_role("Owner")
+    async def reaggregate_matches(self, ctx):
+        """
+        Recalculate *all* players' stats AND MMR based on the entire history 
+        of matches stored in the all_matches collection.
+        """
+
+        # 1) Clear or reset in-memory dictionaries for fresh aggregation
+        #    This ensures everyone is starting from base MMR and 0 stats.
+        self.bot.player_mmr.clear()
+        self.bot.player_names.clear()
+
+        # 2) Optionally, fetch all user docs from the DB to set base MMR = 1000
+        #    Or you can just do it on the fly when we first see a user.
+        all_users_cursor = users.find()
+        for udoc in all_users_cursor:
+            d_id = int(udoc["discord_id"])
+            self.bot.player_mmr[d_id] = {
+                "mmr": 1000,
+                "wins": 0,
+                "losses": 0,
+                "total_combat_score": 0,
+                "total_kills": 0,
+                "total_deaths": 0,
+                "matches_played": 0,
+                "total_rounds_played": 0,
+                "average_combat_score": 0,
+                "kill_death_ratio": 0,
+            }
+            self.bot.player_names[d_id] = udoc["name"].lower()
+
+        # 3) Pull out all the stored matches from the database
+        #    IMPORTANT: Sort them in chronological order so MMR is updated match by match
+        #    (Change "created_at" or "started_at" to match your actual field.)
+        all_docs = all_matches.find().sort("started_at", 1)
+        total_matches_processed = 0
+
+        for match_doc in all_docs:
+            total_matches_processed += 1
+
+            # 3a) Identify total rounds from match['rounds']
+            rounds_data = match_doc.get("rounds", [])
+            total_rounds = len(rounds_data)
+
+            # 3b) Identify the winning_team_id
+            teams = match_doc.get("teams", [])
+            winning_team_id = None
+            for t in teams:
+                if t.get("won"):
+                    winning_team_id = t.get("team_id", "").lower()
+                    break
+
+            # 3c) Build sets (or lists) of players for each side
+            match_players = match_doc.get("players", [])
+            match_team_players = {"red": [], "blue": []}
+
+            # We'll store them as a *list of dicts* so they mimic your usual "team" structure
+            for pinfo in match_players:
+                raw_team_id = pinfo.get("team_id", "").lower()
+                name = pinfo.get("name", "").lower()
+                tag = pinfo.get("tag", "").lower()
+
+                # Look up the user to get the discord_id
+                user_entry = users.find_one({"name": name, "tag": tag})
+                if not user_entry:
+                    # If user isn't found or not linked, skip or handle appropriately
+                    continue
+
+                d_id = int(user_entry["discord_id"])
+
+                # We can build a "player dict" as your code normally does
+                player_obj = {"id": d_id, "name": name}
+
+                if raw_team_id in match_team_players:
+                    match_team_players[raw_team_id].append(player_obj)
+
+                # Also do the stats update here:
+                # because this is effectively your "report" process
+                update_stats(
+                    pinfo, 
+                    total_rounds,
+                    self.bot.player_mmr,
+                    self.bot.player_names
+                )
+
+            # 3d) Determine "winning_team" vs "losing_team" as *lists of dicts*
+            winning_team = []
+            losing_team = []
+
+            # If the winning_team_id is "red", then winning_team = match_team_players["red"], etc.
+            if winning_team_id == "red":
+                winning_team = match_team_players["red"]
+                losing_team = match_team_players["blue"]
+            elif winning_team_id == "blue":
+                winning_team = match_team_players["blue"]
+                losing_team = match_team_players["red"]
+            else:
+                # If we can't determine a winning team, skip or handle error
+                continue
+
+            # 3e) Increment wins/losses for each player in memory
+            for wplayer in winning_team:
+                d_id = wplayer["id"]
+                if d_id in self.bot.player_mmr:
+                    self.bot.player_mmr[d_id]["wins"] = self.bot.player_mmr[d_id].get("wins", 0) + 1
+
+            for lplayer in losing_team:
+                d_id = lplayer["id"]
+                if d_id in self.bot.player_mmr:
+                    self.bot.player_mmr[d_id]["losses"] = self.bot.player_mmr[d_id].get("losses", 0) + 1
+
+            # 3f) *** Recalculate MMR *** for each match
+            # Here we do exactly what we normally do in "report": 
+            # self.bot.adjust_mmr(winning_team, losing_team)
+            # Make sure your adjust_mmr method can handle these player dicts
+            self.bot.adjust_mmr(winning_team, losing_team)
+
+        # 4) By now, we've replayed every match in chronological order and 
+        #    updated stats and MMR in memory. We can write them to DB if needed.
+        for d_id, stats in self.bot.player_mmr.items():
+            mmr_collection.update_one(
+                {"player_id": d_id},
+                {
+                    "$set": {
+                        "mmr": stats.get("mmr", 1000),
+                        "wins": stats.get("wins", 0),
+                        "losses": stats.get("losses", 0),
+                        "total_combat_score": stats.get("total_combat_score", 0),
+                        "total_kills": stats.get("total_kills", 0),
+                        "total_deaths": stats.get("total_deaths", 0),
+                        "matches_played": stats.get("matches_played", 0),
+                        "total_rounds_played": stats.get("total_rounds_played", 0),
+                        "average_combat_score": stats.get("average_combat_score", 0),
+                        "kill_death_ratio": stats.get("kill_death_ratio", 0),
+                        # store "name" if you want or any other fields
+                    }
+                },
+                upsert=True
+            )
+
+        await ctx.send(f"Re-aggregated stats + MMR for all players from {total_matches_processed} stored matches!")
 
     # Custom Help Command
     @commands.command()
