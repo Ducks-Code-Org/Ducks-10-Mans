@@ -2,41 +2,73 @@
 
 import asyncio
 import discord
-from discord.ui import Select
+from discord.ui import Select, Button
 from database import users
-from discord.ui import Button
 
 class SecondCaptainChoiceView(discord.ui.View):
     def __init__(self, ctx, bot):
         super().__init__(timeout=None)
-        self.ctx=ctx
-        self.bot=bot
-        self.first_pick_button=Button(label="Single Pick", style=discord.ButtonStyle.green)
-        self.double_pick_button=Button(label="Double Pick", style=discord.ButtonStyle.blurple)
-        self.first_pick_button.callback=self.first_pick_callback
-        self.double_pick_button.callback=self.double_pick_callback
+        self.ctx = ctx
+        self.bot = bot
+
+        self.first_pick_button = Button(
+            label="Single Pick", style=discord.ButtonStyle.green
+        )
+        self.double_pick_button = Button(
+            label="Double Pick", style=discord.ButtonStyle.blurple
+        )
+        self.first_pick_button.callback = self.first_pick_callback
+        self.double_pick_button.callback = self.double_pick_callback
         self.add_item(self.first_pick_button)
         self.add_item(self.double_pick_button)
 
+    async def send_view(self):
+        """Call this method to display the captains and show the single/double pick buttons."""
+        c1_data = users.find_one({"discord_id": str(self.bot.captain1["id"])})
+        c1_name = f"{c1_data.get('name','Unknown')}#{c1_data.get('tag','Unknown')}" if c1_data else self.bot.captain1["name"]
+        
+        c2_data = users.find_one({"discord_id": str(self.bot.captain2["id"])})
+        c2_name = f"{c2_data.get('name','Unknown')}#{c2_data.get('tag','Unknown')}" if c2_data else self.bot.captain2["name"]
+
+        await self.ctx.send(
+            f"**Captains for this match:**\n"
+            f"Captain 1 → {c1_name}\n"
+            f"Captain 2 → {c2_name}"
+        )
+        await self.ctx.send(
+            "Second captain, choose **Single Pick** or **Double Pick**!",
+            view=self
+        )
+
     async def first_pick_callback(self, interaction: discord.Interaction):
-        if interaction.user.id!=self.bot.captain2["id"]:
-            await interaction.response.send_message("Only second captain can choose!", ephemeral=True)
+        if interaction.user.id != self.bot.captain2["id"]:
+            await interaction.response.send_message(
+                "Only the **second captain** can choose!",
+                ephemeral=True
+            )
             return
-        await interaction.response.send_message("Single pick chosen. Starting draft...", ephemeral=True)
+        await interaction.response.send_message(
+            "Single pick chosen. Starting draft...", ephemeral=True
+        )
         await self.start_draft(True)
 
     async def double_pick_callback(self, interaction: discord.Interaction):
-        if interaction.user.id!=self.bot.captain2["id"]:
-            await interaction.response.send_message("Only second captain can choose!", ephemeral=True)
+        if interaction.user.id != self.bot.captain2["id"]:
+            await interaction.response.send_message(
+                "Only the **second captain** can choose!",
+                ephemeral=True
+            )
             return
-        await interaction.response.send_message("Double pick chosen. Starting draft...", ephemeral=True)
+        await interaction.response.send_message(
+            "Double pick chosen. Starting draft...", ephemeral=True
+        )
         await self.start_draft(False)
 
     async def start_draft(self, single_pick: bool):
-        drafting_view=CaptainsDraftingView(self.ctx,self.bot,single_pick)
+        drafting_view = CaptainsDraftingView(self.ctx, self.bot, single_pick)
         await drafting_view.send_current_draft_view()
         for c in self.children:
-            c.disabled=True
+            c.disabled = True
 
 class CaptainsDraftingView(discord.ui.View):
     def __init__(self, ctx, bot, single_pick):

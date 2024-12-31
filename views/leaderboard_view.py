@@ -7,7 +7,7 @@ from table2ascii import table2ascii as t2a, PresetStyle
 from database import users
 import wcwidth
 
-def truncate_by_display_width(original_string, max_width=20, ellipsis=True):
+def truncate_by_display_width(original_string, max_width=15, ellipsis=True):
     display_len = wcwidth.wcswidth(original_string)
     if display_len <= max_width:
         return original_string
