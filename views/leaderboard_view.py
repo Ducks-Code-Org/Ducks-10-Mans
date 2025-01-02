@@ -217,7 +217,7 @@ class LeaderboardView(discord.ui.View):
         if self.mode == "tdm":
             headers = ["Rank", "User", "TDM MMR", "Wins", "Losses", "Avg Kills", "K/D"]
         else:
-            headers = ["Rank", "User", "MMR", "Wins", "Losses", "Avg CS", "K/D"]
+            headers = ["Rank", "User", "MMR", "Wins", "Losses", "Avg ACS", "K/D"]
 
         table_output = t2a(
             header=headers,
