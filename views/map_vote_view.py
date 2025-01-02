@@ -25,14 +25,14 @@ class MapVoteView(discord.ui.View):
         for m in random_maps:
             btn=Button(label=f"{m} (0)", style=discord.ButtonStyle.secondary)
             async def cb(interaction: discord.Interaction, chosen=m):
-                if interaction.user.id not in [p["id"] for p in self.bot.queue]:
+                if str(interaction.user.id) not in [p["id"] for p in self.bot.queue]:
                     await interaction.response.send_message("Must be in queue!", ephemeral=True)
                     return
-                if interaction.user.id in self.voters:
+                if str(interaction.user.id) in self.voters:
                     await interaction.response.send_message("Already voted!", ephemeral=True)
                     return
                 self.map_votes[chosen]+=1
-                self.voters.add(interaction.user.id)
+                self.voters.add(str(interaction.user.id))
                 for b in self.map_buttons:
                     if b.label.startswith(chosen):
                         b.label=f"{chosen} ({self.map_votes[chosen]})"
@@ -58,20 +58,19 @@ class MapVoteView(discord.ui.View):
         else:
             if self.bot.chosen_mode == "Captains":
                 if not self.bot.captain1 or not self.bot.captain2:
-                    # Sort the queue by MMR
+                    # pick top 2 players from the queue
                     sorted_players = sorted(
-                        self.bot.queue, 
-                        key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], 
+                        self.bot.queue,
+                        key=lambda p: self.bot.player_mmr[p["id"]]["mmr"],
                         reverse=True
                     )
                     self.bot.captain1 = sorted_players[0]
                     self.bot.captain2 = sorted_players[1]
-            # Captains mode chosen, now run SecondCaptainChoiceView for pick order and then drafting
-            await self.ctx.send("Captains mode chosen. Second captain, choose draft order.")
-            choice_view=SecondCaptainChoiceView(self.ctx,self.bot)
-            await self.ctx.send(f"<@{self.bot.captain2['id']}>, choose draft type:", view=choice_view)
-            # After drafting finalizes (in CaptainsDraftingView finalize_draft method), finalize is called
-            # The finalize will be called after drafting completes.
+                choice_view = SecondCaptainChoiceView(self.ctx, self.bot)
+                await self.ctx.send(
+                    f"<@{self.bot.captain2['id']}>, choose draft type:",
+                    view=choice_view
+                )
 
     async def finalize(self):
         # Finalize teams after map chosen.

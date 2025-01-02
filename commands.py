@@ -236,7 +236,7 @@ class BotCommands(commands.Cog):
 
                 user = users.find_one({"name": player_name, "tag": player_tag})
                 if user:
-                    discord_id = int(user["discord_id"])
+                    discord_id = user["discord_id"]
                     player = {"id": discord_id, "name": player_name}
 
                     queue.append(player)
@@ -389,7 +389,8 @@ class BotCommands(commands.Cog):
             return
 
         for player in winning_team + losing_team:
-            self.bot.ensure_player_mmr(player["id"], self.bot.player_names)
+            player_id = str(player["id"])
+            self.bot.ensure_player_mmr(player_id, self.bot.player_names)
 
         # Get top players
         pre_update_mmr = copy.deepcopy(self.bot.player_mmr)
@@ -398,7 +399,7 @@ class BotCommands(commands.Cog):
         )
         top_mmr_before = sorted_mmr_before[0][1]["mmr"]
         top_players_before = [
-            pid for pid, stats in sorted_mmr_before if stats["mmr"] == top_mmr_before
+            str(pid) for pid, stats in sorted_mmr_before if stats["mmr"] == top_mmr_before
         ]
 
         # Update stats for each player
@@ -921,7 +922,7 @@ class BotCommands(commands.Cog):
         players = mmr_collection.find()
         updated_count = 0
         for player in players:
-            player_id = int(player.get("player_id"))
+            player_id = player.get("player_id")
             total_combat_score = player.get("total_combat_score", 0)
             total_rounds_played = player.get("total_rounds_played", 0)
 

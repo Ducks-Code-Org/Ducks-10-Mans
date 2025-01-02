@@ -12,7 +12,7 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names):
         print(f"Player {name}#{tag} not linked to any Discord account.")
         return
 
-    discord_id = int(user_entry.get("discord_id"))
+    discord_id = str(user_entry.get("discord_id"))
 
     # Get the stats
     stats = player_stats.get("stats", {})
