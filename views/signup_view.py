@@ -33,11 +33,14 @@ class SignupView(discord.ui.View):
     async def sign_up_callback(self, interaction: discord.Interaction):
         existing_user = users.find_one({"discord_id": str(interaction.user.id)})
         if existing_user:
-            if interaction.user.id not in [p["id"] for p in self.bot.queue]:
-                self.bot.queue.append({"id": interaction.user.id, "name": interaction.user.name})
-                if interaction.user.id not in self.bot.player_mmr:
-                    self.bot.player_mmr[interaction.user.id] = {"mmr": 1000, "wins": 0, "losses": 0}
-                self.bot.player_names[interaction.user.id] = interaction.user.name
+            string_id = str(interaction.user.id)
+            if string_id not in [p["id"] for p in self.bot.queue]:
+                self.bot.queue.append({"id": string_id, "name": interaction.user.name})
+
+                if string_id not in self.bot.player_mmr:
+                    self.bot.player_mmr[string_id] = {"mmr": 1000, "wins": 0, "losses": 0}
+
+                self.bot.player_names[string_id] = interaction.user.name
 
                 self.sign_up_button.label = f"Sign Up ({len(self.bot.queue)}/10)"
                 riot_names = []
@@ -65,6 +68,14 @@ class SignupView(discord.ui.View):
                     await interaction.followup.send("Could not assign the role. Member not found in guild.", ephemeral=True)
 
                 if len(self.bot.queue) == 10:
+                    if self.bot.current_signup_message:
+                        try:
+                            await self.bot.current_signup_message.delete()
+                        except discord.NotFound:
+                            pass
+
+                    self.bot.current_signup_message = None
+                    
                     await interaction.channel.send("The queue is now full, proceeding to the voting stage.")
                     self.cancel_signup_refresh()
 
@@ -86,7 +97,8 @@ class SignupView(discord.ui.View):
             )
 
     async def leave_queue_callback(self, interaction: discord.Interaction):
-        self.bot.queue = [p for p in self.bot.queue if p["id"] != interaction.user.id]
+        player_id_str = str(interaction.user.id)
+        self.bot.queue = [p for p in self.bot.queue if p["id"] != player_id_str]
         self.sign_up_button.label = f"Sign Up ({len(self.bot.queue)}/10)"
         riot_names = []
         for player in self.bot.queue:

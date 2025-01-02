@@ -23,27 +23,27 @@ class MapTypeVoteView(discord.ui.View):
         self.all_maps_button.callback=self.all_callback
 
     async def comp_callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in [p["id"] for p in self.bot.queue]:
+        if str(interaction.user.id) not in [p["id"] for p in self.bot.queue]:
             await interaction.response.send_message("Must be in queue!", ephemeral=True)
             return
-        if interaction.user.id in self.voters:
+        if str(interaction.user.id) in self.voters:
             await interaction.response.send_message("Already voted!", ephemeral=True)
             return
         self.map_pool_votes["Competitive"]+=1
-        self.voters.add(interaction.user.id)
+        self.voters.add(str(interaction.user.id))
         self.competitive_button.label=f"Competitive Maps ({self.map_pool_votes['Competitive']})"
         await interaction.message.edit(view=self)
         await interaction.response.send_message("Voted Competitive Maps!", ephemeral=True)
 
     async def all_callback(self, interaction: discord.Interaction):
-        if interaction.user.id not in [p["id"] for p in self.bot.queue]:
+        if str(interaction.user.id) not in [p["id"] for p in self.bot.queue]:
             await interaction.response.send_message("Must be in queue!", ephemeral=True)
             return
-        if interaction.user.id in self.voters:
+        if str(interaction.user.id) in self.voters:
             await interaction.response.send_message("Already voted!", ephemeral=True)
             return
         self.map_pool_votes["All"]+=1
-        self.voters.add(interaction.user.id)
+        self.voters.add(str(interaction.user.id))
         self.all_maps_button.label=f"All Maps ({self.map_pool_votes['All']})"
         await interaction.message.edit(view=self)
         await interaction.response.send_message("Voted All Maps!", ephemeral=True)

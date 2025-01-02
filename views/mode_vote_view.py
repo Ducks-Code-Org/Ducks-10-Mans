@@ -25,17 +25,19 @@ class ModeVoteView(discord.ui.View):
 
     async def balanced_callback(self, interaction: discord.Interaction):
         if self.voting_phase_ended: #doesn't allow for votes if phase has already ended
-            await interaction.response.send_message("This voting phase has already ended", ephemeral=True)
+            await interaction.response.send_message("Thias voting phase has already ended", ephemeral=True)
 
-        if interaction.user.id not in [p["id"] for p in self.bot.queue]:
+        if str(interaction.user.id) not in [p["id"] for p in self.bot.queue]:
             await interaction.response.send_message("Must be in queue!", ephemeral=True)
             return
         
-        if interaction.user.id in self.voters:
+        if str(interaction.user.id) in self.voters:
             await interaction.response.send_message("Already voted!", ephemeral=True)
             return
+
         self.votes["Balanced"]+=1
-        self.voters.add(interaction.user.id)
+        self.voters.add(str(interaction.user.id))
+        print(f"[DEBUG] Updated vote count: {self.votes}")
         self.balanced_button.label = f"Balanced Teams ({self.votes['Balanced']})"
         await self.check_vote() #check if an option has won
         await interaction.message.edit(view=self)
@@ -45,16 +47,17 @@ class ModeVoteView(discord.ui.View):
         if self.voting_phase_ended:
             await interaction.response.send_message("This voting phase has already ended", ephemeral=True)
 
-        if interaction.user.id not in [p["id"] for p in self.bot.queue]:
+        if str(interaction.user.id) not in [p["id"] for p in self.bot.queue]:
             await interaction.response.send_message("Must be in queue!", ephemeral=True)
             return
   
-        if interaction.user.id in self.voters:
+        if str(interaction.user.id) in self.voters:
             await interaction.response.send_message("Already voted!", ephemeral=True)
             return
         
         self.votes["Captains"]+=1
-        self.voters.add(interaction.user.id)
+        self.voters.add(str(interaction.user.id))
+        print(f"[DEBUG] Updated vote count: {self.votes}")
         self.captains_button.label = f"Captains ({self.votes['Captains']})"
         await self.check_vote() #check if an option has won
         await interaction.message.edit(view=self)
@@ -66,12 +69,17 @@ class ModeVoteView(discord.ui.View):
 
     #check_vote checks if an option has mathemetically won after every vote callback, as well as handles voting phase timeout logic
     async def check_vote(self):
+        print(f"[DEBUG] Checking votes. Current state: {self.votes}")
+        print(f"[DEBUG] Voting phase ended: {self.voting_phase_ended}")
+        print(f"[DEBUG] Timeout status: {self.timeout}")
+        if self.voting_phase_ended:
+            return
         if self.timeout: 
             if self.votes["Balanced"]>self.votes["Captains"]:
+                print("[DEBUG] Balanced wins on timeout")
                 self.bot.chosen_mode="Balanced"
                 await self.ctx.send("Balanced Teams chosen!")
-                # Set balanced teams now
-                # sort by mmr, alternate
+                self.voting_phase_ended = True
                 players= self.bot.queue[:]
                 players.sort(key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], reverse=True)
                 team1, team2 = [], []
@@ -87,8 +95,14 @@ class ModeVoteView(discord.ui.View):
                 self.bot.team1=team1
                 self.bot.team2=team2
             elif self.votes["Captains"]>self.votes["Balanced"]:
-                self.bot.chosen_mode="Captains"
-                await self.ctx.send("Captains chosen! Captains will be set after map is chosen.")
+                print("[DEBUG] Captains wins on timeout")
+                self.bot.chosen_mode = "Captains"
+                try:
+                    await self.ctx.send("Captains chosen! Captains will be set after map is chosen.")
+                    print("[DEBUG] Captains message sent successfully")
+                except Exception as e:
+                    print(f"[DEBUG] Error sending captains message: {str(e)}")
+                self.voting_phase_ended = True
             else:
                 decision="Balanced" if random.choice([True,False]) else "Captains"
                 await self.ctx.send(f"Tie! {decision} wins by coin flip!")
@@ -113,11 +127,12 @@ class ModeVoteView(discord.ui.View):
             return
 
         if self.votes["Captains"] > 4: #if captains reaches 5 votes first, it wins (reaching 5 first can be considered as a tiebreaker)
+            print("[DEBUG] Captains wins by reaching 5 votes")
             self.bot.chosen_mode="Captains"
             self.voting_phase_ended = True
             await self.ctx.send("Captains chosen! Captains will be set after map is chosen.")
             return
-        elif self.votes["Balanced Teams"] > 4:
+        elif self.votes["Balanced"] > 4:
             self.bot.chosen_mode="Balanced"
             self.voting_phase_ended = True
             await self.ctx.send("Balanced Teams chosen!")
