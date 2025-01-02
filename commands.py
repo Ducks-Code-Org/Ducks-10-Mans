@@ -529,58 +529,54 @@ class BotCommands(commands.Cog):
     # Display leaderboard
     @commands.command()
     async def leaderboard(self, ctx):
-        sorted_mmr = sorted(
-            self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
+        cursor = mmr_collection.find()
+        sorted_data = list(cursor)
+        sorted_data.sort(key=lambda x: x.get("mmr", 0), reverse=True)
+
+        self.leaderboard_view = LeaderboardView(
+            ctx, 
+            self.bot, 
+            sorted_data, 
+            players_per_page=10, 
+            timeout=None, 
+            mode="normal"
         )
-        print(self.bot.player_mmr)
-        # Create leaderboard data
+
+        # Calculate initial page data
+        start_index = 0
+        end_index = min(10, len(sorted_data))
+        page_data = sorted_data[start_index:end_index]
+
+        # Create initial leaderboard table
         leaderboard_data = []
-        for idx, (player_id, stats) in enumerate(sorted_mmr[:10], start=1):
-            mmr_value = stats["mmr"]
-            wins = stats["wins"]
-            losses = stats["losses"]
-            matches_played = stats.get("matches_played", wins + losses)
-            avg_cs = stats.get("average_combat_score", 0)
-            kd_ratio = stats.get("kill_death_ratio", 0)
-            win_percent = (wins / matches_played) * 100 if matches_played > 0 else 0
-            user_data = users.find_one({"discord_id": str(player_id)})
+        for idx, stats in enumerate(page_data, start=1):
+            user_data = users.find_one({"discord_id": str(stats["player_id"])})
             if user_data:
-                riot_name = user_data.get("name", "Unknown")
-                riot_tag = user_data.get("tag", "Unknown")
-                player_name = f"{riot_name}#{riot_tag}"
+                name = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
             else:
-                player_name = "Unknown"
-            leaderboard_data.append(
-                [
-                    idx,
-                    player_name,
-                    mmr_value,
-                    wins,
-                    losses,
-                    f"{win_percent:.2f}",
-                    f"{avg_cs:.2f}",
-                    f"{kd_ratio:.2f}",
-                ]
-            )
+                name = "Unknown"
+
+            leaderboard_data.append([
+                idx,
+                name,
+                stats.get("mmr", 1000),
+                stats.get("wins", 0),
+                stats.get("losses", 0),
+                f"{stats.get('average_combat_score', 0):.1f}",
+                f"{stats.get('kill_death_ratio', 0):.2f}"
+            ])
 
         table_output = t2a(
-            header=["Rank", "User", "MMR", "Wins", "Losses", "Win%", "Avg ACS", "K/D"],
+            header=["Rank", "User", "MMR", "Wins", "Losses", "Avg CS", "K/D"],
             body=leaderboard_data,
             first_col_heading=True,
-            style=PresetStyle.thick_compact,
+            style=PresetStyle.thick_compact
         )
 
-        # Create the view
-        self.leaderboard_view = LeaderboardView(
-            ctx, self.bot, sorted_mmr, players_per_page=10, timeout=None, mode="normal"
-        )
+        content = f"## MMR Leaderboard (Page 1/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
+        
+        self.leaderboard_message = await ctx.send(content=content, view=self.leaderboard_view)
 
-        content = f"## MMR Leaderboard (Page {self.leaderboard_view.current_page+1}/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
-        self.leaderboard_message = await ctx.send(
-            content=content, view=self.leaderboard_view
-        )  #########
-
-        # Start the refresh
         if self.refresh_task is not None:
             self.refresh_task.cancel()
         self.refresh_task = asyncio.create_task(self.periodic_refresh())
