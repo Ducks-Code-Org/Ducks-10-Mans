@@ -113,15 +113,38 @@ class TDMCommands(commands.Cog):
                 except discord.Forbidden:
                     await interaction.response.send_message("⚠️ Could not assign role due to permissions.", ephemeral=True)
                 
-                # Get Riot name for display
-                riot_name = f"{existing_user.get('name')}#{existing_user.get('tag')}"
-                await interaction.response.send_message(
-                    f"✅ You have successfully joined the queue as **{riot_name}**! ({len(self.tdm_queue)}/6)",
-                    ephemeral=True
+                # Get all queued players' Riot names
+                riot_names = []
+                for player in self.tdm_queue:
+                    user_data = users.find_one({"discord_id": player["id"]})
+                    if user_data:
+                        riot_name = f"{user_data.get('name')}#{user_data.get('tag')}"
+                        riot_names.append(riot_name)
+                    else:
+                        riot_names.append("Unknown")
+
+                # Update embed with current queue
+                embed = discord.Embed(
+                    title="3v3 Team Deathmatch Queue",
+                    description="Click below to join or leave the queue!",
+                    color=discord.Color.blue()
+                )
+                embed.add_field(
+                    name=f"Current Queue ({len(self.tdm_queue)}/6)",
+                    value="\n".join(riot_names) if riot_names else "No players in queue",
+                    inline=False
+                )
+                embed.add_field(
+                    name="About TDM Mode",
+                    value="• 3v3 Team Deathmatch\n• Balanced teams based on TDM MMR\n• First team to reach the kill limit wins",
+                    inline=False
                 )
 
-                # Update the sign-up button label for everyone
-                await interaction.message.edit(view=view)
+                await interaction.message.edit(embed=embed, view=view)
+                await interaction.response.send_message(
+                    f"✅ You have successfully joined the queue as **{existing_user.get('name')}#{existing_user.get('tag')}**! ({len(self.tdm_queue)}/6)",
+                    ephemeral=True
+                )
 
                 if len(self.tdm_queue) == 6:
                     map_vote = TDMMapVoteView(interaction.channel, self.bot)
@@ -141,17 +164,34 @@ class TDMCommands(commands.Cog):
                 except discord.Forbidden:
                     await interaction.response.send_message("⚠️ Could not remove role due to permissions.", ephemeral=True)
                 
-                # Get Riot name for display
-                user_data = users.find_one({"discord_id": str(interaction.user.id)})
-                riot_name = f"{user_data.get('name')}#{user_data.get('tag')}"
-                await interaction.response.send_message(
-                    f"❌ You have successfully left the queue, **{riot_name}**. ({len(self.tdm_queue)}/6)",
-                    ephemeral=True
+                # Update queue display with remaining players
+                riot_names = []
+                for player in self.tdm_queue:
+                    user_data = users.find_one({"discord_id": player["id"]})
+                    if user_data:
+                        riot_name = f"{user_data.get('name')}#{user_data.get('tag')}"
+                        riot_names.append(riot_name)
+                    else:
+                        riot_names.append("Unknown")
+
+                embed = discord.Embed(
+                    title="3v3 Team Deathmatch Queue",
+                    description="Click below to join or leave the queue!",
+                    color=discord.Color.blue()
                 )
-                await interaction.message.edit(view=view)
-                
-                await interaction.response.edit_message(view=view)
-                await interaction.response.send_message("You have left the queue.", ephemeral=True)
+                embed.add_field(
+                    name=f"Current Queue ({len(self.tdm_queue)}/6)",
+                    value="\n".join(riot_names) if riot_names else "No players in queue",
+                    inline=False
+                )
+                embed.add_field(
+                    name="About TDM Mode",
+                    value="• 3v3 Team Deathmatch\n• Balanced teams based on TDM MMR\n• First team to reach the kill limit wins",
+                    inline=False
+                )
+
+                await interaction.message.edit(embed=embed, view=view)
+                await interaction.response.send_message(f"❌ You have left the queue. ({len(self.tdm_queue)}/6)", ephemeral=True)
 
         signup_button.callback = signup_callback
         leave_button.callback = leave_callback
@@ -166,11 +206,16 @@ class TDMCommands(commands.Cog):
             color=discord.Color.blue()
         )
         embed.add_field(
+            name="Current Queue (0/6)",
+            value="No players in queue",
+            inline=False
+        )
+        embed.add_field(
             name="About TDM Mode",
             value="• 3v3 Team Deathmatch\n• Balanced teams based on TDM MMR\n• First team to reach the kill limit wins",
             inline=False
         )
-        
+
         self.tdm_current_message = await self.tdm_match_channel.send(embed=embed, view=view)
         await ctx.send(f"✅ TDM Queue started! Join here: <#{self.tdm_match_channel.id}>")
 
