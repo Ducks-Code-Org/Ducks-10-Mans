@@ -165,16 +165,15 @@ class LeaderboardView(discord.ui.View):
         await interaction.response.edit_message(content=content, view=new_view)
 
     async def update_message(self, interaction: discord.Interaction):
-        # Calculate the page indexes
+        # Calculate page indexes
         start_index = self.current_page * self.players_per_page
         end_index = start_index + self.players_per_page
         page_data = self.sorted_data[start_index:end_index]
 
-        # Build the leaderboard data
+        # Build leaderboard data
         leaderboard_data = []
-        for idx, (player_id, player_data) in enumerate(page_data, start=start_index + 1):
-            player_id = str(player_id)
-            user_data = users.find_one({"discord_id": player_id})
+        for idx, stats in enumerate(page_data, start=start_index + 1):
+            user_data = users.find_one({"discord_id": str(stats["player_id"])})
             
             if user_data:
                 name = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
@@ -182,11 +181,11 @@ class LeaderboardView(discord.ui.View):
                 name = "Unknown"
 
             if self.mode == "tdm":
-                mmr = player_data.get("tdm_mmr", 1000)
-                wins = player_data.get("tdm_wins", 0)
-                losses = player_data.get("tdm_losses", 0)
-                avg_kills = player_data.get("tdm_avg_kills", 0)
-                kd_ratio = player_data.get("tdm_kd_ratio", 0)
+                mmr = stats.get("tdm_mmr", 1000)
+                wins = stats.get("tdm_wins", 0)
+                losses = stats.get("tdm_losses", 0)
+                avg_kills = stats.get("tdm_avg_kills", 0)
+                kd_ratio = stats.get("tdm_kd_ratio", 0)
                 
                 leaderboard_data.append([
                     idx,
@@ -198,11 +197,11 @@ class LeaderboardView(discord.ui.View):
                     f"{kd_ratio:.2f}"
                 ])
             else:
-                mmr = player_data.get("mmr", 1000)
-                wins = player_data.get("wins", 0)
-                losses = player_data.get("losses", 0)
-                avg_cs = player_data.get("average_combat_score", 0)
-                kd_ratio = player_data.get("kill_death_ratio", 0)
+                mmr = stats.get("mmr", 1000)
+                wins = stats.get("wins", 0)
+                losses = stats.get("losses", 0)
+                avg_cs = stats.get("average_combat_score", 0)
+                kd_ratio = stats.get("kill_death_ratio", 0)
                 
                 leaderboard_data.append([
                     idx,
@@ -213,6 +212,28 @@ class LeaderboardView(discord.ui.View):
                     f"{avg_cs:.1f}",
                     f"{kd_ratio:.2f}"
                 ])
+
+        # Create table header based on mode
+        if self.mode == "tdm":
+            headers = ["Rank", "User", "TDM MMR", "Wins", "Losses", "Avg Kills", "K/D"]
+        else:
+            headers = ["Rank", "User", "MMR", "Wins", "Losses", "Avg CS", "K/D"]
+
+        table_output = t2a(
+            header=headers,
+            body=leaderboard_data,
+            first_col_heading=True,
+            style=PresetStyle.thick_compact
+        )
+
+        title = "TDM Leaderboard" if self.mode == "tdm" else "10 Mans Leaderboard"
+        content = f"## {title} (Page {self.current_page + 1}/{self.total_pages}) ##\n```\n{table_output}\n```"
+
+        # Update button states
+        self.previous_button.disabled = (self.current_page == 0)
+        self.next_button.disabled = (self.current_page >= self.total_pages - 1)
+
+        await interaction.response.edit_message(content=content, view=self)
 
     async def on_previous(self, interaction: discord.Interaction):
         if self.current_page > 0:
