@@ -178,21 +178,6 @@ class BotCommands(commands.Cog):
 
         await ctx.send(f"Queue started! Signup: <#{self.bot.match_channel.id}>")
 
-    @commands.command()
-    async def status(self, ctx):
-        if not self.bot.signup_active or self.bot.signup_view is None:
-            await ctx.send("No signup currently active.")
-            return
-
-        riot_names = []
-        for player in self.bot.queue:
-            discord_id = player["id"]
-            user_data = users.find_one({"discord_id": str(discord_id)})
-            riot_name = user_data.get("name","Unknown") if user_data else "Unknown"
-            riot_names.append(riot_name)
-        await ctx.send(f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}")
-        await ctx.send(f"Match Channel: <#{self.bot.match_channel.id}>")
-
     # Report the match
     @commands.command()
     async def report(self, ctx):
