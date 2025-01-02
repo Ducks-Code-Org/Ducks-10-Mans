@@ -9,6 +9,7 @@ import discord
 from discord.ext import commands
 import requests
 from table2ascii import table2ascii as t2a, PresetStyle
+import wcwidth
 
 from database import users, all_matches, mmr_collection
 from stats_helper import update_stats
@@ -20,7 +21,9 @@ from views.leaderboard_view import (
     LeaderboardViewKD,
     LeaderboardViewACS,
     LeaderboardViewWins,
+    truncate_by_display_width
 )
+
 
 # Initialize API
 api_key = os.getenv("api_key")
@@ -552,7 +555,11 @@ class BotCommands(commands.Cog):
         for idx, stats in enumerate(page_data, start=1):
             user_data = users.find_one({"discord_id": str(stats["player_id"])})
             if user_data:
-                name = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
+                full_name = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
+                if wcwidth.wcswidth(full_name) > 20:
+                    name = full_name[:17] + "..."
+                else:
+                    name = full_name.ljust(20)
             else:
                 name = "Unknown"
 
@@ -567,7 +574,7 @@ class BotCommands(commands.Cog):
             ])
 
         table_output = t2a(
-            header=["Rank", "User", "MMR", "Wins", "Losses", "Avg CS", "K/D"],
+            header=["Rank", "User", "MMR", "Wins", "Losses", "Avg ACS", "K/D"],
             body=leaderboard_data,
             first_col_heading=True,
             style=PresetStyle.thick_compact
