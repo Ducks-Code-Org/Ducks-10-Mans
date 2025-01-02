@@ -141,7 +141,7 @@ class LeaderboardView(discord.ui.View):
                     mmr,
                     wins,
                     losses,
-                    f"{avg_cs:.1f}",
+                    f"{avg_cs:.2f}",
                     f"{kd_ratio:.2f}"
                 ])
 
@@ -149,7 +149,7 @@ class LeaderboardView(discord.ui.View):
         if new_mode == "tdm":
             headers = ["Rank", "User", "TDM MMR", "Wins", "Losses", "Avg Kills", "K/D"]
         else:
-            headers = ["Rank", "User", "MMR", "Wins", "Losses", "Avg CS", "K/D"]
+            headers = ["Rank", "User", "MMR", "Wins", "Losses", "Avg ACS", "K/D"]
 
         table_output = t2a(
             header=headers,
@@ -209,7 +209,7 @@ class LeaderboardView(discord.ui.View):
                     mmr,
                     wins,
                     losses,
-                    f"{avg_cs:.1f}",
+                    f"{avg_cs:.2f}",
                     f"{kd_ratio:.2f}"
                 ])
 
