@@ -562,7 +562,7 @@ class BotCommands(commands.Cog):
                 stats.get("mmr", 1000),
                 stats.get("wins", 0),
                 stats.get("losses", 0),
-                f"{stats.get('average_combat_score', 0):.1f}",
+                f"{stats.get('average_combat_score', 0):.2f}",
                 f"{stats.get('kill_death_ratio', 0):.2f}"
             ])
 
@@ -1410,63 +1410,61 @@ class BotCommands(commands.Cog):
     @commands.command()
     async def help(self, ctx):
         help_embed = discord.Embed(
-            title="Help Menu",
-            description="Duck's 10 Mans Commands:",
-            color=discord.Color.green(),
+            title="Help Menu", 
+            description="Duck's 10 Mans & TDM Commands:",
+            color=discord.Color.green()
         )
 
         # General Commands
         help_embed.add_field(
-            name="General Commands",
+            name="10 Mans Commands",
             value=(
-                "**!signup** - Start a signup session for matches.\n"
-                "**!status** - View the current queue status.\n"
-                "**!report** - Report the most recent match and update MMR.\n"
-                "**!stats** - Check your MMR and match stats.\n"
-                "**!linkriot** - Link or update your Riot account using `Name#Tag`.\n"
+                "**!signup** - Start a 10 mans signup session\n"
+                "**!status** - View current queue status\n"
+                "**!report** - Report match results and update MMR\n"
+                "**!stats** - Check your MMR and match stats\n"
+                "**!linkriot** - Link Riot account using `Name#Tag`\n"
             ),
-            inline=False,
+            inline=False
         )
 
-        # Leaderboard Commands
+        # TDM Commands
+        help_embed.add_field(
+            name="TDM Commands",
+            value=(
+                "**!tdm** - Start a 3v3 TDM signup session\n"
+                "**!tdmreport** - Report TDM match results\n"
+                "**!tdmstats** - View TDM-specific stats\n"
+            ),
+            inline=False
+        )
+
+        # Leaderboard Commands  
         help_embed.add_field(
             name="Leaderboard Commands",
             value=(
-                "**!leaderboard** - View the MMR leaderboard.\n"
-                "**!leaderboard_KD** - View the K/D leaderboard.\n"
-                "**!leaderboard_wins** - View the wins leaderboard.\n"
-                "**!leaderboard_ACS** - View the ACS leaderboard.\n"
+                "**!leaderboard** - View MMR leaderboard\n"
+                "**!leaderboard_KD** - View K/D leaderboard\n"
+                "**!leaderboard_wins** - View wins leaderboard\n"
+                "**!leaderboard_ACS** - View ACS leaderboard\n"
             ),
-            inline=False,
+            inline=False
         )
 
         # Admin Commands
         help_embed.add_field(
             name="Admin Commands",
             value=(
-                "**!setcaptain1** - Set Captain 1 using `Name#Tag`.\n"
-                "**!setcaptain2** - Set Captain 2 using `Name#Tag`.\n"
-                "**!cancel** - Cancel the current signup session.\n"
-                "**!toggledev** - Toggle Developer Mode.\n"
-                "**!initialize_rounds** - Reset total rounds played for all players.\n"
-                "**!recalculate** - Recalculate average combat scores for all players.\n"
-                "**!simulate_queue** - Simulate a full queue for testing.\n"
-                "**!force_draft** - Force a drafting phase with bots.\n"
+                "**!setcaptain1** - Set Captain 1 using `Name#Tag`\n"
+                "**!setcaptain2** - Set Captain 2 using `Name#Tag`\n"
+                "**!cancel** - Cancel current 10 mans signup\n"
+                "**!canceltdm** - Cancel current TDM signup\n"
+                "**!toggledev** - Toggle Developer Mode\n"
             ),
-            inline=False,
-        )
-
-        # Owner Commands
-        help_embed.add_field(
-            name="Owner Commands",
-            value=(
-                "**!stop_leaderboard** - Stop the leaderboard refresh and close the leaderboard.\n"
-            ),
-            inline=False,
+            inline=False
         )
 
         # Footer
-        help_embed.set_footer(text="Use commands with the specified prefix (!).")
+        help_embed.set_footer(text="Use commands with the ! prefix")
 
-        # Send the embedded message
         await ctx.send(embed=help_embed)
