@@ -16,4 +16,6 @@ all_maps = [
     "Abyss",
 ]
 
+tdm_maps = ["District", "Drift", "Glitch", "Kasbah", "Piazza"]
+
 SEASON_2_START_DATE = "2024-12-15T00:00:00.000Z"
