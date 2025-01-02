@@ -572,7 +572,7 @@ class BotCommands(commands.Cog):
 
         # Create the view
         self.leaderboard_view = LeaderboardView(
-            ctx, self.bot, sorted_mmr, players_per_page=10, timeout=None
+            ctx, self.bot, sorted_mmr, players_per_page=10, timeout=None, mode="normal"
         )
 
         content = f"## MMR Leaderboard (Page {self.leaderboard_view.current_page+1}/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
