@@ -4,12 +4,13 @@ from discord.ext import commands
 
 from commands import BotCommands
 from views.signup_view import SignupView
-from database import mmr_collection, users
+from database import mmr_collection, users, tdm_mmr_collection
 from tdm_commands import TDMCommands
 
 class CustomBot(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # 10 mans attributes
         self.signup_view: SignupView = None
         self.match_not_reported = False
         self.player_mmr = {}
@@ -18,13 +19,22 @@ class CustomBot(commands.Bot):
         self.selected_map = None
         self.team1 = []
         self.team2 = []
-
         self.signup_active = False
         self.current_signup_message = None
         self.queue = []
-
         self.captain1 = None
         self.captain2 = None
+
+        # TDM attributes
+        self.tdm_queue = []
+        self.tdm_team1 = []
+        self.tdm_team2 = []
+        self.tdm_match_ongoing = False
+        self.tdm_selected_map = None
+        self.tdm_match_role = None
+        self.tdm_match_channel = None
+        self.tdm_current_message = None
+        self.tdm_signup_active = False
 
         self.load_mmr_data()
 
@@ -210,25 +220,45 @@ class CustomBot(commands.Bot):
             })
 
     def ensure_tdm_player_mmr(self, player_id):
+        """Ensure TDM MMR exists for a player, loading from DB if available"""
+        player_id = str(player_id)  # Ensure consistent string ID
         if player_id not in self.player_mmr:
             self.player_mmr[player_id] = {}
             
         player_data = self.player_mmr[player_id]
         
-        # Initialize TDM stats if they don't exist
-        if "tdm_mmr" not in player_data:
+        # Check if player has TDM data in database
+        tdm_data = tdm_mmr_collection.find_one({"player_id": player_id})
+        
+        if tdm_data:
+            # Load existing TDM stats
             player_data.update({
-                "tdm_mmr": 1000,
-                "tdm_wins": 0,
-                "tdm_losses": 0,
-                "tdm_total_kills": 0,
-                "tdm_total_deaths": 0,
-                "tdm_matches_played": 0,
-                "tdm_avg_kills": 0.0,
-                "tdm_kd_ratio": 0.0,
-                "tdm_streak": 0,
-                "tdm_performance_history": [],  # List of recent K/D performances
+                "tdm_mmr": tdm_data.get("tdm_mmr", 1000),
+                "tdm_wins": tdm_data.get("tdm_wins", 0),
+                "tdm_losses": tdm_data.get("tdm_losses", 0),
+                "tdm_total_kills": tdm_data.get("tdm_total_kills", 0),
+                "tdm_total_deaths": tdm_data.get("tdm_total_deaths", 0),
+                "tdm_matches_played": tdm_data.get("tdm_matches_played", 0),
+                "tdm_avg_kills": tdm_data.get("tdm_avg_kills", 0.0),
+                "tdm_kd_ratio": tdm_data.get("tdm_kd_ratio", 0.0),
+                "tdm_streak": tdm_data.get("tdm_streak", 0),
+                "tdm_performance_history": tdm_data.get("tdm_performance_history", [])
             })
+        else:
+            # Initialize new TDM stats if not found
+            if "tdm_mmr" not in player_data:
+                player_data.update({
+                    "tdm_mmr": 1000,
+                    "tdm_wins": 0,
+                    "tdm_losses": 0,
+                    "tdm_total_kills": 0,
+                    "tdm_total_deaths": 0,
+                    "tdm_matches_played": 0,
+                    "tdm_avg_kills": 0.0,
+                    "tdm_kd_ratio": 0.0,
+                    "tdm_streak": 0,
+                    "tdm_performance_history": []
+                })
 
     def _calculate_tdm_performance_modifier(self, player_id):
         player_data = self.player_mmr[player_id]

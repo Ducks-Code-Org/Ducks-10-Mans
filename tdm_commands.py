@@ -7,7 +7,7 @@ from table2ascii import table2ascii as t2a, PresetStyle
 from views.tdm_map_vote_view import TDMMapVoteView
 import os
 
-from database import users, tdm_mmr_collection, tdm_matches
+from database import users, tdm_matches, tdm_mmr_collection
 
 class TDMCommands(commands.Cog):
     def __init__(self, bot):
@@ -147,10 +147,22 @@ class TDMCommands(commands.Cog):
                 )
 
                 if len(self.tdm_queue) == 6:
+                    # Delete the signup message
+                    if self.tdm_current_message:
+                        try:
+                            await self.tdm_current_message.delete()
+                        except discord.NotFound:
+                            pass
+                    
+                    await interaction.channel.send("Queue is full! Starting map vote...")
+                    
+                    # Make sure the bot's tdm_queue is up to date
+                    self.bot.tdm_queue = self.tdm_queue
+                    print(f"[DEBUG] Queue before creating map vote: {self.bot.tdm_queue}")
+                    
                     map_vote = TDMMapVoteView(interaction.channel, self.bot)
                     await map_vote.setup()
                     await map_vote.send_vote_view()
-                    await self.make_tdm_teams(interaction.channel)
 
         async def leave_callback(interaction):
             if str(interaction.user.id) in [p["id"] for p in self.tdm_queue]:
@@ -226,9 +238,9 @@ class TDMCommands(commands.Cog):
         # Initialize TDM MMR for any players who don't have it
         for player in players:
             self.bot.ensure_tdm_player_mmr(player["id"])
-            print(f"[DEBUG] Player {player['id']} MMR: {self.bot.player_mmr[player['id']].get('tdm_mmr', 1000)}")
+            print(f"[DEBUG] Player {player['id']} TDM MMR: {self.bot.player_mmr[player['id']].get('tdm_mmr', 1000)}")
 
-        # Sort players by MMR (highest to lowest)
+        # Sort players by TDM MMR (highest to lowest)
         players.sort(
             key=lambda p: self.bot.player_mmr[p["id"]].get("tdm_mmr", 1000),
             reverse=True
@@ -245,7 +257,7 @@ class TDMCommands(commands.Cog):
             team1 = list(team1_players)
             team2 = [p for p in players if p not in team1]
 
-            # Calculate team MMRs
+            # Calculate team MMRs using TDM MMR
             team1_mmr = sum(self.bot.player_mmr[p["id"]].get("tdm_mmr", 1000) for p in team1) / 3
             team2_mmr = sum(self.bot.player_mmr[p["id"]].get("tdm_mmr", 1000) for p in team2) / 3
 
@@ -333,11 +345,6 @@ class TDMCommands(commands.Cog):
                 return
 
             match = match_data["data"][0]
-            
-            # Verify it's a TDM match
-            if match.get("metadata", {}).get("mode") != "DEATHMATCH":
-                await ctx.send("Most recent match is not a Team Deathmatch.")
-                return
 
             # Get the match players and their stats
             match_players = match.get("players", [])
@@ -386,7 +393,32 @@ class TDMCommands(commands.Cog):
 
             # Adjust MMR
             self.bot.adjust_tdm_mmr(winning_team, losing_team)
-            self.bot.save_tdm_mmr_data()
+            
+            # Save both MMR data and stats
+            self.bot.save_tdm_mmr_data()  
+            
+            for player in winning_team + losing_team:
+                player_id = player["id"]
+                if player_id in self.bot.player_mmr:
+                    stats = self.bot.player_mmr[player_id]
+                    user_data = users.find_one({"discord_id": str(player_id)})
+                    name = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}" if user_data else "Unknown"
+                    
+                    tdm_mmr_collection.update_one(
+                        {'player_id': player_id},
+                        {'$set': {
+                            'tdm_mmr': stats.get('tdm_mmr', 1000),
+                            'tdm_wins': stats.get('tdm_wins', 0),
+                            'tdm_losses': stats.get('tdm_losses', 0),
+                            'name': name,
+                            'tdm_total_kills': stats.get('tdm_total_kills', 0),
+                            'tdm_total_deaths': stats.get('tdm_total_deaths', 0),
+                            'tdm_matches_played': stats.get('tdm_matches_played', 0),
+                            'tdm_avg_kills': stats.get('tdm_avg_kills', 0),
+                            'tdm_kd_ratio': stats.get('tdm_kd_ratio', 0)
+                        }},
+                        upsert=True
+                    )
 
             # Create results embed
             embed = discord.Embed(
@@ -410,7 +442,7 @@ class TDMCommands(commands.Cog):
                             kills = player_stats.get("stats", {}).get("kills", 0)
                             deaths = player_stats.get("stats", {}).get("deaths", 0)
                             kd = f"{kills}/{deaths} ({kills/deaths:.2f})" if deaths > 0 else f"{kills}/0 (∞)"
-                            mmr_change = self._calculate_mmr_change(player["id"], team == winning_team)
+                            mmr_change = self.bot.player_mmr[player["id"]].get("latest_tdm_mmr_change", 0)
                             team_stats.append(f"{player_name}: {kd} (MMR {mmr_change:+d})")
 
                 embed.add_field(

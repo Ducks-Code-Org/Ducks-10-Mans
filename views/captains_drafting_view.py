@@ -185,6 +185,7 @@ class CaptainsDraftingView(discord.ui.View):
         await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match and use `!report` to finalize results.")
         self.bot.match_ongoing = True
+        self.bot.match_not_reported = True
 
     async def select_callback(self, interaction: discord.Interaction):
         if self.draft_finished:

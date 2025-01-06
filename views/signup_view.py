@@ -30,6 +30,20 @@ class SignupView(discord.ui.View):
 
         self.setup_callbacks()
 
+    def cleanup(self):
+        """Clean up all running tasks and state"""
+        self.cancel_signup_refresh()
+        self.cancel_channel_name_refresh()
+        
+        # Clear references that could prevent garbage collection
+        self.ctx = None
+        self.bot = None
+        
+        # Disable all buttons
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+
     async def sign_up_callback(self, interaction: discord.Interaction):
         existing_user = users.find_one({"discord_id": str(interaction.user.id)})
         if existing_user:
@@ -49,15 +63,8 @@ class SignupView(discord.ui.View):
                     user_data = users.find_one({"discord_id": str(discord_id)})
                     riot_name = user_data.get("name","Unknown") if user_data else "Unknown"
                     riot_names.append(riot_name)
-                await interaction.response.edit_message(
-                    content="Click a button to manage your queue status!" + "\n" + f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}", view=self
-                )
-                await interaction.followup.send(
-                    f"{interaction.user.name} added to the queue! ({len(self.bot.queue)}/10)",
-                    ephemeral=True
-                )
 
-                # Add role
+                # Add role to the new player
                 member = interaction.guild.get_member(interaction.user.id) or await interaction.guild.fetch_member(interaction.user.id)
                 if member:
                     try:
@@ -67,27 +74,44 @@ class SignupView(discord.ui.View):
                 else:
                     await interaction.followup.send("Could not assign the role. Member not found in guild.", ephemeral=True)
 
+                # Update the message content
+                await interaction.response.edit_message(
+                    content="Click a button to manage your queue status!" + "\n" + f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}", 
+                    view=self
+                )
+                await interaction.followup.send(
+                    f"{interaction.user.name} added to the queue! ({len(self.bot.queue)}/10)",
+                    ephemeral=True
+                )
+
+                # Check if queue is full AFTER adding the role
                 if len(self.bot.queue) == 10:
+                    # Cancel the refresh tasks first
+                    self.cancel_signup_refresh()
+                    
+                    # Send full queue message
+                    await interaction.channel.send("The queue is now full, proceeding to the voting stage.")
+                    
+                    # Ping all players
+                    await interaction.channel.send("__Players:__ " + " ".join([f"<@{p['id']}>" for p in self.bot.queue]))
+                    
+                    # Update bot state
+                    self.bot.signup_active = False
+                    self.ctx.channel = self.bot.match_channel
+
+                    # Clean up the signup message
                     if self.bot.current_signup_message:
                         try:
                             await self.bot.current_signup_message.delete()
                         except discord.NotFound:
                             pass
-
                     self.bot.current_signup_message = None
-                    
-                    await interaction.channel.send("The queue is now full, proceeding to the voting stage.")
-                    self.cancel_signup_refresh()
 
-                    # Ping all players
-                    await interaction.channel.send("__Players:__ " + " ".join([f"<@{p['id']}>" for p in self.bot.queue]))
-
-                    self.bot.signup_active = False
-                    self.ctx.channel = self.bot.match_channel
-
+                    # Start the mode vote
                     from views.mode_vote_view import ModeVoteView
                     mode_vote = ModeVoteView(self.ctx, self.bot)
                     await mode_vote.send_view()
+
             else:
                 await interaction.response.send_message("You're already in the queue!", ephemeral=True)
         else:
