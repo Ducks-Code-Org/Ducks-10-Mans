@@ -44,21 +44,32 @@ class MapVoteView(discord.ui.View):
     async def send_view(self):
         for b in self.map_buttons:
             self.add_item(b)
-        await self.ctx.send("Vote for the map to play:", view=self)
-        await asyncio.sleep(25)
-        self.winning_map = max(self.map_votes,key=self.map_votes.get)
-        await self.ctx.send(f"Selected map: **{self.winning_map}**")
+        message = await self.ctx.send("Vote for the map to play:", view=self)
+        
+        try:
+            await asyncio.sleep(25)
+            
+            if not self.map_votes:  # If no votes received
+                self.winning_map = random.choice(self.chosen_maps)
+                await self.ctx.send(f"No votes received! Randomly selected map: **{self.winning_map}**")
+            else:
+                max_votes = max(self.map_votes.values())
+                winning_maps = [m for m, v in self.map_votes.items() if v == max_votes]
+                
+                if len(winning_maps) > 1:
+                    self.winning_map = random.choice(winning_maps)
+                    await self.ctx.send(f"Tie! Randomly selected: **{self.winning_map}**")
+                else:
+                    self.winning_map = winning_maps[0]
+                    await self.ctx.send(f"Selected map: **{self.winning_map}**")
 
-        self.bot.selected_map=self.winning_map
+            self.bot.selected_map = self.winning_map
 
-        # Now check chosen_mode
-        if self.bot.chosen_mode=="Balanced":
-            # finalize directly
-            await self.finalize()
-        else:
-            if self.bot.chosen_mode == "Captains":
+            # Now check chosen_mode and proceed accordingly
+            if self.bot.chosen_mode == "Balanced":
+                await self.finalize()
+            elif self.bot.chosen_mode == "Captains":
                 if not self.bot.captain1 or not self.bot.captain2:
-                    # pick top 2 players from the queue
                     sorted_players = sorted(
                         self.bot.queue,
                         key=lambda p: self.bot.player_mmr[p["id"]]["mmr"],
@@ -66,11 +77,18 @@ class MapVoteView(discord.ui.View):
                     )
                     self.bot.captain1 = sorted_players[0]
                     self.bot.captain2 = sorted_players[1]
+                
+                from views.captains_drafting_view import SecondCaptainChoiceView
                 choice_view = SecondCaptainChoiceView(self.ctx, self.bot)
                 await self.ctx.send(
                     f"<@{self.bot.captain2['id']}>, choose draft type:",
                     view=choice_view
                 )
+            else:
+                await self.ctx.send("Error: No game mode selected!")
+                
+        except Exception as e:
+            await self.ctx.send(f"Error during map selection: {str(e)}")
 
     async def finalize(self):
         # Finalize teams after map chosen.
@@ -108,3 +126,4 @@ class MapVoteView(discord.ui.View):
         await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match, then `!report` to finalize results.")
         self.bot.match_ongoing = True
+        self.bot.match_not_reported = True

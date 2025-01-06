@@ -3,6 +3,31 @@ import discord
 from discord.ui import Button
 import random
 
+class MapButton(discord.ui.Button):
+    def __init__(self, map_name, parent_view):
+        super().__init__(label=f"{map_name} (0)", style=discord.ButtonStyle.secondary)
+        self.map_name = map_name
+        self.parent_view = parent_view  
+
+    async def callback(self, interaction: discord.Interaction):
+        user_id = str(interaction.user.id)
+        queue_ids = [str(p["id"]) for p in self.parent_view.tdm_queue]
+        
+        if user_id not in queue_ids:
+            await interaction.response.send_message("Must be in queue to vote!", ephemeral=True)
+            return
+        
+        if str(interaction.user.id) in self.parent_view.voters:
+            await interaction.response.send_message("Already voted!", ephemeral=True)
+            return
+        
+        self.parent_view.map_votes[self.map_name] += 1
+        self.parent_view.voters.add(str(interaction.user.id))
+        self.label = f"{self.map_name} ({self.parent_view.map_votes[self.map_name]})"
+        
+        await interaction.message.edit(view=self.parent_view)
+        await interaction.response.send_message(f"Voted {self.map_name}.", ephemeral=True)
+
 class TDMMapVoteView(discord.ui.View):
     def __init__(self, ctx, bot):
         super().__init__(timeout=None)
@@ -13,39 +38,48 @@ class TDMMapVoteView(discord.ui.View):
         self.chosen_maps = []
         self.winning_map = ""
         self.voters = set()
+        # Store direct reference to tdm_queue
+        self.tdm_queue = bot.tdm_queue
+        print(f"[DEBUG] Queue at init: {self.tdm_queue}")
 
     async def setup(self):
-        # Randomly select 3 maps from the TDM map pool
         from globals import tdm_maps
         random_maps = random.sample(tdm_maps, 3)
         self.chosen_maps = random_maps
         self.map_votes = {m: 0 for m in random_maps}
-
+        
         for m in random_maps:
             btn = Button(label=f"{m} (0)", style=discord.ButtonStyle.secondary)
             
-            async def make_callback(map_name):
+            async def make_callback(map_name=m):  # Note the default argument
                 async def callback(interaction: discord.Interaction):
-                    if str(interaction.user.id) not in [p["id"] for p in self.bot.tdm_queue]:
-                        await interaction.response.send_message("Must be in queue!", ephemeral=True)
+                    # Get current queue IDs at time of vote
+                    queue_ids = [str(p["id"]) for p in self.bot.tdm_queue]
+                    user_id = str(interaction.user.id)
+                    
+                    print(f"[DEBUG] User attempting vote: {user_id}")
+                    print(f"[DEBUG] Current queue IDs: {queue_ids}")
+                    
+                    if user_id not in queue_ids:
+                        await interaction.response.send_message("You must be in queue to vote!", ephemeral=True)
                         return
                     
-                    if str(interaction.user.id) in self.voters:
+                    if user_id in self.voters:
                         await interaction.response.send_message("Already voted!", ephemeral=True)
                         return
                     
                     self.map_votes[map_name] += 1
-                    self.voters.add(str(interaction.user.id))
+                    self.voters.add(user_id)
                     
                     for b in self.map_buttons:
                         if b.label.startswith(map_name):
                             b.label = f"{map_name} ({self.map_votes[map_name]})"
                     
                     await interaction.message.edit(view=self)
-                    await interaction.response.send_message(f"Voted {map_name}.", ephemeral=True)
+                    await interaction.response.send_message(f"Voted for {map_name}!", ephemeral=True)
                 return callback
 
-            btn.callback = await make_callback(m)
+            btn.callback = await make_callback()
             self.map_buttons.append(btn)
             self.add_item(btn)
 
@@ -84,6 +118,7 @@ class TDMMapVoteView(discord.ui.View):
             description=f"Winner: **{self.winning_map}**",
             color=discord.Color.green()
         )
+        
         for map_name in self.chosen_maps:
             final_embed.add_field(
                 name=map_name,
@@ -93,6 +128,10 @@ class TDMMapVoteView(discord.ui.View):
             )
         
         await message.edit(embed=final_embed, view=None)
-        
-        # Proceed with team formation
         await self.ctx.send("Proceeding with team formation...")
+
+        tdm_cog = self.bot.get_cog('TDMCommands')
+        if tdm_cog:
+            await tdm_cog.make_tdm_teams(self.ctx)
+        else:
+            print("[DEBUG] Couldn't access TDM commands")

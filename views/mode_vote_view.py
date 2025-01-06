@@ -72,87 +72,62 @@ class ModeVoteView(discord.ui.View):
         print(f"[DEBUG] Checking votes. Current state: {self.votes}")
         print(f"[DEBUG] Voting phase ended: {self.voting_phase_ended}")
         print(f"[DEBUG] Timeout status: {self.timeout}")
+        
         if self.voting_phase_ended:
             return
-        if self.timeout: 
-            if self.votes["Balanced"]>self.votes["Captains"]:
+            
+        # Handle timeout case
+        if self.timeout:
+            if self.votes["Balanced"] > self.votes["Captains"]:
                 print("[DEBUG] Balanced wins on timeout")
-                self.bot.chosen_mode="Balanced"
+                self.bot.chosen_mode = "Balanced"
                 await self.ctx.send("Balanced Teams chosen!")
                 self.voting_phase_ended = True
-                players= self.bot.queue[:]
-                players.sort(key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], reverse=True)
-                team1, team2 = [], []
-                t1_mmr=0
-                t2_mmr=0
-                for player in players:
-                    if t1_mmr<=t2_mmr:
-                        team1.append(player)
-                        t1_mmr+= self.bot.player_mmr[player["id"]]["mmr"]
-                    else:
-                        team2.append(player)
-                        t2_mmr+= self.bot.player_mmr[player["id"]]["mmr"]
-                self.bot.team1=team1
-                self.bot.team2=team2
-            elif self.votes["Captains"]>self.votes["Balanced"]:
+                await self._setup_balanced_teams()
+            elif self.votes["Captains"] > self.votes["Balanced"]:
                 print("[DEBUG] Captains wins on timeout")
                 self.bot.chosen_mode = "Captains"
-                try:
-                    await self.ctx.send("Captains chosen! Captains will be set after map is chosen.")
-                    print("[DEBUG] Captains message sent successfully")
-                except Exception as e:
-                    print(f"[DEBUG] Error sending captains message: {str(e)}")
+                await self.ctx.send("Captains chosen! Captains will be set after map is chosen.")
                 self.voting_phase_ended = True
             else:
-                decision="Balanced" if random.choice([True,False]) else "Captains"
+                # Handle tie
+                decision = "Balanced" if random.choice([True, False]) else "Captains"
+                self.bot.chosen_mode = decision
                 await self.ctx.send(f"Tie! {decision} wins by coin flip!")
-                self.bot.chosen_mode=decision
-                if decision=="Balanced":
-                    # do balanced assignment now
-                    players= self.bot.queue[:]
-                    players.sort(key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], reverse=True)
-                    team1, team2 = [], []
-                    t1_mmr=0
-                    t2_mmr=0
-                    for player in players:
-                        if t1_mmr<=t2_mmr:
-                            team1.append(player)
-                            t1_mmr+= self.bot.player_mmr[player["id"]]["mmr"]
-                        else:
-                            team2.append(player)
-                            t2_mmr+= self.bot.player_mmr[player["id"]]["mmr"]
-                    self.bot.team1=team1
-                    self.bot.team2=team2
-
+                if decision == "Balanced":
+                    await self._setup_balanced_teams()
             return
 
-        if self.votes["Captains"] > 4: #if captains reaches 5 votes first, it wins (reaching 5 first can be considered as a tiebreaker)
+        # Handle majority vote case (5 votes)
+        if self.votes["Captains"] > 4:
             print("[DEBUG] Captains wins by reaching 5 votes")
-            self.bot.chosen_mode="Captains"
+            self.bot.chosen_mode = "Captains"
             self.voting_phase_ended = True
             await self.ctx.send("Captains chosen! Captains will be set after map is chosen.")
             return
         elif self.votes["Balanced"] > 4:
-            self.bot.chosen_mode="Balanced"
+            print("[DEBUG] Balanced wins by reaching 5 votes")
+            self.bot.chosen_mode = "Balanced"
             self.voting_phase_ended = True
             await self.ctx.send("Balanced Teams chosen!")
-            # Set balanced teams now
-            # sort by mmr, alternate
-            players= self.bot.queue[:]
-            players.sort(key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], reverse=True)
-            team1, team2 = [], []
-            t1_mmr=0
-            t2_mmr=0
-            for player in players:
-                if t1_mmr<=t2_mmr:
-                    team1.append(player)
-                    t1_mmr+= self.bot.player_mmr[player["id"]]["mmr"]
-                else:
-                    team2.append(player)
-                    t2_mmr+= self.bot.player_mmr[player["id"]]["mmr"]
-            self.bot.team1=team1
-            self.bot.team2=team2
+            await self._setup_balanced_teams()
             return
+    
+    async def _setup_balanced_teams(self):
+        players = self.bot.queue[:]
+        players.sort(key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], reverse=True)
+        team1, team2 = [], []
+        t1_mmr = 0
+        t2_mmr = 0
+        for player in players:
+            if t1_mmr <= t2_mmr:
+                team1.append(player)
+                t1_mmr += self.bot.player_mmr[player["id"]]["mmr"]
+            else:
+                team2.append(player)
+                t2_mmr += self.bot.player_mmr[player["id"]]["mmr"]
+        self.bot.team1 = team1
+        self.bot.team2 = team2
 
     async def start_timer(self):
         await asyncio.sleep(25)  # Wait 25 seconds

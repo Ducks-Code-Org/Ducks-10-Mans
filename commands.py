@@ -142,6 +142,12 @@ class BotCommands(commands.Cog):
             await ctx.send("Report the last match before starting another one.")
             return
 
+        # Clear any existing signup view and state
+        if self.bot.signup_view is not None:
+            self.bot.signup_view.cancel_signup_refresh()
+            self.bot.signup_view = None
+        
+        # Reset all match-related state
         self.bot.signup_active = True
         self.bot.queue = []
         self.bot.captain1 = None
@@ -152,31 +158,46 @@ class BotCommands(commands.Cog):
         self.bot.selected_map = None
 
         self.bot.match_name = f"match-{random.randrange(1, 10**4):04}"
-        self.bot.match_role = await ctx.guild.create_role(name=self.bot.match_name, hoist=True)
-        await ctx.guild.edit_role_positions(positions={self.bot.match_role: 5})
+        
+        try:
+            self.bot.match_role = await ctx.guild.create_role(name=self.bot.match_name, hoist=True)
+            await ctx.guild.edit_role_positions(positions={self.bot.match_role: 5})
 
-        match_channel_permissions = {
-            ctx.guild.default_role: discord.PermissionOverwrite(send_messages=False),
-            self.bot.match_role: discord.PermissionOverwrite(send_messages=True),
-        }
+            match_channel_permissions = {
+                ctx.guild.default_role: discord.PermissionOverwrite(send_messages=False),
+                self.bot.match_role: discord.PermissionOverwrite(send_messages=True),
+            }
 
-        self.bot.match_channel = await ctx.guild.create_text_channel(
-            name=self.bot.match_name,
-            category=ctx.channel.category,
-            position=0,
-            overwrites=match_channel_permissions,
-        )
+            self.bot.match_channel = await ctx.guild.create_text_channel(
+                name=self.bot.match_name,
+                category=ctx.channel.category,
+                position=0,
+                overwrites=match_channel_permissions,
+            )
 
-        # Create signup view if not already
-        if self.bot.signup_view is None:
+            # Create new signup view
             from views.signup_view import SignupView
             self.bot.signup_view = SignupView(ctx, self.bot)
 
-        self.bot.current_signup_message = await self.bot.match_channel.send(
-            "Click a button to manage your queue status!", view=self.bot.signup_view
-        )
+            self.bot.current_signup_message = await self.bot.match_channel.send(
+                "Click a button to manage your queue status!", view=self.bot.signup_view
+            )
 
-        await ctx.send(f"Queue started! Signup: <#{self.bot.match_channel.id}>")
+            await ctx.send(f"Queue started! Signup: <#{self.bot.match_channel.id}>")
+        except Exception as e:
+            # Cleanup if anything fails
+            self.bot.signup_active = False
+            if hasattr(self.bot, 'match_role') and self.bot.match_role:
+                try:
+                    await self.bot.match_role.delete()
+                except:
+                    pass
+            if hasattr(self.bot, 'match_channel') and self.bot.match_channel:
+                try:
+                    await self.bot.match_channel.delete()
+                except:
+                    pass
+            await ctx.send(f"Error setting up queue: {str(e)}")
 
     # Report the match
     @commands.command()
@@ -313,11 +334,23 @@ class BotCommands(commands.Cog):
             match_player_names.add((player_name, player_tag))
 
         print(f"[DEBUG] match_player_names from API: {match_player_names}")
-        print("THESE MUCH MATCH ^^^^")
 
-        #if not queue_riot_ids.issubset(match_player_names):
-        #    await ctx.send("The most recent match does not match the 10-man's match.")
-        #    return
+        if not queue_riot_ids.issubset(match_player_names):
+            # Find which players don't match
+            missing_players = queue_riot_ids - match_player_names
+            mismatch_message = "The most recent match does not match the 10-man's match.\n\n"
+            mismatch_message += "The following players' Riot IDs don't match the game data:\n"
+            
+            for name, tag in missing_players:
+                mismatch_message += f"• {name}#{tag}\n"
+            
+            mismatch_message += "\nPossible reasons:\n"
+            mismatch_message += "1. Did you or someone make a change to their Riot name/tag?\n"
+            mismatch_message += "2. Are you trying to report the correct match?\n\n"
+            mismatch_message += "If you changed your Riot ID, please use `!linkriot NewName#NewTag` to update it."
+            
+            await ctx.send(mismatch_message)
+            return
 
         # Determine which team won
         teams = match.get("teams", [])
@@ -1109,17 +1142,61 @@ class BotCommands(commands.Cog):
                 "Could not find your Riot account. Please check the name and tag."
             )
         else:
+            # Update users collection
+            discord_id = str(ctx.author.id)
             user_data = {
-                "discord_id": str(ctx.author.id),
+                "discord_id": discord_id,
                 "name": riot_name.lower(),
                 "tag": riot_tag.lower(),
             }
             users.update_one(
-                {"discord_id": str(ctx.author.id)}, {"$set": user_data}, upsert=True
+                {"discord_id": discord_id}, 
+                {"$set": user_data}, 
+                upsert=True
             )
-            await ctx.send(
-                f"Successfully linked {riot_name}#{riot_tag} to your Discord account."
+
+            # Update name in mmr collections
+            full_name = f"{riot_name}#{riot_tag}"
+            mmr_collection.update_one(
+                {"player_id": str(ctx.author.id)},
+                {"$set": {"name": full_name}},
+                upsert=False
             )
+
+            tdm_mmr_collection.update_one(
+                {"player_id": str(ctx.author.id)},
+                {"$set": {"name": full_name}},
+                upsert=False
+            )
+
+            # Check if user is in an active queue
+            if self.bot.signup_active and any(p["id"] == discord_id for p in self.bot.queue):
+                # Update the signup message if it exists
+                if self.bot.current_signup_message:
+                    riot_names = []
+                    for player in self.bot.queue:
+                        player_data = users.find_one({"discord_id": player["id"]})
+                        if player_data:
+                            player_riot_name = f"{player_data.get('name')}#{player_data.get('tag')}"
+                            riot_names.append(player_riot_name)
+                        else:
+                            riot_names.append("Unknown")
+                    
+                    try:
+                        await self.bot.current_signup_message.edit(
+                            content="Click a button to manage your queue status!" + "\n" +
+                            f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}"
+                        )
+                    except discord.NotFound:
+                        pass  # Message might have been deleted
+
+                await ctx.send(
+                    f"Successfully linked {riot_name}#{riot_tag} to your Discord account and updated your active queue entry."
+                )
+            else:
+                await ctx.send(
+                    f"Successfully linked {riot_name}#{riot_tag} to your Discord account."
+                )
 
     # Set captain1
     @commands.command()
@@ -1222,20 +1299,22 @@ class BotCommands(commands.Cog):
         if not self.bot.signup_active:
             await ctx.send("No signup is active to cancel")
             return
-        if self.bot.current_signup_message:
-            self.bot.queue = []
-            self.bot.current_signup_message = None
-            self.bot.signup_view.cancel_signup_refresh()
-            self.bot.signup_active = False
+            
+        if self.bot.signup_view:
+            self.bot.signup_view.cleanup()
             self.bot.signup_view = None
-            await ctx.send("Canceled Signup")
-            try:
-                await self.bot.match_channel.delete()
-                await self.bot.match_role.delete()
-            except discord.NotFound:
-                pass
-        else:
-            await ctx.send("Nothing to cancel")
+            
+        self.bot.queue = []
+        self.bot.current_signup_message = None
+        self.bot.signup_active = False
+        
+        await ctx.send("Canceled Signup")
+        
+        try:
+            await self.bot.match_channel.delete()
+            await self.bot.match_role.delete()
+        except discord.NotFound:
+            pass
 
     @commands.command()
     async def force_draft(self, ctx):
