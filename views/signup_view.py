@@ -109,6 +109,7 @@ class SignupView(discord.ui.View):
 
                     # Start the mode vote
                     from views.mode_vote_view import ModeVoteView
+                    self.bot.chosen_mode = None
                     mode_vote = ModeVoteView(self.ctx, self.bot)
                     await mode_vote.send_view()
 

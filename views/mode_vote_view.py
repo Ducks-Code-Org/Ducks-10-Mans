@@ -67,50 +67,57 @@ class ModeVoteView(discord.ui.View):
         await self.ctx.send("Vote for mode (Balanced/Captains):", view=self)
         asyncio.create_task(self.start_timer())
 
-    #check_vote checks if an option has mathemetically won after every vote callback, as well as handles voting phase timeout logic
     async def check_vote(self):
         print(f"[DEBUG] Checking votes. Current state: {self.votes}")
         print(f"[DEBUG] Voting phase ended: {self.voting_phase_ended}")
         print(f"[DEBUG] Timeout status: {self.timeout}")
         
-        if self.voting_phase_ended:
-            return
-            
-        # Handle timeout case
-        if self.timeout:
-            if self.votes["Balanced"] > self.votes["Captains"]:
-                print("[DEBUG] Balanced wins on timeout")
-                self.bot.chosen_mode = "Balanced"
-                await self.ctx.send("Balanced Teams chosen!")
-                self.voting_phase_ended = True
-                await self._setup_balanced_teams()
-            elif self.votes["Captains"] > self.votes["Balanced"]:
-                print("[DEBUG] Captains wins on timeout")
-                self.bot.chosen_mode = "Captains"
-                await self.ctx.send("Captains chosen! Captains will be set after map is chosen.")
-                self.voting_phase_ended = True
-            else:
-                # Handle tie
-                decision = "Balanced" if random.choice([True, False]) else "Captains"
-                self.bot.chosen_mode = decision
-                await self.ctx.send(f"Tie! {decision} wins by coin flip!")
-                if decision == "Balanced":
-                    await self._setup_balanced_teams()
-            return
+        #if self.voting_phase_ended:
+            #return
 
-        # Handle majority vote case (5 votes)
-        if self.votes["Captains"] > 4:
-            print("[DEBUG] Captains wins by reaching 5 votes")
-            self.bot.chosen_mode = "Captains"
-            self.voting_phase_ended = True
-            await self.ctx.send("Captains chosen! Captains will be set after map is chosen.")
-            return
-        elif self.votes["Balanced"] > 4:
-            print("[DEBUG] Balanced wins by reaching 5 votes")
+        # Handle majority vote case (5 votes) first
+        if self.votes["Balanced"] > 4:
+            print("[DEBUG] Setting mode to Balanced (majority)")
             self.bot.chosen_mode = "Balanced"
             self.voting_phase_ended = True
             await self.ctx.send("Balanced Teams chosen!")
             await self._setup_balanced_teams()
+            print(f"[DEBUG] Mode after setting: {self.bot.chosen_mode}")
+            return
+        elif self.votes["Captains"] > 4:
+            print("[DEBUG] Setting mode to Captains (majority)")
+            self.bot.chosen_mode = "Captains"
+            self.voting_phase_ended = True
+            await self.ctx.send("Captains chosen! Captains will be set after map is chosen.")
+            print(f"[DEBUG] Mode after setting: {self.bot.chosen_mode}")
+            return
+            
+        # Handle timeout case - now properly finalizes even without majority
+        if self.timeout and not self.voting_phase_ended:
+            balanced_votes = self.votes["Balanced"]
+            captains_votes = self.votes["Captains"]
+            
+            if balanced_votes > captains_votes:
+                print("[DEBUG] Balanced wins on timeout")
+                self.bot.chosen_mode = "Balanced"
+                self.voting_phase_ended = True
+                await self.ctx.send(f"Time's up! Balanced Teams wins with {balanced_votes} votes vs {captains_votes} votes!")
+                await self._setup_balanced_teams()
+            elif captains_votes > balanced_votes:
+                print("[DEBUG] Captains wins on timeout")
+                self.bot.chosen_mode = "Captains"
+                self.voting_phase_ended = True
+                await self.ctx.send(f"Time's up! Captains wins with {captains_votes} votes vs {balanced_votes} votes!")
+            else:
+                # Handle tie
+                decision = "Balanced" if random.choice([True, False]) else "Captains"
+                self.bot.chosen_mode = decision
+                self.voting_phase_ended = True
+                await self.ctx.send(f"Time's up! Votes tied {balanced_votes}-{balanced_votes}. {decision} wins by coin flip!")
+                if decision == "Balanced":
+                    await self._setup_balanced_teams()
+            
+            print(f"[DEBUG] Final mode selection: {self.bot.chosen_mode}")
             return
     
     async def _setup_balanced_teams(self):

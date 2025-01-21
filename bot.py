@@ -24,6 +24,7 @@ class CustomBot(commands.Bot):
         self.queue = []
         self.captain1 = None
         self.captain2 = None
+        self.chosen_mode = None
 
         # TDM attributes
         self.tdm_queue = []
@@ -37,9 +38,13 @@ class CustomBot(commands.Bot):
         self.tdm_signup_active = False
 
         self.load_mmr_data()
+        self.load_tdm_mmr_data()
 
 
     def load_mmr_data(self):
+        self.player_mmr.clear()
+        self.player_names.clear()
+        
         for doc in mmr_collection.find():
             player_id = doc["player_id"]
             self.player_mmr[player_id] = {
