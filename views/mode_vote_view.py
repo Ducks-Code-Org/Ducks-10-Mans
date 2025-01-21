@@ -74,6 +74,28 @@ class ModeVoteView(discord.ui.View):
         
         #if self.voting_phase_ended:
             #return
+            
+        # Handle timeout case
+        if self.timeout:
+            if self.votes["Balanced"] > self.votes["Captains"]:
+                print("[DEBUG] Balanced wins on timeout")
+                self.bot.chosen_mode = "Balanced"
+                await self.ctx.send("Balanced Teams chosen!")
+                self.voting_phase_ended = True
+                await self._setup_balanced_teams()
+            elif self.votes["Captains"] > self.votes["Balanced"]:
+                print("[DEBUG] Captains wins on timeout")
+                self.bot.chosen_mode = "Captains"
+                await self.ctx.send("Captains chosen! Captains will be set after map is chosen.")
+                self.voting_phase_ended = True
+            else:
+                # Handle tie
+                decision = "Balanced" if random.choice([True, False]) else "Captains"
+                self.bot.chosen_mode = decision
+                await self.ctx.send(f"Tie! {decision} wins by coin flip!")
+                if decision == "Balanced":
+                    await self._setup_balanced_teams()
+            return
 
         # Handle majority vote case (5 votes) first
         if self.votes["Balanced"] > 4:
