@@ -2,7 +2,7 @@
 
 This is a discord bot that utilizes the Valorant API to create a unique way to play Valorant with friends. This project utilizes the Henrikdev Valorant API in order to function, currently serving 30+ users.
 
-Henrikdev Valorant API: <https://docs.henrikdev.xyz/>
+Henrikdev Valorant API: <https://docs.henrikdev.xyz/> 
 
 ![Screenshot 2024-12-10 175156](https://github.com/user-attachments/assets/a295117e-1f43-4002-ab3d-dc5740dc08e1)
 
