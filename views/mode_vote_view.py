@@ -73,8 +73,8 @@ class ModeVoteView(discord.ui.View):
         print(f"[DEBUG] Voting phase ended: {self.voting_phase_ended}")
         print(f"[DEBUG] Timeout status: {self.timeout}")
         
-        if self.voting_phase_ended:
-            return
+        #if self.voting_phase_ended:
+            #return
             
         # Handle timeout case
         if self.timeout:
