@@ -11,7 +11,7 @@ import requests
 from table2ascii import table2ascii as t2a, PresetStyle
 import wcwidth
 
-from database import users, all_matches, mmr_collection
+from database import users, all_matches, mmr_collection, tdm_mmr_collection
 from stats_helper import update_stats
 from views.captains_drafting_view import CaptainsDraftingView
 from views.mode_vote_view import ModeVoteView
@@ -142,11 +142,14 @@ class BotCommands(commands.Cog):
             await ctx.send("Report the last match before starting another one.")
             return
 
+        self.bot.load_mmr_data()
+        print("[DEBUG] Reloaded MMR data at start of signup")
+
         # Clear any existing signup view and state
         if self.bot.signup_view is not None:
             self.bot.signup_view.cancel_signup_refresh()
             self.bot.signup_view = None
-        
+
         # Reset all match-related state
         self.bot.signup_active = True
         self.bot.queue = []
@@ -158,7 +161,7 @@ class BotCommands(commands.Cog):
         self.bot.selected_map = None
 
         self.bot.match_name = f"match-{random.randrange(1, 10**4):04}"
-        
+
         try:
             self.bot.match_role = await ctx.guild.create_role(name=self.bot.match_name, hoist=True)
             await ctx.guild.edit_role_positions(positions={self.bot.match_role: 5})
@@ -199,6 +202,52 @@ class BotCommands(commands.Cog):
                     pass
             await ctx.send(f"Error setting up queue: {str(e)}")
 
+    async def cleanup_match_resources(self):
+        try:
+            if hasattr(self.bot, 'match_channel') and self.bot.match_channel:
+                try:
+                    await self.bot.match_channel.delete()
+                except discord.NotFound:
+                    print("[DEBUG] Match channel already deleted")
+                except discord.Forbidden:
+                    print("[DEBUG] Missing permissions to delete match channel")
+                finally:
+                    self.bot.match_channel = None
+
+            if hasattr(self.bot, 'match_role') and self.bot.match_role:
+                # Remove role from all members first
+                try:
+                    for member in self.bot.match_role.members:
+                        await member.remove_roles(self.bot.match_role)
+                except discord.HTTPException:
+                    print("[DEBUG] Error removing roles from members")
+
+                # Then delete the role
+                try:
+                    await self.bot.match_role.delete()
+                except discord.NotFound:
+                    print("[DEBUG] Match role already deleted")
+                except discord.Forbidden:
+                    print("[DEBUG] Missing permissions to delete match role")
+                finally:
+                    self.bot.match_role = None
+
+            # Clear other match-related state
+            self.bot.match_not_reported = False
+            self.bot.match_ongoing = False
+            self.bot.queue.clear()
+            
+            if self.bot.current_signup_message:
+                try:
+                    await self.bot.current_signup_message.delete()
+                except discord.NotFound:
+                    pass
+                finally:
+                    self.bot.current_signup_message = None
+
+        except Exception as e:
+            print(f"[DEBUG] Error during cleanup: {str(e)}")
+    
     # Report the match
     @commands.command()
     async def report(self, ctx):
@@ -415,30 +464,82 @@ class BotCommands(commands.Cog):
 
         # Get top players
         pre_update_mmr = copy.deepcopy(self.bot.player_mmr)
-        sorted_mmr_before = sorted(
-            pre_update_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
-        )
-        top_mmr_before = sorted_mmr_before[0][1]["mmr"]
-        top_players_before = [
-            str(pid) for pid, stats in sorted_mmr_before if stats["mmr"] == top_mmr_before
+        
+        # Filter out entries without MMR and ensure proper data structure
+        valid_mmr_entries = [
+            (pid, stats) for pid, stats in pre_update_mmr.items() 
+            if isinstance(stats, dict) and "mmr" in stats
         ]
+        
+        if valid_mmr_entries:
+            sorted_mmr_before = sorted(valid_mmr_entries, key=lambda x: x[1]["mmr"], reverse=True)
+            top_mmr_before = sorted_mmr_before[0][1]["mmr"]
+            top_players_before = [str(pid) for pid, stats in sorted_mmr_before if stats["mmr"] == top_mmr_before]
+        else:
+            # Handle case where no valid MMR entries exist
+            top_mmr_before = 1000  # Default MMR
+            top_players_before = []
+
+        sorted_mmr_before = sorted(pre_update_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+        top_mmr_before = sorted_mmr_before[0][1]["mmr"]
+        top_players_before = [str(pid) for pid, stats in sorted_mmr_before if stats["mmr"] == top_mmr_before]
 
         # Update stats for each player
         for player_stats in match_players:
-            update_stats(
-                player_stats, total_rounds, self.bot.player_mmr, self.bot.player_names
+            update_stats(player_stats, total_rounds, self.bot.player_mmr, self.bot.player_names)
+        print("[DEBUG] Basic stats updated")
+
+        # Adjust MMR once
+        self.bot.adjust_mmr(winning_team, losing_team)
+        print("[DEBUG] MMR adjusted")
+        await ctx.send("Match stats and MMR updated!")
+
+        self.bot.save_mmr_data()
+        print("[DEBUG] MMR data saved")
+
+        self.bot.load_mmr_data()  # Reload the MMR data
+        print("[DEBUG] Reloaded MMR data after save")
+
+        # Now save all updates to the database
+        print("Before player stats updated")
+        
+
+        for discord_id, stats in self.bot.player_mmr.items():
+            # Get the Riot name for the player
+            user_data = users.find_one({"discord_id": str(discord_id)})
+            if user_data:
+                riot_name = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
+            else:
+                riot_name = "Unknown"
+
+            # Create complete stats document with all fields
+            complete_stats = {
+                "mmr": stats.get("mmr", 1000),
+                "wins": stats.get("wins", 0),
+                "losses": stats.get("losses", 0),
+                "name": riot_name,
+                "total_combat_score": stats.get("total_combat_score", 0),
+                "total_kills": stats.get("total_kills", 0),
+                "total_deaths": stats.get("total_deaths", 0),
+                "matches_played": stats.get("matches_played", 0),
+                "total_rounds_played": stats.get("total_rounds_played", 0),
+                "average_combat_score": stats.get("average_combat_score", 0),
+                "kill_death_ratio": stats.get("kill_death_ratio", 0)
+            }
+
+            # Update database with all fields
+            mmr_collection.update_one(
+                {"player_id": discord_id},
+                {"$set": complete_stats},
+                upsert=True
             )
 
-        # Get new top players
-        sorted_mmr_after = sorted(
-            self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
-        )
-        top_mmr_after = sorted_mmr_after[0][1]["mmr"]
-        top_players_after = [
-            pid for pid, stats in sorted_mmr_after if stats["mmr"] == top_mmr_after
-        ]
+        print("[DEBUG] All stats saved to database")
 
-        # Determine if theres a new top player
+        sorted_mmr_after = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+        top_mmr_after = sorted_mmr_after[0][1]["mmr"]
+        top_players_after = [pid for pid, stats in sorted_mmr_after if stats["mmr"] == top_mmr_after]
+
         new_top_players = set(top_players_after) - set(top_players_before)
         if new_top_players:
             for new_top_player_id in new_top_players:
@@ -448,28 +549,13 @@ class BotCommands(commands.Cog):
                     riot_tag = user_data.get("tag", "Unknown")
                     await ctx.send(f"{riot_name}#{riot_tag} is now supersonic radiant!")
 
-        # Now save all updates to the database
-        print("Before player stats updated")
-        await ctx.send("Player stats updated!")
-        
-        # Adjust MMR
-        self.bot.adjust_mmr(winning_team, losing_team)
-        await ctx.send("MMR Updated!")
-        self.bot.save_mmr_data()
-        print("[DEBUG]: Saved stats to database")
-
         # Record every match played in a new collection
         all_matches.insert_one(match)
 
         await asyncio.sleep(5)
         self.bot.match_not_reported = False
         self.bot.match_ongoing = False
-        try:
-            await self.bot.current_signup_message.delete()
-            await self.bot.match_channel.delete()
-            await self.bot.match_role.delete()
-        except discord.NotFound:
-            pass
+        await self.cleanup_match_resources()
 
     # Allow players to check their MMR and stats
     @commands.command()
@@ -481,7 +567,7 @@ class BotCommands(commands.Cog):
             except ValueError:
                 await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
                 return
-            player_data = users.find_one({"name": str(riot_name), "tag": str(riot_tag)})
+            player_data = users.find_one({"name": str(riot_name).lower(), "tag": str(riot_tag).lower()})
             if player_data:
                 player_id = str(player_data.get("discord_id"))
             else:
@@ -494,9 +580,10 @@ class BotCommands(commands.Cog):
 
         if player_id in self.bot.player_mmr:
             stats_data = self.bot.player_mmr[player_id]
-            mmr_value = stats_data["mmr"]
-            wins = stats_data["wins"]
-            losses = stats_data["losses"]
+            # Get stats with safe defaults
+            mmr_value = stats_data.get("mmr", 1000)
+            wins = stats_data.get("wins", 0)
+            losses = stats_data.get("losses", 0)
             matches_played = stats_data.get("matches_played", wins + losses)
             total_rounds_played = stats_data.get("total_rounds_played", 0)
             avg_cs = stats_data.get("average_combat_score", 0)
@@ -512,10 +599,12 @@ class BotCommands(commands.Cog):
             else:
                 player_name = ctx.author.name
 
-            # Find leaderboard position
+            # Find leaderboard position with safe dictionary access
             total_players = len(self.bot.player_mmr)
             sorted_mmr = sorted(
-                self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
+                [(pid, stats) for pid, stats in self.bot.player_mmr.items() if "mmr" in stats],
+                key=lambda x: x[1]["mmr"],
+                reverse=True
             )
             position = None
             slash = "/"
@@ -1446,14 +1535,7 @@ class BotCommands(commands.Cog):
                 if d_id in self.bot.player_mmr:
                     self.bot.player_mmr[d_id]["losses"] = self.bot.player_mmr[d_id].get("losses", 0) + 1
 
-            # 3f) *** Recalculate MMR *** for each match
-            # Here we do exactly what we normally do in "report": 
-            # self.bot.adjust_mmr(winning_team, losing_team)
-            # Make sure your adjust_mmr method can handle these player dicts
-            self.bot.adjust_mmr(winning_team, losing_team)
 
-        # 4) By now, we've replayed every match in chronological order and 
-        #    updated stats and MMR in memory. We can write them to DB if needed.
         for d_id, stats in self.bot.player_mmr.items():
             mmr_collection.update_one(
                 {"player_id": d_id},
