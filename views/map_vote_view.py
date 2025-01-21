@@ -42,7 +42,7 @@ class MapVoteView(discord.ui.View):
             self.map_buttons.append(btn)
 
     async def send_view(self):
-        if not self.bot.chosen_mode:
+        if not self.bot.bot.chosen_mode:
             print("[DEBUG] No mode selected at start of map vote")
             await self.ctx.send("Error: Game mode not selected. Please start a new queue.")
             return
