@@ -4,7 +4,7 @@ This guide will cover everything you need to do to set up the codebase for local
 
 ## Requirements
 
-- `python 3.13`
+- `python 3.12`
 - A Discord Account + Server
 - A [MongoDB Atlas](https://www.mongodb.com/try?tck=community_atlas_ct) Account
 
