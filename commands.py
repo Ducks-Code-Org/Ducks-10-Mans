@@ -1769,7 +1769,7 @@ class BotCommands(commands.Cog):
         ]
         for bot in bot_queue:
             self.bot.queue.append(bot)
-        draft = CaptainsDraftingView(ctx, self.bot)
+        draft = CaptainsDraftingView(ctx, self.bot, True)
         await draft.send_current_draft_view()
 
     # Custom Help Command
