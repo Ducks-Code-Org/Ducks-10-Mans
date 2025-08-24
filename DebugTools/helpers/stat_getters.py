@@ -1,4 +1,3 @@
-
 # Get total rounds played for each player in the match
 def get_total_rounds_played_from_match(match) -> dict[str, int]:
     # Track all player losses
@@ -13,6 +12,7 @@ def get_total_rounds_played_from_match(match) -> dict[str, int]:
 
     return player_total_rounds_played
 
+
 def get_total_rounds_played_from_matchlist(matchlist) -> dict[str, int]:
     # Track all player losses
     player_total_rounds_played = {}
@@ -22,10 +22,11 @@ def get_total_rounds_played_from_matchlist(matchlist) -> dict[str, int]:
         for player in match["players"]:
             riot_name = (player["name"] + "#" + player["tag"]).lower()
 
-            player_total_rounds_played[riot_name] = player_total_rounds_played.get(riot_name, 0) + len(match["rounds"])
+            player_total_rounds_played[riot_name] = player_total_rounds_played.get(
+                riot_name, 0
+            ) + len(match["rounds"])
 
     return player_total_rounds_played
-
 
 
 def get_wins_from_match(match):
@@ -38,6 +39,7 @@ def get_wins_from_match(match):
 
     return wins
 
+
 def get_wins_from_matchlist(matchlist):
 
     wins = {}
@@ -45,16 +47,19 @@ def get_wins_from_matchlist(matchlist):
         winning_team_id = get_winning_team_id(match)
         for player in match["players"]:
             player_name = player["name"].lower() + "#" + player["tag"].lower()
-            wins[player_name] = wins.get(player_name, 0) + (1 if player["team_id"] == winning_team_id else 0)
+            wins[player_name] = wins.get(player_name, 0) + (
+                1 if player["team_id"] == winning_team_id else 0
+            )
 
     return wins
+
 
 def get_losses_from_match(match):
     winning_team_id = get_winning_team_id(match)
     losses = {}
 
     for player in match["players"]:
-        player_name = (player["name"].lower() + "#" + player["tag"].lower())
+        player_name = player["name"].lower() + "#" + player["tag"].lower()
         losses[player_name] = 1 if player["team_id"] != winning_team_id else 0
 
     return losses
@@ -66,8 +71,12 @@ def get_losses_from_matchlist(matchlist):
         winning_team_id = get_winning_team_id(match)
 
         for player in match["players"]:
-            player_name = (player["name"].lower() + "#" + player["tag"].lower())
-            losses[player_name] = losses.get(player_name, 0) + 1 if player["team_id"] != winning_team_id else 0
+            player_name = player["name"].lower() + "#" + player["tag"].lower()
+            losses[player_name] = (
+                losses.get(player_name, 0) + 1
+                if player["team_id"] != winning_team_id
+                else 0
+            )
 
     return losses
 
@@ -95,7 +104,9 @@ def get_combat_score_from_matchlist(matchlist) -> dict[str, int]:
         for player in match["players"]:
             riot_name = (player["name"] + "#" + player["tag"]).lower()
 
-            player_combat_score[riot_name] = player_combat_score.get(riot_name, 0) + player["stats"]["score"]
+            player_combat_score[riot_name] = (
+                player_combat_score.get(riot_name, 0) + player["stats"]["score"]
+            )
 
     return player_combat_score
 
@@ -113,6 +124,7 @@ def get_deaths_from_match(match) -> dict[str, int]:
 
     return player_deaths
 
+
 def get_deaths_from_matchlist(matchlist) -> dict[str, int]:
     # Track all player deaths
     player_deaths = {}
@@ -122,7 +134,9 @@ def get_deaths_from_matchlist(matchlist) -> dict[str, int]:
         for player in match["players"]:
             riot_name = (player["name"] + "#" + player["tag"]).lower()
 
-            player_deaths[riot_name] = player_deaths.get(riot_name, 0) + player["stats"]["deaths"]
+            player_deaths[riot_name] = (
+                player_deaths.get(riot_name, 0) + player["stats"]["deaths"]
+            )
 
     return player_deaths
 
@@ -140,6 +154,7 @@ def get_kills_from_match(match) -> dict[str, int]:
 
     return player_kills
 
+
 def get_kills_from_matchlist(matchlist) -> dict[str, int]:
     # Track all player kills
     player_kills = {}
@@ -148,9 +163,12 @@ def get_kills_from_matchlist(matchlist) -> dict[str, int]:
         for player in match["players"]:
             riot_name = (player["name"] + "#" + player["tag"]).lower()
 
-            player_kills[riot_name] = player_kills.get(riot_name, 0) + player["stats"]["kills"]
+            player_kills[riot_name] = (
+                player_kills.get(riot_name, 0) + player["stats"]["kills"]
+            )
 
     return player_kills
+
 
 def get_winning_team_id(match):
     teams = match["teams"]

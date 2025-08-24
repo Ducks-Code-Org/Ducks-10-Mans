@@ -2,20 +2,29 @@
 
 import asyncio
 import os
-import copy 
+import copy
 import random
+import unicodedata
+from zoneinfo import ZoneInfo
+from datetime import datetime, timezone, timedelta
 
 import discord
 from discord.ext import commands
 import requests
 from table2ascii import table2ascii as t2a, PresetStyle
 import wcwidth
-import unicodedata
+from pymongo import ReturnDocument
 
-from database import users, all_matches, mmr_collection, tdm_mmr_collection, seasons, interests
-from views.interest_view import InterestView
-
+from database import (
+    users,
+    all_matches,
+    mmr_collection,
+    tdm_mmr_collection,
+    seasons,
+    interests,
+)
 from stats_helper import update_stats
+from views.interest_view import InterestView
 from views.captains_drafting_view import CaptainsDraftingView
 from views.mode_vote_view import ModeVoteView
 from views.signup_view import SignupView
@@ -24,17 +33,7 @@ from views.leaderboard_view import (
     LeaderboardViewKD,
     LeaderboardViewACS,
     LeaderboardViewWins,
-    truncate_by_display_width
 )
-
-from zoneinfo import ZoneInfo
-from datetime import datetime, timezone, timedelta
-
-from urllib.parse import quote
-from pymongo import ReturnDocument
-
-import aiohttp
-from riot_api import get_account_by_puuid, get_account_by_riot_id
 from identity import ensure_current_riot_identity
 
 # Initialize API
@@ -43,17 +42,21 @@ headers = {
     "Authorization": api_key,
 }
 
+
 def _aware_utc(dt):
-        if not dt:
-            return None
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
 
 def canonical_riot(name: str, tag: str) -> str:
     def norm(s: str) -> str:
         return unicodedata.normalize("NFKC", (s or "")).casefold().strip()
+
     return f"{norm(name)}#{norm(tag)}"
+
 
 # FOR TESTING ONLY, REMEMBER TO SET WINNER AND total_rounds
 mock_match_data = {
@@ -157,14 +160,18 @@ class BotCommands(commands.Cog):
         self.bot.captain2 = None
         self.bot.team1 = []
         self.bot.team2 = []
-        print("[DEBUG] Checking the last match document in 'matches' DB for total rounds via 'rounds' array:")
-        last_match_doc = all_matches.find_one(sort=[("_id", -1)])  
+        print(
+            "[DEBUG] Checking the last match document in 'matches' DB for total rounds via 'rounds' array:"
+        )
+        last_match_doc = all_matches.find_one(sort=[("_id", -1)])
         if last_match_doc:
             rounds_array = last_match_doc.get("rounds", [])
-            print(f"  [DEBUG DB] The last match in 'matches' had {len(rounds_array)} rounds (via last_match_doc['rounds']).")
+            print(
+                f"  [DEBUG DB] The last match in 'matches' had {len(rounds_array)} rounds (via last_match_doc['rounds'])."
+            )
         else:
             print("  [DEBUG DB] No matches found in the 'matches' collection.")
-    
+
     async def _ensure_perms(self, ctx) -> bool:
         me = ctx.guild.me
         missing = []
@@ -173,15 +180,17 @@ class BotCommands(commands.Cog):
         if not me.guild_permissions.manage_channels:
             missing.append("Manage Channels")
         if missing:
-            await ctx.send(f"I need the following permissions in this server: {', '.join(missing)}")
+            await ctx.send(
+                f"I need the following permissions in this server: {', '.join(missing)}"
+            )
             return False
         return True
-    
+
     @commands.command()
     async def signup(self, ctx):
         if not await self._ensure_perms(ctx):
             return
-        
+
         if self.bot.signup_active:
             await ctx.send("A signup is already in progress.")
             return
@@ -189,7 +198,7 @@ class BotCommands(commands.Cog):
         if self.bot.match_not_reported:
             await ctx.send("Report the last match before starting another one.")
             return
-        
+
         ok, msg, db_user = await ensure_current_riot_identity(ctx.author.id)
         if not ok:
             await ctx.send(msg)
@@ -216,11 +225,15 @@ class BotCommands(commands.Cog):
         self.bot.match_name = f"match-{random.randrange(1, 10**4):04}"
 
         try:
-            self.bot.match_role = await ctx.guild.create_role(name=self.bot.match_name, hoist=True)
+            self.bot.match_role = await ctx.guild.create_role(
+                name=self.bot.match_name, hoist=True
+            )
             await ctx.guild.edit_role_positions(positions={self.bot.match_role: 5})
 
             match_channel_permissions = {
-                ctx.guild.default_role: discord.PermissionOverwrite(send_messages=False),
+                ctx.guild.default_role: discord.PermissionOverwrite(
+                    send_messages=False
+                ),
                 self.bot.match_role: discord.PermissionOverwrite(send_messages=True),
             }
 
@@ -233,6 +246,7 @@ class BotCommands(commands.Cog):
 
             # Create new signup view
             from views.signup_view import SignupView
+
             self.bot.signup_view = SignupView(ctx, self.bot)
 
             self.bot.current_signup_message = await self.bot.match_channel.send(
@@ -243,12 +257,12 @@ class BotCommands(commands.Cog):
         except Exception as e:
             # Cleanup
             self.bot.signup_active = False
-            if hasattr(self.bot, 'match_role') and self.bot.match_role:
+            if hasattr(self.bot, "match_role") and self.bot.match_role:
                 try:
                     await self.bot.match_role.delete()
                 except:
                     pass
-            if hasattr(self.bot, 'match_channel') and self.bot.match_channel:
+            if hasattr(self.bot, "match_channel") and self.bot.match_channel:
                 try:
                     await self.bot.match_channel.delete()
                 except:
@@ -257,7 +271,10 @@ class BotCommands(commands.Cog):
 
     def _parse_when_to_utc(self, text: str):
         if not text:
-            return None, "Provide a time, e.g. `!interest 9pm` or `!interest tomorrow 7`."
+            return (
+                None,
+                "Provide a time, e.g. `!interest 9pm` or `!interest tomorrow 7`.",
+            )
 
         tz = ZoneInfo("America/Chicago")
         now_local = datetime.now(tz)
@@ -307,26 +324,31 @@ class BotCommands(commands.Cog):
             if not time_str:
                 return None, "Add a time after today/tomorrow, e.g. `tomorrow 9pm`."
 
-            t_try = try_formats(
-                time_str,
-                ["%I%p", "%I:%M%p", "%H:%M", "%H"]
-            )
+            t_try = try_formats(time_str, ["%I%p", "%I:%M%p", "%H:%M", "%H"])
             if not t_try:
-                return None, "Couldn’t parse time. Try formats like `9pm`, `9:30pm`, `21:00`."
+                return (
+                    None,
+                    "Couldn’t parse time. Try formats like `9pm`, `9:30pm`, `21:00`.",
+                )
             dt_local = datetime(
-                base_date.year, base_date.month, base_date.day,
-                t_try.hour, t_try.minute, tzinfo=tz
+                base_date.year,
+                base_date.month,
+                base_date.day,
+                t_try.hour,
+                t_try.minute,
+                tzinfo=tz,
             )
             return dt_local.astimezone(timezone.utc), None
 
-        only_time = try_formats(
-            s,
-            ["%I%p", "%I:%M%p", "%H:%M", "%H"]
-        )
+        only_time = try_formats(s, ["%I%p", "%I:%M%p", "%H:%M", "%H"])
         if only_time:
             dt_local = datetime(
-                base_date.year, base_date.month, base_date.day,
-                only_time.hour, only_time.minute, tzinfo=tz
+                base_date.year,
+                base_date.month,
+                base_date.day,
+                only_time.hour,
+                only_time.minute,
+                tzinfo=tz,
             )
             if dt_local < now_local:
                 dt_local = dt_local + timedelta(days=1)
@@ -334,12 +356,14 @@ class BotCommands(commands.Cog):
 
         default_hour, default_minute = 21, 0
 
-        dt = try_formats(s, ["%Y-%m-%d %H:%M", "%Y-%m-%d %I:%M%p", "%Y-%m-%d %I%p", "%Y-%m-%d"])
+        dt = try_formats(
+            s, ["%Y-%m-%d %H:%M", "%Y-%m-%d %I:%M%p", "%Y-%m-%d %I%p", "%Y-%m-%d"]
+        )
         if dt:
             if dt.hour == 0 and len(s.strip().split()) == 1:
                 dt = dt.replace(hour=default_hour, minute=default_minute)
             return dt.replace(tzinfo=tz).astimezone(timezone.utc), None
-        
+
         for date_sep in ["/", "-"]:
             try:
                 if " " in s:
@@ -350,19 +374,31 @@ class BotCommands(commands.Cog):
                 if date_sep in date_part:
                     m, d = [int(x) for x in date_part.split(date_sep)]
                     y = now_local.year
-                    
+
                     base = datetime(y, m, d, tzinfo=tz)
                     if not time_part:
-                        dt_local = base.replace(hour=default_hour, minute=default_minute)
+                        dt_local = base.replace(
+                            hour=default_hour, minute=default_minute
+                        )
                     else:
-                        t_try = try_formats(time_part.strip(), ["%I%p", "%I:%M%p", "%H:%M", "%H"])
+                        t_try = try_formats(
+                            time_part.strip(), ["%I%p", "%I:%M%p", "%H:%M", "%H"]
+                        )
                         if not t_try:
-                            return None, "Couldn’t parse the time. Try `8/22 9pm` or `8-22 21:00`."
-                        dt_local = datetime(y, m, d, t_try.hour, t_try.minute, tzinfo=tz)
+                            return (
+                                None,
+                                "Couldn’t parse the time. Try `8/22 9pm` or `8-22 21:00`.",
+                            )
+                        dt_local = datetime(
+                            y, m, d, t_try.hour, t_try.minute, tzinfo=tz
+                        )
                     return dt_local.astimezone(timezone.utc), None
             except Exception:
                 pass
-        return None, "Couldn’t understand that time. Examples: `9pm`, `tomorrow 7`, `8/22 9:30pm`, `in 2h`."
+        return (
+            None,
+            "Couldn’t understand that time. Examples: `9pm`, `tomorrow 7`, `8/22 9:30pm`, `in 2h`.",
+        )
 
     @commands.command(name="interest")
     async def interest(self, ctx, *, when: str = None):
@@ -377,14 +413,22 @@ class BotCommands(commands.Cog):
           !interest list
         """
         if when is None:
-            await ctx.send("Usage: `!interest <when>` (e.g., `!interest 9pm`) or `!interest list`.")
+            await ctx.send(
+                "Usage: `!interest <when>` (e.g., `!interest 9pm`) or `!interest list`."
+            )
             return
 
         if when.strip().lower() in {"list", "ls"}:
             now_utc = datetime.now(timezone.utc)
-            upcoming = list(interests.find({"scheduled_at_utc": {"$gte": now_utc}}).sort("scheduled_at_utc", 1).limit(8))
+            upcoming = list(
+                interests.find({"scheduled_at_utc": {"$gte": now_utc}})
+                .sort("scheduled_at_utc", 1)
+                .limit(8)
+            )
             if not upcoming:
-                await ctx.send("No upcoming interest slots yet. Create one with `!interest 9pm`.")
+                await ctx.send(
+                    "No upcoming interest slots yet. Create one with `!interest 9pm`."
+                )
                 return
 
             tz = ZoneInfo("America/Chicago")
@@ -394,7 +438,9 @@ class BotCommands(commands.Cog):
                 stamp = int(t_utc.timestamp())
                 count = len(doc.get("interested_ids", []))
                 t_local = t_utc.astimezone(tz)
-                lines.append(f"• **{t_local.strftime('%Y-%m-%d %I:%M %p %Z')}** — <t:{stamp}:R>  (**{count}** interested)")
+                lines.append(
+                    f"• **{t_local.strftime('%Y-%m-%d %I:%M %p %Z')}** — <t:{stamp}:R>  (**{count}** interested)"
+                )
             await ctx.send("**Upcoming 10 Mans interest slots:**\n" + "\n".join(lines))
             return
 
@@ -426,17 +472,16 @@ class BotCommands(commands.Cog):
         view = InterestView(rounded, timeout=None)
         tz = ZoneInfo("America/Chicago")
         embed = discord.Embed(
-            description="Creating interest slot…",
-            color=discord.Color.green()
+            description="Creating interest slot…", color=discord.Color.green()
         )
         msg = await ctx.send(embed=embed, view=view)
-        view.message = msg 
+        view.message = msg
 
         await view._render(await ctx.fetch_message(msg.id))
 
     async def cleanup_match_resources(self):
         try:
-            if hasattr(self.bot, 'match_channel') and self.bot.match_channel:
+            if hasattr(self.bot, "match_channel") and self.bot.match_channel:
                 try:
                     await self.bot.match_channel.delete()
                 except discord.NotFound:
@@ -446,7 +491,7 @@ class BotCommands(commands.Cog):
                 finally:
                     self.bot.match_channel = None
 
-            if hasattr(self.bot, 'match_role') and self.bot.match_role:
+            if hasattr(self.bot, "match_role") and self.bot.match_role:
 
                 try:
                     for member in self.bot.match_role.members:
@@ -467,7 +512,7 @@ class BotCommands(commands.Cog):
             self.bot.match_not_reported = False
             self.bot.match_ongoing = False
             self.bot.queue.clear()
-            
+
             if self.bot.current_signup_message:
                 try:
                     await self.bot.current_signup_message.delete()
@@ -478,7 +523,7 @@ class BotCommands(commands.Cog):
 
         except Exception as e:
             print(f"[DEBUG] Error during cleanup: {str(e)}")
-    
+
     @commands.command(name="newseason")
     @commands.has_permissions(administrator=True)
     async def new_season(self, ctx, *, no_reset: str = None):
@@ -494,11 +539,11 @@ class BotCommands(commands.Cog):
 
         doc = self.bot.create_new_season(reset_player_stats=reset)
 
-        start_cst = doc["started_at_cst"]   
-        end_cst   = doc["ends_at_cst"]
+        start_cst = doc["started_at_cst"]
+        end_cst = doc["ends_at_cst"]
 
         start_str = start_cst.strftime("%Y-%m-%d %I:%M %p %Z")
-        end_str   = end_cst.strftime("%Y-%m-%d %I:%M %p %Z")
+        end_str = end_cst.strftime("%Y-%m-%d %I:%M %p %Z")
 
         await ctx.send(
             f"**Season {doc['season_number']}** created.\n"
@@ -513,13 +558,17 @@ class BotCommands(commands.Cog):
         # linkage check
         current_user = users.find_one({"discord_id": str(ctx.author.id)})
         if not current_user:
-            await ctx.send("You need to link your Riot account first using `!linkriot Name#Tag`")
+            await ctx.send(
+                "You need to link your Riot account first using `!linkriot Name#Tag`"
+            )
             return
 
         name = (current_user.get("name") or "").lower().strip()
-        tag  = (current_user.get("tag")  or "").lower().strip()
+        tag = (current_user.get("tag") or "").lower().strip()
         if not name or not tag:
-            await ctx.send("Your Riot account looks incomplete. Re-link with `!linkriot Name#Tag`.")
+            await ctx.send(
+                "Your Riot account looks incomplete. Re-link with `!linkriot Name#Tag`."
+            )
             return
 
         if not self.bot.match_ongoing:
@@ -539,18 +588,23 @@ class BotCommands(commands.Cog):
             return aliases.get(m, m)
 
         from urllib.parse import quote
+
         region, platform = "na", "pc"
         q_name, q_tag = quote(name, safe=""), quote(tag, safe="")
         url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{q_name}/{q_tag}"
 
         try:
-            resp = requests.get(url, headers=headers, timeout=30)  # `headers` is defined at top of commands.py
+            resp = requests.get(
+                url, headers=headers, timeout=30
+            )  # `headers` is defined at top of commands.py
         except requests.RequestException as e:
             await ctx.send(f"Network error reaching HenrikDev API: {e}")
             return
 
         if resp.status_code == 401:
-            await ctx.send("HenrikDev API rejected the request (401). Check that your API key is valid.")
+            await ctx.send(
+                "HenrikDev API rejected the request (401). Check that your API key is valid."
+            )
             return
         if resp.status_code == 404:
             await ctx.send("No recent matches found for your Riot ID (404).")
@@ -559,7 +613,9 @@ class BotCommands(commands.Cog):
             await ctx.send("Rate limit hit (429). Try again in a bit.")
             return
         if resp.status_code == 503:
-            await ctx.send("Riot/HenrikDev upstream is temporarily unavailable (503). Try again later.")
+            await ctx.send(
+                "Riot/HenrikDev upstream is temporarily unavailable (503). Try again later."
+            )
             return
         if resp.status_code != 200:
             await ctx.send(f"Unexpected error from API ({resp.status_code}).")
@@ -580,7 +636,9 @@ class BotCommands(commands.Cog):
             api_map = _norm_map(map_field or "")
 
         if _norm_map(self.bot.selected_map) != api_map:
-            await ctx.send("Map doesn't match your most recent match. Unable to report it.")
+            await ctx.send(
+                "Map doesn't match your most recent match. Unable to report it."
+            )
             return
 
         testing_mode = False  # TRUE WHILE TESTING
@@ -651,9 +709,8 @@ class BotCommands(commands.Cog):
             # Get total rounds played from the match data
             teams = match.get("teams", [])
             if teams:
-                total_rounds = (
-                    metadata.get("rounds_played")
-                    or metadata.get("total_rounds")
+                total_rounds = metadata.get("rounds_played") or metadata.get(
+                    "total_rounds"
                 )
                 if not total_rounds:
                     rounds_data = match.get("rounds") or []
@@ -675,7 +732,7 @@ class BotCommands(commands.Cog):
                 player_name = user_data.get("name").lower()
                 player_tag = user_data.get("tag").lower()
                 queue_riot_ids.add((player_name, player_tag))
-        
+
         print(f"[DEBUG] Queued players RIOT ID's: {queue_riot_ids}")
 
         # get the list of players in the match
@@ -690,17 +747,23 @@ class BotCommands(commands.Cog):
         if not queue_riot_ids.issubset(match_player_names):
             # Find which players don't match
             missing_players = queue_riot_ids - match_player_names
-            mismatch_message = "The most recent match does not match the 10-man's match.\n\n"
-            mismatch_message += "The following players' Riot IDs don't match the game data:\n"
-            
+            mismatch_message = (
+                "The most recent match does not match the 10-man's match.\n\n"
+            )
+            mismatch_message += (
+                "The following players' Riot IDs don't match the game data:\n"
+            )
+
             for name, tag in missing_players:
                 mismatch_message += f"• {name}#{tag}\n"
-            
+
             mismatch_message += "\nPossible reasons:\n"
-            mismatch_message += "1. Did you or someone make a change to their Riot name/tag?\n"
+            mismatch_message += (
+                "1. Did you or someone make a change to their Riot name/tag?\n"
+            )
             mismatch_message += "2. Are you trying to report the correct match?\n\n"
             mismatch_message += "If you changed your Riot ID, please use `!linkriot NewName#NewTag` to update it."
-            
+
             await ctx.send(mismatch_message)
             return
 
@@ -715,7 +778,7 @@ class BotCommands(commands.Cog):
             if team.get("won"):
                 winning_team_id = team.get("team_id", "").lower()
                 break
-        
+
         print(f"[DEBUG]: Winning team: {winning_team_id}")
         if not winning_team_id:
             await ctx.send("Could not determine the winning team.")
@@ -770,21 +833,30 @@ class BotCommands(commands.Cog):
         pre_update_mmr = copy.deepcopy(self.bot.player_mmr)
 
         valid_mmr_entries = [
-            (pid, stats) for pid, stats in pre_update_mmr.items()
+            (pid, stats)
+            for pid, stats in pre_update_mmr.items()
             if isinstance(stats, dict) and "mmr" in stats
         ]
 
         if valid_mmr_entries:
-            sorted_mmr_before = sorted(valid_mmr_entries, key=lambda x: x[1]["mmr"], reverse=True)
+            sorted_mmr_before = sorted(
+                valid_mmr_entries, key=lambda x: x[1]["mmr"], reverse=True
+            )
             top_mmr_before = sorted_mmr_before[0][1]["mmr"]
-            top_players_before = [str(pid) for pid, stats in sorted_mmr_before if stats["mmr"] == top_mmr_before]
+            top_players_before = [
+                str(pid)
+                for pid, stats in sorted_mmr_before
+                if stats["mmr"] == top_mmr_before
+            ]
         else:
             top_mmr_before = 1000
             top_players_before = []
 
         # Update stats for each player
         for player_stats in match_players:
-            update_stats(player_stats, total_rounds, self.bot.player_mmr, self.bot.player_names)
+            update_stats(
+                player_stats, total_rounds, self.bot.player_mmr, self.bot.player_names
+            )
         print("[DEBUG] Basic stats updated")
 
         # Adjust MMR once
@@ -800,7 +872,6 @@ class BotCommands(commands.Cog):
 
         # save all updates to the database
         print("Before player stats updated")
-        
 
         for discord_id, stats in self.bot.player_mmr.items():
             # Get the riot name for the player
@@ -821,20 +892,22 @@ class BotCommands(commands.Cog):
                 "matches_played": stats.get("matches_played", 0),
                 "total_rounds_played": stats.get("total_rounds_played", 0),
                 "average_combat_score": stats.get("average_combat_score", 0),
-                "kill_death_ratio": stats.get("kill_death_ratio", 0)
+                "kill_death_ratio": stats.get("kill_death_ratio", 0),
             }
 
             mmr_collection.update_one(
-                {"player_id": discord_id},
-                {"$set": complete_stats},
-                upsert=True
+                {"player_id": discord_id}, {"$set": complete_stats}, upsert=True
             )
 
         print("[DEBUG] All stats saved to database")
 
-        sorted_mmr_after = sorted(self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
+        sorted_mmr_after = sorted(
+            self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
+        )
         top_mmr_after = sorted_mmr_after[0][1]["mmr"]
-        top_players_after = [pid for pid, stats in sorted_mmr_after if stats["mmr"] == top_mmr_after]
+        top_players_after = [
+            pid for pid, stats in sorted_mmr_after if stats["mmr"] == top_mmr_after
+        ]
 
         new_top_players = set(top_players_after) - set(top_players_before)
         if new_top_players:
@@ -847,6 +920,7 @@ class BotCommands(commands.Cog):
 
         def _add_months(dt, months):
             from calendar import monthrange
+
             year = dt.year + (dt.month - 1 + months) // 12
             month = (dt.month - 1 + months) % 12 + 1
             day = min(dt.day, monthrange(year, month)[1])
@@ -854,7 +928,7 @@ class BotCommands(commands.Cog):
 
         # Record every match played in a new collection
         all_matches.insert_one(match)
-        
+
         now_utc = datetime.now(timezone.utc)
         current = seasons.find_one({"_id": "current"}) or {}
 
@@ -869,7 +943,9 @@ class BotCommands(commands.Cog):
                 upsert=True,
             )
 
-        season_end_utc = _aware_utc(_add_months(started_at, reset_months))  # <-- normalize
+        season_end_utc = _aware_utc(
+            _add_months(started_at, reset_months)
+        )  # <-- normalize
 
         if not current.get("is_closed", False) and now_utc >= season_end_utc:
             await self.end_season(ctx, started_at_utc=started_at, ended_at_utc=now_utc)
@@ -887,8 +963,10 @@ class BotCommands(commands.Cog):
         tz_central = ZoneInfo("America/Chicago")
         now_utc = datetime.now(timezone.utc)
 
-        started_at_utc = _aware_utc(started_at_utc or current.get("started_at") or now_utc)
-        ended_at_utc   = _aware_utc(ended_at_utc or now_utc)
+        started_at_utc = _aware_utc(
+            started_at_utc or current.get("started_at") or now_utc
+        )
+        ended_at_utc = _aware_utc(ended_at_utc or now_utc)
 
         # Determine winner
         top_doc = mmr_collection.find_one(sort=[("mmr", -1)])
@@ -908,7 +986,9 @@ class BotCommands(commands.Cog):
 
         started_cst = started_at_utc.astimezone(tz_central) if started_at_utc else None
         ended_cst = ended_at_utc.astimezone(tz_central)
-        started_str = started_cst.strftime("%Y-%m-%d %I:%M %p %Z") if started_cst else "unknown"
+        started_str = (
+            started_cst.strftime("%Y-%m-%d %I:%M %p %Z") if started_cst else "unknown"
+        )
         ended_str = ended_cst.strftime("%Y-%m-%d %I:%M %p %Z")
 
         await ctx.send(
@@ -920,13 +1000,15 @@ class BotCommands(commands.Cog):
 
         seasons.update_one(
             {"_id": "current"},
-            {"$set": {
-                "is_closed": True,
-                "ended_at": ended_at_utc,
-                "winner_player_id": winner_player_id,
-                "winner_name": winner_name,
-                "winner_mmr": winner_mmr,
-            }},
+            {
+                "$set": {
+                    "is_closed": True,
+                    "ended_at": ended_at_utc,
+                    "winner_player_id": winner_player_id,
+                    "winner_name": winner_name,
+                    "winner_mmr": winner_mmr,
+                }
+            },
             upsert=True,
         )
 
@@ -936,22 +1018,24 @@ class BotCommands(commands.Cog):
 
         seasons.update_one(
             {"_id": "current"},
-            {"$set": {
-                "season_number": next_season_number,
-                "started_at": ended_at_utc,         
-                "is_closed": False,
-                "reset_period_months": reset_period_months,
-                "matches_played": 0,                
-                "last_season": {
-                    "season_number": current.get("season_number", 1),
-                    "started_at": started_at_utc,
-                    "ended_at": ended_at_utc,
-                    "winner_player_id": winner_player_id,
-                    "winner_name": winner_name,
-                    "winner_mmr": winner_mmr,
-                    "matches_played": current.get("matches_played", 0),
-                },
-            }},
+            {
+                "$set": {
+                    "season_number": next_season_number,
+                    "started_at": ended_at_utc,
+                    "is_closed": False,
+                    "reset_period_months": reset_period_months,
+                    "matches_played": 0,
+                    "last_season": {
+                        "season_number": current.get("season_number", 1),
+                        "started_at": started_at_utc,
+                        "ended_at": ended_at_utc,
+                        "winner_player_id": winner_player_id,
+                        "winner_name": winner_name,
+                        "winner_mmr": winner_mmr,
+                        "matches_played": current.get("matches_played", 0),
+                    },
+                }
+            },
         )
 
     # Allow players to check their MMR and stats
@@ -964,7 +1048,9 @@ class BotCommands(commands.Cog):
             except ValueError:
                 await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
                 return
-            player_data = users.find_one({"name": str(riot_name).lower(), "tag": str(riot_tag).lower()})
+            player_data = users.find_one(
+                {"name": str(riot_name).lower(), "tag": str(riot_tag).lower()}
+            )
             if player_data:
                 player_id = str(player_data.get("discord_id"))
             else:
@@ -997,9 +1083,13 @@ class BotCommands(commands.Cog):
 
             total_players = len(self.bot.player_mmr)
             sorted_mmr = sorted(
-                [(pid, stats) for pid, stats in self.bot.player_mmr.items() if "mmr" in stats],
+                [
+                    (pid, stats)
+                    for pid, stats in self.bot.player_mmr.items()
+                    if "mmr" in stats
+                ],
                 key=lambda x: x[1]["mmr"],
-                reverse=True
+                reverse=True,
             )
             position = None
             slash = "/"
@@ -1039,12 +1129,7 @@ class BotCommands(commands.Cog):
         sorted_data.sort(key=lambda x: x.get("mmr", 0), reverse=True)
 
         self.leaderboard_view = LeaderboardView(
-            ctx, 
-            self.bot, 
-            sorted_data, 
-            players_per_page=10, 
-            timeout=None, 
-            mode="normal"
+            ctx, self.bot, sorted_data, players_per_page=10, timeout=None, mode="normal"
         )
 
         # Calculate initial page data
@@ -1065,26 +1150,30 @@ class BotCommands(commands.Cog):
             else:
                 name = "Unknown"
 
-            leaderboard_data.append([
-                idx,
-                name,
-                stats.get("mmr", 1000),
-                stats.get("wins", 0),
-                stats.get("losses", 0),
-                f"{stats.get('average_combat_score', 0):.2f}",
-                f"{stats.get('kill_death_ratio', 0):.2f}"
-            ])
+            leaderboard_data.append(
+                [
+                    idx,
+                    name,
+                    stats.get("mmr", 1000),
+                    stats.get("wins", 0),
+                    stats.get("losses", 0),
+                    f"{stats.get('average_combat_score', 0):.2f}",
+                    f"{stats.get('kill_death_ratio', 0):.2f}",
+                ]
+            )
 
         table_output = t2a(
             header=["Rank", "User", "MMR", "Wins", "Losses", "Avg ACS", "K/D"],
             body=leaderboard_data,
             first_col_heading=True,
-            style=PresetStyle.thick_compact
+            style=PresetStyle.thick_compact,
         )
 
         content = f"## MMR Leaderboard (Page 1/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
-        
-        self.leaderboard_message = await ctx.send(content=content, view=self.leaderboard_view)
+
+        self.leaderboard_message = await ctx.send(
+            content=content, view=self.leaderboard_view
+        )
 
         if self.refresh_task is not None:
             self.refresh_task.cancel()
@@ -1177,9 +1266,7 @@ class BotCommands(commands.Cog):
         # Sort all players by MMR
         sorted_kd = sorted(
             self.bot.player_mmr.items(),
-            key=lambda x: x[1].get(
-                "kill_death_ratio", 0.0
-            ),  
+            key=lambda x: x[1].get("kill_death_ratio", 0.0),
             reverse=True,
         )
 
@@ -1257,7 +1344,7 @@ class BotCommands(commands.Cog):
         # Sort all players by wins
         sorted_wins = sorted(
             self.bot.player_mmr.items(),
-            key=lambda x: x[1].get("wins", 0.0), 
+            key=lambda x: x[1].get("wins", 0.0),
             reverse=True,
         )
 
@@ -1335,9 +1422,7 @@ class BotCommands(commands.Cog):
         # Sort all players by ACS
         sorted_acs = sorted(
             self.bot.player_mmr.items(),
-            key=lambda x: x[1].get(
-                "average_combat_score", 0.0
-            ),  
+            key=lambda x: x[1].get("average_combat_score", 0.0),
             reverse=True,
         )
 
@@ -1465,8 +1550,9 @@ class BotCommands(commands.Cog):
             return
 
         from urllib.parse import quote
+
         q_name = quote(riot_name, safe="")
-        q_tag  = quote(riot_tag,  safe="")
+        q_tag = quote(riot_tag, safe="")
 
         url = f"https://api.henrikdev.xyz/valorant/v2/account/{q_name}/{q_tag}"
         try:
@@ -1477,16 +1563,22 @@ class BotCommands(commands.Cog):
 
         # fully document API outcomes
         if resp.status_code == 401:
-            await ctx.send("HenrikDev API rejected the request (401). Check that your API key is valid.")
+            await ctx.send(
+                "HenrikDev API rejected the request (401). Check that your API key is valid."
+            )
             return
         if resp.status_code == 429:
             await ctx.send("Rate limit hit (429). Try again in a bit.")
             return
         if resp.status_code == 503:
-            await ctx.send("Riot/HenrikDev upstream is temporarily unavailable (503). Try again later.")
+            await ctx.send(
+                "Riot/HenrikDev upstream is temporarily unavailable (503). Try again later."
+            )
             return
         if resp.status_code == 404:
-            await ctx.send("Could not find that Riot account. Double-check the name and tag.")
+            await ctx.send(
+                "Could not find that Riot account. Double-check the name and tag."
+            )
             return
         if resp.status_code != 200:
             await ctx.send(f"Unexpected error from API ({resp.status_code}).")
@@ -1494,40 +1586,54 @@ class BotCommands(commands.Cog):
 
         data = resp.json()
         if "data" not in data:
-            await ctx.send("Could not find your Riot account. Please check the name and tag.")
+            await ctx.send(
+                "Could not find your Riot account. Please check the name and tag."
+            )
             return
 
         discord_id = str(ctx.author.id)
         users.update_one(
             {"discord_id": discord_id},
-            {"$set": {
-                "discord_id": discord_id,
-                "name": riot_name.lower().strip(),
-                "tag":  riot_tag.lower().strip(),
-            }},
-            upsert=True
+            {
+                "$set": {
+                    "discord_id": discord_id,
+                    "name": riot_name.lower().strip(),
+                    "tag": riot_tag.lower().strip(),
+                }
+            },
+            upsert=True,
         )
 
         full_name = f"{riot_name}#{riot_tag}"
-        mmr_collection.update_one({"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False)
-        tdm_mmr_collection.update_one({"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False)
+        mmr_collection.update_one(
+            {"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False
+        )
+        tdm_mmr_collection.update_one(
+            {"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False
+        )
 
-        if self.bot.signup_active and any(p["id"] == discord_id for p in self.bot.queue):
+        if self.bot.signup_active and any(
+            p["id"] == discord_id for p in self.bot.queue
+        ):
             if self.bot.current_signup_message:
                 riot_names = []
                 for player in self.bot.queue:
                     player_data = users.find_one({"discord_id": player["id"]})
                     riot_names.append(
-                        f"{player_data.get('name')}#{player_data.get('tag')}" if player_data else "Unknown"
+                        f"{player_data.get('name')}#{player_data.get('tag')}"
+                        if player_data
+                        else "Unknown"
                     )
                 try:
                     await self.bot.current_signup_message.edit(
-                        content="Click a button to manage your queue status!\n" +
-                                f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}"
+                        content="Click a button to manage your queue status!\n"
+                        + f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}"
                     )
                 except discord.NotFound:
                     pass
-            await ctx.send(f"Successfully linked {full_name} to your Discord account and updated your active queue entry.")
+            await ctx.send(
+                f"Successfully linked {full_name} to your Discord account and updated your active queue entry."
+            )
         else:
             await ctx.send(f"Successfully linked {full_name} to your Discord account.")
 
@@ -1632,17 +1738,17 @@ class BotCommands(commands.Cog):
         if not self.bot.signup_active:
             await ctx.send("No signup is active to cancel")
             return
-            
+
         if self.bot.signup_view:
             self.bot.signup_view.cleanup()
             self.bot.signup_view = None
-            
+
         self.bot.queue = []
         self.bot.current_signup_message = None
         self.bot.signup_active = False
-        
+
         await ctx.send("Canceled Signup")
-        
+
         try:
             await self.bot.match_channel.delete()
             await self.bot.match_role.delete()
@@ -1666,14 +1772,13 @@ class BotCommands(commands.Cog):
         draft = CaptainsDraftingView(ctx, self.bot)
         await draft.send_current_draft_view()
 
-
     # Custom Help Command
     @commands.command()
     async def help(self, ctx):
         help_embed = discord.Embed(
-            title="Help Menu", 
+            title="Help Menu",
             description="Duck's 10 Mans & TDM Commands:",
-            color=discord.Color.green()
+            color=discord.Color.green(),
         )
 
         # General Commands
@@ -1686,7 +1791,7 @@ class BotCommands(commands.Cog):
                 "**!stats** - Check your MMR and match stats\n"
                 "**!linkriot** - Link Riot account using `Name#Tag`\n"
             ),
-            inline=False
+            inline=False,
         )
 
         # TDM Commands
@@ -1697,10 +1802,10 @@ class BotCommands(commands.Cog):
                 "**!tdmreport** - Report TDM match results\n"
                 "**!tdmstats** - View TDM-specific stats\n"
             ),
-            inline=False
+            inline=False,
         )
 
-        # Leaderboard Commands  
+        # Leaderboard Commands
         help_embed.add_field(
             name="Leaderboard Commands",
             value=(
@@ -1709,7 +1814,7 @@ class BotCommands(commands.Cog):
                 "**!leaderboard_wins** - View wins leaderboard\n"
                 "**!leaderboard_ACS** - View ACS leaderboard\n"
             ),
-            inline=False
+            inline=False,
         )
 
         # Admin Commands
@@ -1722,7 +1827,7 @@ class BotCommands(commands.Cog):
                 "**!canceltdm** - Cancel current TDM signup\n"
                 "**!toggledev** - Toggle Developer Mode\n"
             ),
-            inline=False
+            inline=False,
         )
 
         # Footer

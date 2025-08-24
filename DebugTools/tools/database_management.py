@@ -15,6 +15,7 @@ users = db["users"]
 mmr_collection = db["mmr_data"]
 all_matches = db["matches"]
 
+
 class StatChange:
     def __init__(self, collection, id, player_name, stat_name, old, new):
         self.collection = collection
@@ -24,10 +25,13 @@ class StatChange:
         self.old = old
         self.new = new
 
+
 class FieldNotFound(Exception):
     """A custom exception for alterting when a field is not found."""
+
     def __init__(self, message):
         super().__init__(message)
+
 
 # Function that raises an error if the default value is selected
 def get_field_prevent_default(document, field, default):
@@ -36,6 +40,7 @@ def get_field_prevent_default(document, field, default):
         raise FieldNotFound(f"{field} not found in {document}.")
     return data
 
+
 def get_lower_names_changes() -> list[StatChange]:
     stat_changes: list[StatChange] = []
     for user in users.find():
@@ -43,24 +48,42 @@ def get_lower_names_changes() -> list[StatChange]:
         tag = get_field_prevent_default(user, "tag", "")
         riot_name = name + "#" + tag
 
-        stat_changes.append(StatChange(users, user["_id"], riot_name, "name", name, name.lower()))
-        stat_changes.append(StatChange(users, user["_id"], riot_name, "tag", tag, tag.lower()))
+        stat_changes.append(
+            StatChange(users, user["_id"], riot_name, "name", name, name.lower())
+        )
+        stat_changes.append(
+            StatChange(users, user["_id"], riot_name, "tag", tag, tag.lower())
+        )
 
     for user_data in mmr_collection.find():
         name = get_field_prevent_default(user_data, "name", "")
         riot_name = name
 
         # Lower all names in users collection
-        stat_changes.append(StatChange(mmr_collection, user_data["_id"], riot_name, "name", riot_name, riot_name.lower()))
+        stat_changes.append(
+            StatChange(
+                mmr_collection,
+                user_data["_id"],
+                riot_name,
+                "name",
+                riot_name,
+                riot_name.lower(),
+            )
+        )
 
     return stat_changes
 
+
 def display_change(change: StatChange):
-    print(f"({change.player_name}) {change.collection.name}-{change.stat_name}: {change.old}->{change.new}")
+    print(
+        f"({change.player_name}) {change.collection.name}-{change.stat_name}: {change.old}->{change.new}"
+    )
+
 
 def display_all_changes(stat_changes: list[StatChange]):
     for change in stat_changes:
         display_change(change)
+
 
 def make_changes_to_database(stat_changes: list[StatChange]):
     print("\nMaking changes to database:")
@@ -68,10 +91,11 @@ def make_changes_to_database(stat_changes: list[StatChange]):
         display_change(change)
 
         collection = change.collection
-        collection.update_one({"_id": change.id}, {"$set": {change.stat_name: change.new}})
+        collection.update_one(
+            {"_id": change.id}, {"$set": {change.stat_name: change.new}}
+        )
 
     print(f"Completed Changes")
-
 
 
 def lower_names():
@@ -79,12 +103,15 @@ def lower_names():
     print(f"All Changes that will be made to the database:")
     display_all_changes(name_changes)
 
-    confirm = input("Are you sure you want to make these changes to the database (Y/n)? ")
+    confirm = input(
+        "Are you sure you want to make these changes to the database (Y/n)? "
+    )
 
     if confirm.lower() != "y":
         return
 
     make_changes_to_database(name_changes)
+
 
 def reset_collection_to_defaults():
     """
@@ -103,7 +130,13 @@ def reset_collection_to_defaults():
         "kill_death_ratio": 0,
     }
 
-    confirmation = input("Are you sure you want to reset the collection to default values? This action cannot be undone. (Y/n): ").strip().lower()
+    confirmation = (
+        input(
+            "Are you sure you want to reset the collection to default values? This action cannot be undone. (Y/n): "
+        )
+        .strip()
+        .lower()
+    )
     if confirmation == "y":
         result = mmr_collection.update_many({}, {"$set": default_values})
         print(f"Reset {result.modified_count} documents to default values.")
