@@ -6,7 +6,16 @@ import discord
 from discord.ui import Button
 
 from database import users
+from riot_api import verify_riot_account
 from views.mode_vote_view import ModeVoteView
+from identity import ensure_current_riot_identity
+
+async def _safe_reply(interaction, *args, **kwargs):
+    """Send an interaction reply exactly once; afterward, use followup."""
+    if interaction.response.is_done():
+        await interaction.followup.send(*args, **kwargs)
+    else:
+        await interaction.response.send_message(*args, **kwargs)
 
 
 class SignupView(discord.ui.View):
@@ -15,7 +24,7 @@ class SignupView(discord.ui.View):
         self.ctx = ctx
         self.bot = bot
         self.bot.origin_ctx = ctx
-        # Start refresh tasks ONLY if needed
+
         self.signup_refresh_task = asyncio.create_task(self.refresh_signup_message())
         self.channel_name_refresh_task = asyncio.create_task(self.refresh_channel_name())
 
@@ -34,18 +43,36 @@ class SignupView(discord.ui.View):
         """Clean up all running tasks and state"""
         self.cancel_signup_refresh()
         self.cancel_channel_name_refresh()
-        
-        # Clear references that could prevent garbage collection
+
         self.ctx = None
         self.bot = None
         
-        # Disable all buttons
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
 
     async def sign_up_callback(self, interaction: discord.Interaction):
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         existing_user = users.find_one({"discord_id": str(interaction.user.id)})
+        if not existing_user:
+            await _safe_reply(interaction,
+                "❌ You must link your Riot account first using `!linkriot Name#Tag`.",
+                ephemeral=True
+            )
+            return
+
+        user_name = (existing_user.get("name") or "").lower().strip()
+        user_tag  = (existing_user.get("tag")  or "").lower().strip()
+        ok, reason = verify_riot_account(user_name, user_tag)
+        if not ok:
+            await _safe_reply(interaction,
+                f"❌ Your stored Riot ID `{user_name}#{user_tag}` could not be verified: {reason}\n"
+                "Please re‑link using `!linkriot Name#Tag`.",
+                ephemeral=True
+            )
+            return
+        
         if existing_user:
             string_id = str(interaction.user.id)
             if string_id not in [p["id"] for p in self.bot.queue]:
@@ -74,8 +101,8 @@ class SignupView(discord.ui.View):
                 else:
                     await interaction.followup.send("Could not assign the role. Member not found in guild.", ephemeral=True)
 
-                # Update the message content
-                await interaction.response.edit_message(
+                # Update the message
+                await interaction.message.edit(
                     content="Click a button to manage your queue status!" + "\n" + f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}", 
                     view=self
                 )
@@ -86,42 +113,37 @@ class SignupView(discord.ui.View):
 
                 # Check if queue is full AFTER adding the role
                 if len(self.bot.queue) == 10:
-                    # Cancel the refresh tasks first
                     self.cancel_signup_refresh()
-                    
-                    # Send full queue message
                     await interaction.channel.send("The queue is now full, proceeding to the voting stage.")
                     
                     # Ping all players
                     await interaction.channel.send("__Players:__ " + " ".join([f"<@{p['id']}>" for p in self.bot.queue]))
-                    
-                    # Update bot state
+   
                     self.bot.signup_active = False
                     self.ctx.channel = self.bot.match_channel
 
-                    # Clean up the signup message
                     if self.bot.current_signup_message:
                         try:
                             await self.bot.current_signup_message.delete()
                         except discord.NotFound:
                             pass
                     self.bot.current_signup_message = None
-
-                    # Start the mode vote
                     from views.mode_vote_view import ModeVoteView
                     self.bot.chosen_mode = None
                     mode_vote = ModeVoteView(self.ctx, self.bot)
                     await mode_vote.send_view()
 
             else:
-                await interaction.response.send_message("You're already in the queue!", ephemeral=True)
+                await _safe_reply(interaction,"You're already in the queue!", ephemeral=True)
         else:
-            await interaction.response.send_message(
+            await _safe_reply(interaction,
                 "You must link your Riot account first. Use `!linkriot Name#Tag`",
                 ephemeral=True
             )
 
     async def leave_queue_callback(self, interaction: discord.Interaction):
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         player_id_str = str(interaction.user.id)
         self.bot.queue = [p for p in self.bot.queue if p["id"] != player_id_str]
         self.sign_up_button.label = f"Sign Up ({len(self.bot.queue)}/10)"
@@ -131,7 +153,7 @@ class SignupView(discord.ui.View):
             user_data = users.find_one({"discord_id": str(discord_id)})
             riot_name = user_data.get("name","Unknown") if user_data else "Unknown"
             riot_names.append(riot_name)
-        await interaction.response.edit_message(
+        await interaction.message.edit(
             content="Click a button to manage your queue status!" + "\n" + f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}", view=self
         )
 
@@ -149,26 +171,40 @@ class SignupView(discord.ui.View):
 
     async def refresh_signup_message(self):
         try:
-            # Wait before first refresh to avoid immediate duplicate message
             await asyncio.sleep(60)
             while self.bot.signup_active:
-                if self.bot.current_signup_message:
-                    try:
-                        await self.bot.current_signup_message.delete()
-                    except discord.NotFound:
-                        pass
-                # Re-send the signup message after 60 seconds
                 riot_names = []
                 for player in self.bot.queue:
                     discord_id = player["id"]
                     user_data = users.find_one({"discord_id": str(discord_id)})
                     riot_name = user_data.get("name","Unknown") if user_data else "Unknown"
                     riot_names.append(riot_name)
-                self.bot.current_signup_message = await self.bot.match_channel.send(
-                    "Click a button to manage your queue status!" + "\n" + f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}",
-                    view=self,
-                    silent=True,
-                )
+
+                if self.bot.current_signup_message:
+                    try:
+                        await self.bot.current_signup_message.edit(
+                            content=(
+                                "Click a button to manage your queue status!\n"
+                                f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}"
+                            ),
+                            view=self,
+                        )
+                    except discord.NotFound:
+                        # Message deleted, recreate it
+                        self.bot.current_signup_message = await self.bot.match_channel.send(
+                            "Click a button to manage your queue status!\n"
+                            f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}",
+                            view=self,
+                            silent=True,
+                        )
+                else:
+                    self.bot.current_signup_message = await self.bot.match_channel.send(
+                        "Click a button to manage your queue status!\n"
+                        f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}",
+                        view=self,
+                        silent=True,
+                    )
+
                 await asyncio.sleep(60)
         except asyncio.CancelledError:
             pass

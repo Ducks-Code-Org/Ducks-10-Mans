@@ -2,3 +2,5 @@ discord.py==2.4.0
 pymongo==4.5.0
 requests==2.31.0
 table2ascii
+wcwidth==0.2.13
+python-dateutil>=2.9

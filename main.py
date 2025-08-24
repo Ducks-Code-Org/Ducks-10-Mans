@@ -1,14 +1,16 @@
 """Running this file starts the bot."""
 
 import os
-
+import sys
 import discord
-
 from bot import CustomBot
 
 # Set up bot
 intents = discord.Intents.default()
 intents.message_content = True
+intents.guilds = True
+intents.members = True
+
 bot = CustomBot(
     command_prefix="!",
     activity=discord.Game(name="10 Mans!"),

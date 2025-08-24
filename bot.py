@@ -4,8 +4,19 @@ from discord.ext import commands
 
 from commands import BotCommands
 from views.signup_view import SignupView
-from database import mmr_collection, users, tdm_mmr_collection
+from database import mmr_collection, users, tdm_mmr_collection, seasons
 from tdm_commands import TDMCommands
+
+from datetime import datetime, timezone
+
+from zoneinfo import ZoneInfo
+
+CST = ZoneInfo("America/Chicago")
+
+try:
+    from dateutil.relativedelta import relativedelta
+except Exception:
+    relativedelta = None
 
 class CustomBot(commands.Bot):
     def __init__(self, *args, **kwargs):
@@ -26,6 +37,10 @@ class CustomBot(commands.Bot):
         self.captain2 = None
         self.chosen_mode = None
 
+        self.match_channel = None        
+        self.match_role = None           
+        self.match_name = "10-Mans"
+
         # TDM attributes
         self.tdm_queue = []
         self.tdm_team1 = []
@@ -39,7 +54,141 @@ class CustomBot(commands.Bot):
 
         self.load_mmr_data()
         self.load_tdm_mmr_data()
+        seasons.update_one(
+            {"_id": "current"},
+            {
+                "$setOnInsert": {
+                    "season_number": 1,
+                    "started_at": datetime.now(timezone.utc),  
+                    "matches_played": 0,      
+                    "is_closed": False,
+                    "reset_period_months": 2, # 2-month seasons
+                }
+            },
+            upsert=True,
+        )
+    def _two_months_after(self, start_utc: datetime) -> datetime:
+        if relativedelta is not None:
+            return start_utc + relativedelta(months=+2)
 
+        # Fallback
+        y, m = start_utc.year, start_utc.month
+        m += 2
+        while m > 12:
+            y += 1
+            m -= 12
+        from calendar import monthrange
+        d = min(start_utc.day, monthrange(y, m)[1])
+        return datetime(y, m, d, start_utc.hour, start_utc.minute, start_utc.second, start_utc.microsecond, tzinfo=timezone.utc)
+
+    def create_new_season(self, *, reset_player_stats: bool = True) -> dict:
+        now_utc = datetime.now(timezone.utc)
+        starts = now_utc
+        ends = self._two_months_after(starts)
+
+        current = seasons.find_one({"_id": "current"}) or {}
+        next_num = int(current.get("season_number", 0)) + 1
+
+        seasons.update_one(
+            {"_id": "current"},
+            {
+
+                "$set": {
+                    "season_number": next_num,
+                    "started_at": starts,             
+                    "is_closed": False,
+                    "reset_period_months": 2,         
+                    "matches_played": 0,
+                    "ends_at_expected": ends,           
+                },
+                "$unset": {"ended_at": ""},
+            },
+            upsert=True,
+        )
+
+        if reset_player_stats:
+            self._reset_all_players_for_new_season(next_num)
+
+        # Return a small dict used by the newseason command for display
+        return {
+            "season_number": next_num,
+            "started_at": starts,                 # UTC
+            "ends_at_expected": ends,             # UTC
+            "started_at_cst": starts.astimezone(CST),
+            "ends_at_cst": ends.astimezone(CST),
+            "is_closed": False,
+        }
+    
+    def _reset_all_players_for_new_season(self, season_number: int) -> None:
+        """
+        Hard reset of everyone’s per‑season stats and MMR in the correct collections.
+        Also resets in-memory caches so commands reflect the reset immediately.
+        """
+        BASE_MMR = 1000
+
+        # Reset core 10-mans stats in db
+        mmr_collection.update_many(
+            {},
+            {"$set": {
+                "mmr": BASE_MMR,
+                "wins": 0,
+                "losses": 0,
+                "total_combat_score": 0,
+                "total_kills": 0,
+                "total_deaths": 0,
+                "matches_played": 0,
+                "total_rounds_played": 0,
+                "average_combat_score": 0,
+                "kill_death_ratio": 0,
+            }}
+        )
+
+        # Reset TDM stats in db
+        tdm_mmr_collection.update_many(
+            {},
+            {"$set": {
+                "tdm_mmr": BASE_MMR,
+                "tdm_wins": 0,
+                "tdm_losses": 0,
+                "tdm_total_kills": 0,
+                "tdm_total_deaths": 0,
+                "tdm_matches_played": 0,
+                "tdm_avg_kills": 0.0,
+                "tdm_kd_ratio": 0.0,
+            }}
+        )
+
+        # 3) Reset in-memory cache
+        for pid, stats in list(self.player_mmr.items()):
+            # Core 10-mans
+            stats.update({
+                "mmr": BASE_MMR,
+                "wins": 0,
+                "losses": 0,
+                "total_combat_score": 0,
+                "total_kills": 0,
+                "total_deaths": 0,
+                "matches_played": 0,
+                "total_rounds_played": 0,
+                "average_combat_score": 0,
+                "kill_death_ratio": 0,
+            })
+            if "tdm_mmr" in stats:
+                stats.update({
+                    "tdm_mmr": BASE_MMR,
+                    "tdm_wins": 0,
+                    "tdm_losses": 0,
+                    "tdm_total_kills": 0,
+                    "tdm_total_deaths": 0,
+                    "tdm_matches_played": 0,
+                    "tdm_avg_kills": 0.0,
+                    "tdm_kd_ratio": 0.0,
+                    "tdm_streak": 0,
+                    "tdm_performance_history": [],
+                })
+
+        self.load_mmr_data()
+        self.load_tdm_mmr_data()
 
     def load_mmr_data(self):
         self.player_mmr.clear()
@@ -124,7 +273,7 @@ class CustomBot(commands.Bot):
 
         BASE_MMR_CHANGE = 25  
         MAX_MMR_CHANGE = 35   
-        K_FACTOR = 32        # How quickly MMR adjusts
+        K_FACTOR = 32
         
         winning_team_mmr = sum(
             self.player_mmr[player["id"]].get("tdm_mmr", 1000) 
@@ -179,7 +328,6 @@ class CustomBot(commands.Bot):
     def save_tdm_mmr_data(self):
         """Save TDM MMR data to the database"""
         for player_id, stats in self.player_mmr.items():
-            # Get the Riot name and tag
             user_data = users.find_one({"discord_id": str(player_id)})
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
@@ -188,7 +336,6 @@ class CustomBot(commands.Bot):
             else:
                 name = "Unknown"
 
-            # Only update if TDM stats exist
             if "tdm_mmr" in stats:
                 tdm_mmr_collection.update_one(
                     {'player_id': player_id},
@@ -209,7 +356,6 @@ class CustomBot(commands.Bot):
     def load_tdm_mmr_data(self):
         for doc in tdm_mmr_collection.find():
             player_id = doc["player_id"]
-            # Initialize tdm stats in player_mmr
             if player_id not in self.player_mmr:
                 self.player_mmr[player_id] = {}
                 
@@ -225,18 +371,14 @@ class CustomBot(commands.Bot):
             })
 
     def ensure_tdm_player_mmr(self, player_id):
-        """Ensure TDM MMR exists for a player, loading from DB if available"""
-        player_id = str(player_id)  # Ensure consistent string ID
         if player_id not in self.player_mmr:
             self.player_mmr[player_id] = {}
             
         player_data = self.player_mmr[player_id]
-        
-        # Check if player has TDM data in database
+
         tdm_data = tdm_mmr_collection.find_one({"player_id": player_id})
         
         if tdm_data:
-            # Load existing TDM stats
             player_data.update({
                 "tdm_mmr": tdm_data.get("tdm_mmr", 1000),
                 "tdm_wins": tdm_data.get("tdm_wins", 0),
@@ -250,7 +392,6 @@ class CustomBot(commands.Bot):
                 "tdm_performance_history": tdm_data.get("tdm_performance_history", [])
             })
         else:
-            # Initialize new TDM stats if not found
             if "tdm_mmr" not in player_data:
                 player_data.update({
                     "tdm_mmr": 1000,
@@ -272,18 +413,15 @@ class CustomBot(commands.Bot):
         if not history:
             return 1.0
             
-        # Calculate average K/D from recent matches
         avg_recent_kd = sum(history) / len(history)
-        
-        # Scale the modifier between 0.8 and 1.2 based on performance
+  
         modifier = 1.0 + (avg_recent_kd - 1.0) * 0.2
         return max(0.8, min(1.2, modifier))
 
     def _calculate_tdm_uncertainty_modifier(self, player_id):
         player_data = self.player_mmr[player_id]
         matches_played = player_data.get("tdm_matches_played", 0)
-        
-        # Higher multiplier for newer players, gradually decreasing to 1.0
+
         if matches_played < 10:
             return 1.5
         elif matches_played < 20:
@@ -295,7 +433,6 @@ class CustomBot(commands.Bot):
         
     def ensure_player_mmr(self, player_id, player_names):
         if player_id not in self.player_mmr:
-            # Initialize
             self.player_mmr[player_id] = {
                 "mmr": 1000,
                 "wins": 0,
@@ -308,7 +445,6 @@ class CustomBot(commands.Bot):
                 "average_combat_score": 0,
                 "kill_death_ratio": 0,
             }
-            # Update player names
             user_data = users.find_one({"discord_id": str(player_id)})
             if user_data:
                 player_names[player_id] = user_data.get("name", "Unknown")
@@ -316,10 +452,8 @@ class CustomBot(commands.Bot):
                 player_names[player_id] = "Unknown"
 
     async def setup_hook(self):
-        # This is the recommended place for loading cogs
         await self.add_cog(BotCommands(self))
         await self.add_cog(TDMCommands(self))
-        # Add any other setup logic here
         print("Bot is ready and cogs are loaded.")
 
     def some_custom_method(self):
