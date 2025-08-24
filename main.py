@@ -13,7 +13,8 @@ intents.members = True
 bot = CustomBot(
     command_prefix="!",
     activity=discord.Game(name="10 Mans!"),
-    intents=intents, help_command=None,
+    intents=intents, 
+    help_command=None,
 )
 
 bot_token = os.getenv("bot_token")
