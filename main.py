@@ -13,7 +13,7 @@ intents.members = True
 bot = CustomBot(
     command_prefix="!",
     activity=discord.Game(name="10 Mans!"),
-    intents=intents, 
+    intents=intents,
     help_command=None,
 )
 
