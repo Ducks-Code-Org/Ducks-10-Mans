@@ -1,4 +1,4 @@
-﻿**/.idea
+**/.idea
 **/__pycache__
 *.pyc
 *.xml
@@ -7,3 +7,4 @@
 /.idea
 10mansbot.zip
 DebugTools/tools/match_reporter.py
+env.bat
