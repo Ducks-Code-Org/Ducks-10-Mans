@@ -1,7 +1,6 @@
 """Running this file starts the bot."""
 
 import os
-import sys
 import discord
 from bot import CustomBot
 
@@ -22,5 +21,3 @@ bot_token = os.getenv("bot_token")
 
 # Run the bot
 bot.run(bot_token)
-
-

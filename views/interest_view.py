@@ -1,8 +1,8 @@
 # views/interest_view.py
+from zoneinfo import ZoneInfo
+
 import discord
 from discord.ui import View, Button
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 
 from database import interests, users
 
@@ -12,15 +12,20 @@ class InterestView(View):
     A simple join/leave interest view for a planned Duck's 10 Mans slot.
     Each message is tied to one UTC timestamp (the slot time).
     """
+
     def __init__(self, scheduled_at_utc, message=None, timeout=None):
         super().__init__(timeout=timeout)
-        self.scheduled_at_utc = scheduled_at_utc 
-        self.message = message 
+        self.scheduled_at_utc = scheduled_at_utc
+        self.message = message
 
         # Buttons
         self.join_button = Button(style=discord.ButtonStyle.success, label="I’m in ✅")
-        self.leave_button = Button(style=discord.ButtonStyle.secondary, label="Remove ❌")
-        self.refresh_button = Button(style=discord.ButtonStyle.primary, label="Refresh 🔁")
+        self.leave_button = Button(
+            style=discord.ButtonStyle.secondary, label="Remove ❌"
+        )
+        self.refresh_button = Button(
+            style=discord.ButtonStyle.primary, label="Refresh 🔁"
+        )
 
         self.join_button.callback = self.join_callback
         self.leave_button.callback = self.leave_callback
@@ -78,7 +83,7 @@ class InterestView(View):
         embed = discord.Embed(
             title="",
             description=f"{self._format_header()}\n\n**Interested ({count})**:\n{body}",
-            color=discord.Color.green()
+            color=discord.Color.green(),
         )
         if self.message:
             await self.message.edit(embed=embed, view=self)

@@ -2,6 +2,7 @@
 
 from database import users, mmr_collection
 
+
 # Update stats
 def update_stats(player_stats, total_rounds, player_mmr, player_names):
     """Update player stats with proper initialization and error handling"""
@@ -30,7 +31,7 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names):
         player_data.setdefault("total_kills", 0)
         player_data.setdefault("total_deaths", 0)
         player_data.setdefault("total_rounds_played", 0)
-        
+
         # Update stats
         total_matches = player_data["matches_played"] + 1
         total_combat_score = player_data["total_combat_score"] + score
@@ -39,19 +40,25 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names):
         total_rounds_played = player_data["total_rounds_played"] + total_rounds
 
         # Calculate averages
-        average_combat_score = total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
-        kill_death_ratio = total_kills / total_deaths if total_deaths > 0 else total_kills
+        average_combat_score = (
+            total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
+        )
+        kill_death_ratio = (
+            total_kills / total_deaths if total_deaths > 0 else total_kills
+        )
 
         # Update player_mmr dictionary
-        player_mmr[discord_id].update({
-            "total_combat_score": total_combat_score,
-            "total_kills": total_kills,
-            "total_deaths": total_deaths,
-            "matches_played": total_matches,
-            "total_rounds_played": total_rounds_played,
-            "average_combat_score": average_combat_score,
-            "kill_death_ratio": kill_death_ratio
-        })
+        player_mmr[discord_id].update(
+            {
+                "total_combat_score": total_combat_score,
+                "total_kills": total_kills,
+                "total_deaths": total_deaths,
+                "matches_played": total_matches,
+                "total_rounds_played": total_rounds_played,
+                "average_combat_score": average_combat_score,
+                "kill_death_ratio": kill_death_ratio,
+            }
+        )
 
         # Update database with all fields
         mmr_collection.update_one(
@@ -67,10 +74,10 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names):
                     "average_combat_score": average_combat_score,
                     "kill_death_ratio": kill_death_ratio,
                     "total_kills": total_kills,
-                    "total_deaths": total_deaths
+                    "total_deaths": total_deaths,
                 }
             },
-            upsert=True
+            upsert=True,
         )
 
     else:
@@ -80,8 +87,12 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names):
         total_kills = kills
         total_deaths = deaths
         total_rounds_played = total_rounds
-        average_combat_score = total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
-        kill_death_ratio = total_kills / total_deaths if total_deaths > 0 else total_kills
+        average_combat_score = (
+            total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
+        )
+        kill_death_ratio = (
+            total_kills / total_deaths if total_deaths > 0 else total_kills
+        )
 
         player_mmr[discord_id] = {
             "mmr": 1000,
@@ -93,7 +104,7 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names):
             "matches_played": total_matches,
             "total_rounds_played": total_rounds_played,
             "average_combat_score": average_combat_score,
-            "kill_death_ratio": kill_death_ratio
+            "kill_death_ratio": kill_death_ratio,
         }
         player_names[discord_id] = name
 
@@ -112,8 +123,8 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names):
                     "matches_played": total_matches,
                     "total_rounds_played": total_rounds_played,
                     "average_combat_score": average_combat_score,
-                    "kill_death_ratio": kill_death_ratio
+                    "kill_death_ratio": kill_death_ratio,
                 }
             },
-            upsert=True
+            upsert=True,
         )

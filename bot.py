@@ -1,5 +1,8 @@
 """Hold various general functions of the bot."""
 
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
 from discord.ext import commands
 
 from commands import BotCommands
@@ -7,16 +10,13 @@ from views.signup_view import SignupView
 from database import mmr_collection, users, tdm_mmr_collection, seasons
 from tdm_commands import TDMCommands
 
-from datetime import datetime, timezone
-
-from zoneinfo import ZoneInfo
-
 CST = ZoneInfo("America/Chicago")
 
 try:
     from dateutil.relativedelta import relativedelta
 except Exception:
     relativedelta = None
+
 
 class CustomBot(commands.Bot):
     def __init__(self, *args, **kwargs):
@@ -37,8 +37,8 @@ class CustomBot(commands.Bot):
         self.captain2 = None
         self.chosen_mode = None
 
-        self.match_channel = None        
-        self.match_role = None           
+        self.match_channel = None
+        self.match_role = None
         self.match_name = "10-Mans"
 
         # TDM attributes
@@ -59,14 +59,15 @@ class CustomBot(commands.Bot):
             {
                 "$setOnInsert": {
                     "season_number": 1,
-                    "started_at": datetime.now(timezone.utc),  
-                    "matches_played": 0,      
+                    "started_at": datetime.now(timezone.utc),
+                    "matches_played": 0,
                     "is_closed": False,
-                    "reset_period_months": 2, # 2-month seasons
+                    "reset_period_months": 2,  # 2-month seasons
                 }
             },
             upsert=True,
         )
+
     def _two_months_after(self, start_utc: datetime) -> datetime:
         if relativedelta is not None:
             return start_utc + relativedelta(months=+2)
@@ -78,8 +79,18 @@ class CustomBot(commands.Bot):
             y += 1
             m -= 12
         from calendar import monthrange
+
         d = min(start_utc.day, monthrange(y, m)[1])
-        return datetime(y, m, d, start_utc.hour, start_utc.minute, start_utc.second, start_utc.microsecond, tzinfo=timezone.utc)
+        return datetime(
+            y,
+            m,
+            d,
+            start_utc.hour,
+            start_utc.minute,
+            start_utc.second,
+            start_utc.microsecond,
+            tzinfo=timezone.utc,
+        )
 
     def create_new_season(self, *, reset_player_stats: bool = True) -> dict:
         now_utc = datetime.now(timezone.utc)
@@ -92,14 +103,13 @@ class CustomBot(commands.Bot):
         seasons.update_one(
             {"_id": "current"},
             {
-
                 "$set": {
                     "season_number": next_num,
-                    "started_at": starts,             
+                    "started_at": starts,
                     "is_closed": False,
-                    "reset_period_months": 2,         
+                    "reset_period_months": 2,
                     "matches_played": 0,
-                    "ends_at_expected": ends,           
+                    "ends_at_expected": ends,
                 },
                 "$unset": {"ended_at": ""},
             },
@@ -112,13 +122,13 @@ class CustomBot(commands.Bot):
         # Return a small dict used by the newseason command for display
         return {
             "season_number": next_num,
-            "started_at": starts,                 # UTC
-            "ends_at_expected": ends,             # UTC
+            "started_at": starts,  # UTC
+            "ends_at_expected": ends,  # UTC
             "started_at_cst": starts.astimezone(CST),
             "ends_at_cst": ends.astimezone(CST),
             "is_closed": False,
         }
-    
+
     def _reset_all_players_for_new_season(self, season_number: int) -> None:
         """
         Hard reset of everyone’s per‑season stats and MMR in the correct collections.
@@ -129,52 +139,27 @@ class CustomBot(commands.Bot):
         # Reset core 10-mans stats in db
         mmr_collection.update_many(
             {},
-            {"$set": {
-                "mmr": BASE_MMR,
-                "wins": 0,
-                "losses": 0,
-                "total_combat_score": 0,
-                "total_kills": 0,
-                "total_deaths": 0,
-                "matches_played": 0,
-                "total_rounds_played": 0,
-                "average_combat_score": 0,
-                "kill_death_ratio": 0,
-            }}
+            {
+                "$set": {
+                    "mmr": BASE_MMR,
+                    "wins": 0,
+                    "losses": 0,
+                    "total_combat_score": 0,
+                    "total_kills": 0,
+                    "total_deaths": 0,
+                    "matches_played": 0,
+                    "total_rounds_played": 0,
+                    "average_combat_score": 0,
+                    "kill_death_ratio": 0,
+                }
+            },
         )
 
         # Reset TDM stats in db
         tdm_mmr_collection.update_many(
             {},
-            {"$set": {
-                "tdm_mmr": BASE_MMR,
-                "tdm_wins": 0,
-                "tdm_losses": 0,
-                "tdm_total_kills": 0,
-                "tdm_total_deaths": 0,
-                "tdm_matches_played": 0,
-                "tdm_avg_kills": 0.0,
-                "tdm_kd_ratio": 0.0,
-            }}
-        )
-
-        # 3) Reset in-memory cache
-        for pid, stats in list(self.player_mmr.items()):
-            # Core 10-mans
-            stats.update({
-                "mmr": BASE_MMR,
-                "wins": 0,
-                "losses": 0,
-                "total_combat_score": 0,
-                "total_kills": 0,
-                "total_deaths": 0,
-                "matches_played": 0,
-                "total_rounds_played": 0,
-                "average_combat_score": 0,
-                "kill_death_ratio": 0,
-            })
-            if "tdm_mmr" in stats:
-                stats.update({
+            {
+                "$set": {
                     "tdm_mmr": BASE_MMR,
                     "tdm_wins": 0,
                     "tdm_losses": 0,
@@ -183,9 +168,42 @@ class CustomBot(commands.Bot):
                     "tdm_matches_played": 0,
                     "tdm_avg_kills": 0.0,
                     "tdm_kd_ratio": 0.0,
-                    "tdm_streak": 0,
-                    "tdm_performance_history": [],
-                })
+                }
+            },
+        )
+
+        # 3) Reset in-memory cache
+        for pid, stats in list(self.player_mmr.items()):
+            # Core 10-mans
+            stats.update(
+                {
+                    "mmr": BASE_MMR,
+                    "wins": 0,
+                    "losses": 0,
+                    "total_combat_score": 0,
+                    "total_kills": 0,
+                    "total_deaths": 0,
+                    "matches_played": 0,
+                    "total_rounds_played": 0,
+                    "average_combat_score": 0,
+                    "kill_death_ratio": 0,
+                }
+            )
+            if "tdm_mmr" in stats:
+                stats.update(
+                    {
+                        "tdm_mmr": BASE_MMR,
+                        "tdm_wins": 0,
+                        "tdm_losses": 0,
+                        "tdm_total_kills": 0,
+                        "tdm_total_deaths": 0,
+                        "tdm_matches_played": 0,
+                        "tdm_avg_kills": 0.0,
+                        "tdm_kd_ratio": 0.0,
+                        "tdm_streak": 0,
+                        "tdm_performance_history": [],
+                    }
+                )
 
         self.load_mmr_data()
         self.load_tdm_mmr_data()
@@ -193,7 +211,7 @@ class CustomBot(commands.Bot):
     def load_mmr_data(self):
         self.player_mmr.clear()
         self.player_names.clear()
-        
+
         for doc in mmr_collection.find():
             player_id = doc["player_id"]
             self.player_mmr[player_id] = {
@@ -220,22 +238,24 @@ class CustomBot(commands.Bot):
             else:
                 name = "Unknown"
             mmr_collection.update_one(
-                {'player_id': player_id},
-                {'$set': {
-                    'mmr': stats['mmr'],
-                    'wins': stats['wins'],
-                    'losses': stats['losses'],
-                    'name': name,
-                    'total_combat_score': stats.get('total_combat_score', 0),
-                    'total_kills': stats.get('total_kills', 0),
-                    'total_deaths': stats.get('total_deaths', 0),
-                    'matches_played': stats.get('matches_played', 0),
-                    'total_rounds_played': stats.get('total_rounds_played', 0),
-                    'average_combat_score': stats.get('average_combat_score', 0),
-                    'kill_death_ratio': stats.get('kill_death_ratio', 0)
-                }},
-                upsert=True
-            )   
+                {"player_id": player_id},
+                {
+                    "$set": {
+                        "mmr": stats["mmr"],
+                        "wins": stats["wins"],
+                        "losses": stats["losses"],
+                        "name": name,
+                        "total_combat_score": stats.get("total_combat_score", 0),
+                        "total_kills": stats.get("total_kills", 0),
+                        "total_deaths": stats.get("total_deaths", 0),
+                        "matches_played": stats.get("matches_played", 0),
+                        "total_rounds_played": stats.get("total_rounds_played", 0),
+                        "average_combat_score": stats.get("average_combat_score", 0),
+                        "kill_death_ratio": stats.get("kill_death_ratio", 0),
+                    }
+                },
+                upsert=True,
+            )
 
     # adjust MMR and track wins/losses
     def adjust_mmr(self, winning_team, losing_team):
@@ -271,18 +291,17 @@ class CustomBot(commands.Bot):
 
     def adjust_tdm_mmr(self, winning_team, losing_team):
 
-        BASE_MMR_CHANGE = 25  
-        MAX_MMR_CHANGE = 35   
+        BASE_MMR_CHANGE = 25
+        MAX_MMR_CHANGE = 35
         K_FACTOR = 32
-        
+
         winning_team_mmr = sum(
-            self.player_mmr[player["id"]].get("tdm_mmr", 1000) 
+            self.player_mmr[player["id"]].get("tdm_mmr", 1000)
             for player in winning_team
         ) / len(winning_team)
-        
+
         losing_team_mmr = sum(
-            self.player_mmr[player["id"]].get("tdm_mmr", 1000) 
-            for player in losing_team
+            self.player_mmr[player["id"]].get("tdm_mmr", 1000) for player in losing_team
         ) / len(losing_team)
 
         expected_win = 1 / (1 + 10 ** ((losing_team_mmr - winning_team_mmr) / 400))
@@ -290,20 +309,26 @@ class CustomBot(commands.Bot):
         for player in winning_team:
             player_id = player["id"]
             self.ensure_tdm_player_mmr(player_id)
-            
+
             performance_mod = self._calculate_tdm_performance_modifier(player_id)
-            
+
             uncertainty_mod = self._calculate_tdm_uncertainty_modifier(player_id)
-            
+
             raw_mmr_change = K_FACTOR * (1 - expected_win)
             modified_mmr_change = raw_mmr_change * performance_mod * uncertainty_mod
-            
-            final_mmr_change = min(MAX_MMR_CHANGE, max(BASE_MMR_CHANGE, modified_mmr_change))
-            
+
+            final_mmr_change = min(
+                MAX_MMR_CHANGE, max(BASE_MMR_CHANGE, modified_mmr_change)
+            )
+
             # Update player's MMR and record
             current_mmr = self.player_mmr[player_id].get("tdm_mmr", 1000)
-            self.player_mmr[player_id]["tdm_mmr"] = round(current_mmr + final_mmr_change)
-            self.player_mmr[player_id]["tdm_wins"] = self.player_mmr[player_id].get("tdm_wins", 0) + 1
+            self.player_mmr[player_id]["tdm_mmr"] = round(
+                current_mmr + final_mmr_change
+            )
+            self.player_mmr[player_id]["tdm_wins"] = (
+                self.player_mmr[player_id].get("tdm_wins", 0) + 1
+            )
             self.player_mmr[player_id]["latest_tdm_mmr_change"] = final_mmr_change
 
         # Process losing team
@@ -311,18 +336,24 @@ class CustomBot(commands.Bot):
             player_id = player["id"]
             self.ensure_tdm_player_mmr(player_id)
             performance_mod = self._calculate_tdm_performance_modifier(player_id)
-  
+
             uncertainty_mod = self._calculate_tdm_uncertainty_modifier(player_id)
 
             raw_mmr_change = K_FACTOR * (0 - expected_loss)
             modified_mmr_change = raw_mmr_change * performance_mod * uncertainty_mod
 
-            final_mmr_change = max(-MAX_MMR_CHANGE, min(-BASE_MMR_CHANGE, modified_mmr_change))
-            
+            final_mmr_change = max(
+                -MAX_MMR_CHANGE, min(-BASE_MMR_CHANGE, modified_mmr_change)
+            )
+
             # Update player's MMR and record
             current_mmr = self.player_mmr[player_id].get("tdm_mmr", 1000)
-            self.player_mmr[player_id]["tdm_mmr"] = max(0, round(current_mmr + final_mmr_change))
-            self.player_mmr[player_id]["tdm_losses"] = self.player_mmr[player_id].get("tdm_losses", 0) + 1
+            self.player_mmr[player_id]["tdm_mmr"] = max(
+                0, round(current_mmr + final_mmr_change)
+            )
+            self.player_mmr[player_id]["tdm_losses"] = (
+                self.player_mmr[player_id].get("tdm_losses", 0) + 1
+            )
             self.player_mmr[player_id]["latest_tdm_mmr_change"] = final_mmr_change
 
     def save_tdm_mmr_data(self):
@@ -338,19 +369,24 @@ class CustomBot(commands.Bot):
 
             if "tdm_mmr" in stats:
                 tdm_mmr_collection.update_one(
-                    {'player_id': player_id},
-                    {'$set': {
-                        'tdm_mmr': stats['tdm_mmr'],
-                        'tdm_wins': stats['tdm_wins'],
-                        'tdm_losses': stats['tdm_losses'],
-                        'name': name,
-                        'tdm_total_kills': stats.get('tdm_total_kills', 0),
-                        'tdm_total_deaths': stats.get('tdm_total_deaths', 0),
-                        'tdm_matches_played': stats.get('tdm_matches_played', stats['tdm_wins'] + stats['tdm_losses']),
-                        'tdm_avg_kills': stats.get('tdm_avg_kills', 0),
-                        'tdm_kd_ratio': stats.get('tdm_kd_ratio', 0)
-                    }},
-                    upsert=True
+                    {"player_id": player_id},
+                    {
+                        "$set": {
+                            "tdm_mmr": stats["tdm_mmr"],
+                            "tdm_wins": stats["tdm_wins"],
+                            "tdm_losses": stats["tdm_losses"],
+                            "name": name,
+                            "tdm_total_kills": stats.get("tdm_total_kills", 0),
+                            "tdm_total_deaths": stats.get("tdm_total_deaths", 0),
+                            "tdm_matches_played": stats.get(
+                                "tdm_matches_played",
+                                stats["tdm_wins"] + stats["tdm_losses"],
+                            ),
+                            "tdm_avg_kills": stats.get("tdm_avg_kills", 0),
+                            "tdm_kd_ratio": stats.get("tdm_kd_ratio", 0),
+                        }
+                    },
+                    upsert=True,
                 )
 
     def load_tdm_mmr_data(self):
@@ -358,63 +394,71 @@ class CustomBot(commands.Bot):
             player_id = doc["player_id"]
             if player_id not in self.player_mmr:
                 self.player_mmr[player_id] = {}
-                
-            self.player_mmr[player_id].update({
-                "tdm_mmr": doc.get("tdm_mmr", 1000),
-                "tdm_wins": doc.get("tdm_wins", 0),
-                "tdm_losses": doc.get("tdm_losses", 0),
-                "tdm_total_kills": doc.get("tdm_total_kills", 0),
-                "tdm_total_deaths": doc.get("tdm_total_deaths", 0),
-                "tdm_matches_played": doc.get("tdm_matches_played", 0),
-                "tdm_avg_kills": doc.get("tdm_avg_kills", 0),
-                "tdm_kd_ratio": doc.get("tdm_kd_ratio", 0)
-            })
+
+            self.player_mmr[player_id].update(
+                {
+                    "tdm_mmr": doc.get("tdm_mmr", 1000),
+                    "tdm_wins": doc.get("tdm_wins", 0),
+                    "tdm_losses": doc.get("tdm_losses", 0),
+                    "tdm_total_kills": doc.get("tdm_total_kills", 0),
+                    "tdm_total_deaths": doc.get("tdm_total_deaths", 0),
+                    "tdm_matches_played": doc.get("tdm_matches_played", 0),
+                    "tdm_avg_kills": doc.get("tdm_avg_kills", 0),
+                    "tdm_kd_ratio": doc.get("tdm_kd_ratio", 0),
+                }
+            )
 
     def ensure_tdm_player_mmr(self, player_id):
         if player_id not in self.player_mmr:
             self.player_mmr[player_id] = {}
-            
+
         player_data = self.player_mmr[player_id]
 
         tdm_data = tdm_mmr_collection.find_one({"player_id": player_id})
-        
+
         if tdm_data:
-            player_data.update({
-                "tdm_mmr": tdm_data.get("tdm_mmr", 1000),
-                "tdm_wins": tdm_data.get("tdm_wins", 0),
-                "tdm_losses": tdm_data.get("tdm_losses", 0),
-                "tdm_total_kills": tdm_data.get("tdm_total_kills", 0),
-                "tdm_total_deaths": tdm_data.get("tdm_total_deaths", 0),
-                "tdm_matches_played": tdm_data.get("tdm_matches_played", 0),
-                "tdm_avg_kills": tdm_data.get("tdm_avg_kills", 0.0),
-                "tdm_kd_ratio": tdm_data.get("tdm_kd_ratio", 0.0),
-                "tdm_streak": tdm_data.get("tdm_streak", 0),
-                "tdm_performance_history": tdm_data.get("tdm_performance_history", [])
-            })
+            player_data.update(
+                {
+                    "tdm_mmr": tdm_data.get("tdm_mmr", 1000),
+                    "tdm_wins": tdm_data.get("tdm_wins", 0),
+                    "tdm_losses": tdm_data.get("tdm_losses", 0),
+                    "tdm_total_kills": tdm_data.get("tdm_total_kills", 0),
+                    "tdm_total_deaths": tdm_data.get("tdm_total_deaths", 0),
+                    "tdm_matches_played": tdm_data.get("tdm_matches_played", 0),
+                    "tdm_avg_kills": tdm_data.get("tdm_avg_kills", 0.0),
+                    "tdm_kd_ratio": tdm_data.get("tdm_kd_ratio", 0.0),
+                    "tdm_streak": tdm_data.get("tdm_streak", 0),
+                    "tdm_performance_history": tdm_data.get(
+                        "tdm_performance_history", []
+                    ),
+                }
+            )
         else:
             if "tdm_mmr" not in player_data:
-                player_data.update({
-                    "tdm_mmr": 1000,
-                    "tdm_wins": 0,
-                    "tdm_losses": 0,
-                    "tdm_total_kills": 0,
-                    "tdm_total_deaths": 0,
-                    "tdm_matches_played": 0,
-                    "tdm_avg_kills": 0.0,
-                    "tdm_kd_ratio": 0.0,
-                    "tdm_streak": 0,
-                    "tdm_performance_history": []
-                })
+                player_data.update(
+                    {
+                        "tdm_mmr": 1000,
+                        "tdm_wins": 0,
+                        "tdm_losses": 0,
+                        "tdm_total_kills": 0,
+                        "tdm_total_deaths": 0,
+                        "tdm_matches_played": 0,
+                        "tdm_avg_kills": 0.0,
+                        "tdm_kd_ratio": 0.0,
+                        "tdm_streak": 0,
+                        "tdm_performance_history": [],
+                    }
+                )
 
     def _calculate_tdm_performance_modifier(self, player_id):
         player_data = self.player_mmr[player_id]
         history = player_data.get("tdm_performance_history", [])
-        
+
         if not history:
             return 1.0
-            
+
         avg_recent_kd = sum(history) / len(history)
-  
+
         modifier = 1.0 + (avg_recent_kd - 1.0) * 0.2
         return max(0.8, min(1.2, modifier))
 
@@ -430,7 +474,7 @@ class CustomBot(commands.Bot):
             return 1.1
         else:
             return 1.0
-        
+
     def ensure_player_mmr(self, player_id, player_names):
         if player_id not in self.player_mmr:
             self.player_mmr[player_id] = {

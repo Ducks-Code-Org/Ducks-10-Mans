@@ -22,7 +22,9 @@ all_matches = db["matches"]
 
 
 def display_change(change: StatChange):
-    print(f"({change.player_name}) {change.collection.name}-{change.stat_name}: {change.old}->{change.new}")
+    print(
+        f"({change.player_name}) {change.collection.name}-{change.stat_name}: {change.old}->{change.new}"
+    )
 
 
 def display_all_changes(stat_changes: list[StatChange]):
@@ -38,7 +40,7 @@ def get_matchlist_changes_that_will_be_made(matchlist):
         get_deaths_from_matchlist,
         get_kills_from_matchlist,
         get_total_rounds_played_from_matchlist,
-        get_winning_team_id
+        get_winning_team_id,
     )
 
     changes: list[StatChange] = []
@@ -75,10 +77,30 @@ def get_matchlist_changes_that_will_be_made(matchlist):
             matches_played[player_name] = matches_played.get(player_name, 0) + 1
 
     for stat_name, stat_data in zip(
-            ["matches_played", "losses", "wins", "mmr", "total_combat_score", "total_deaths", "total_kills",
-             "total_rounds_played", "average_combat_score", "kill_death_ratio"],
-            [matches_played, losses, wins, mmr, total_combat_score, total_deaths, total_kills, total_rounds_played,
-             total_rounds_played, total_rounds_played],
+        [
+            "matches_played",
+            "losses",
+            "wins",
+            "mmr",
+            "total_combat_score",
+            "total_deaths",
+            "total_kills",
+            "total_rounds_played",
+            "average_combat_score",
+            "kill_death_ratio",
+        ],
+        [
+            matches_played,
+            losses,
+            wins,
+            mmr,
+            total_combat_score,
+            total_deaths,
+            total_kills,
+            total_rounds_played,
+            total_rounds_played,
+            total_rounds_played,
+        ],
     ):
         for player_name, new_value in stat_data.items():
             existing_data = mmr_collection.find_one({"name": player_name})
@@ -87,19 +109,29 @@ def get_matchlist_changes_that_will_be_made(matchlist):
                 new_value = new_value
                 if stat_name == "average_combat_score":
                     old_combat_score = existing_data.get("total_combat_score", 0)
-                    new_combat_score = old_combat_score + total_combat_score[player_name]
+                    new_combat_score = (
+                        old_combat_score + total_combat_score[player_name]
+                    )
 
-                    old_total_rounds_played = existing_data.get("total_rounds_played", 0)
-                    new_total_rounds_played = old_total_rounds_played + total_rounds_played[player_name]
+                    old_total_rounds_played = existing_data.get(
+                        "total_rounds_played", 0
+                    )
+                    new_total_rounds_played = (
+                        old_total_rounds_played + total_rounds_played[player_name]
+                    )
 
-                    old_average_combat_score = existing_data.get("average_combat_score", 0)
-                    new_average_combat_score = round(new_combat_score / new_total_rounds_played, 2)
+                    old_average_combat_score = existing_data.get(
+                        "average_combat_score", 0
+                    )
+                    new_average_combat_score = round(
+                        new_combat_score / new_total_rounds_played, 2
+                    )
 
                     change = StatChange(
                         player_name=player_name,
                         stat_name=stat_name,
                         old=old_average_combat_score,
-                        new=new_average_combat_score
+                        new=new_average_combat_score,
                     )
                     changes.append(change)
                 elif stat_name == "kill_death_ratio":
@@ -116,7 +148,7 @@ def get_matchlist_changes_that_will_be_made(matchlist):
                         player_name=player_name,
                         stat_name=stat_name,
                         old=old_kd,
-                        new=new_kd
+                        new=new_kd,
                     )
                     changes.append(change)
                 else:
@@ -139,7 +171,7 @@ def get_changes_that_will_be_made(match):
         get_deaths_from_match,
         get_kills_from_match,
         get_total_rounds_played_from_match,
-        get_winning_team_id
+        get_winning_team_id,
     )
 
     changes: list[StatChange] = []
@@ -167,10 +199,26 @@ def get_changes_that_will_be_made(match):
     total_rounds_played: dict = get_total_rounds_played_from_match(match)
 
     for stat_name, stat_data in zip(
-            ["losses", "wins", "total_combat_score", "total_deaths", "total_kills", "total_rounds_played",
-             "average_combat_score", "kill_death_ratio"],
-            [losses, wins, total_combat_score, total_deaths, total_kills, total_rounds_played, total_rounds_played,
-             total_rounds_played],
+        [
+            "losses",
+            "wins",
+            "total_combat_score",
+            "total_deaths",
+            "total_kills",
+            "total_rounds_played",
+            "average_combat_score",
+            "kill_death_ratio",
+        ],
+        [
+            losses,
+            wins,
+            total_combat_score,
+            total_deaths,
+            total_kills,
+            total_rounds_played,
+            total_rounds_played,
+            total_rounds_played,
+        ],
     ):
         for player_name, new_value in stat_data.items():
             existing_data = mmr_collection.find_one({"name": player_name})
@@ -179,19 +227,29 @@ def get_changes_that_will_be_made(match):
                 new_value = old_value + new_value
                 if stat_name == "average_combat_score":
                     old_combat_score = existing_data.get("total_combat_score", 0)
-                    new_combat_score = old_combat_score + total_combat_score[player_name]
+                    new_combat_score = (
+                        old_combat_score + total_combat_score[player_name]
+                    )
 
-                    old_total_rounds_played = existing_data.get("total_rounds_played", 0)
-                    new_total_rounds_played = old_total_rounds_played + total_rounds_played[player_name]
+                    old_total_rounds_played = existing_data.get(
+                        "total_rounds_played", 0
+                    )
+                    new_total_rounds_played = (
+                        old_total_rounds_played + total_rounds_played[player_name]
+                    )
 
-                    old_average_combat_score = existing_data.get("average_combat_score", 0)
-                    new_average_combat_score = round(new_combat_score / new_total_rounds_played, 2)
+                    old_average_combat_score = existing_data.get(
+                        "average_combat_score", 0
+                    )
+                    new_average_combat_score = round(
+                        new_combat_score / new_total_rounds_played, 2
+                    )
 
                     change = StatChange(
                         player_name=player_name,
                         stat_name=stat_name,
                         old=old_average_combat_score,
-                        new=new_average_combat_score
+                        new=new_average_combat_score,
                     )
                     changes.append(change)
                 elif stat_name == "kill_death_ratio":
@@ -208,7 +266,7 @@ def get_changes_that_will_be_made(match):
                         player_name=player_name,
                         stat_name=stat_name,
                         old=old_kd,
-                        new=new_kd
+                        new=new_kd,
                     )
                     changes.append(change)
                 else:
@@ -243,13 +301,11 @@ def make_changes(changes: list[StatChange], match=None):
         # Add old value to the new value for cumulative stats, replace for calculated stats
         if change.stat_name in ["average_combat_score", "kill_death_ratio"]:
             mmr_collection.update_one(
-                {"name": change.player_name},
-                {"$set": {change.stat_name: change.new}}
+                {"name": change.player_name}, {"$set": {change.stat_name: change.new}}
             )
         else:
             mmr_collection.update_one(
-                {"name": change.player_name},
-                {"$set": {change.stat_name: change.new}}
+                {"name": change.player_name}, {"$set": {change.stat_name: change.new}}
             )
 
     print("Changes have been successfully applied to the database.")
@@ -271,7 +327,9 @@ def confirm_changes(changes: list[StatChange], match=None):
     print("The following changes will be made:")
     display_changes(changes)
 
-    confirmation = input("Do you want to proceed with these changes? (Y/n): ").strip().lower()
+    confirmation = (
+        input("Do you want to proceed with these changes? (Y/n): ").strip().lower()
+    )
     if confirmation == "y":
         make_changes(changes, match)
         return True
@@ -298,8 +356,9 @@ def get_mmr_changes(winning_team, losing_team) -> list[StatChange]:
         if not player_data:
             # Initialize missing player data in the database
             default_mmr = 1000
-            discord_id = users.find_one({"name": player["name"].lower(), "tag": player["tag"].lower()}).get(
-                "discord_id", 0)
+            discord_id = users.find_one(
+                {"name": player["name"].lower(), "tag": player["tag"].lower()}
+            ).get("discord_id", 0)
             player_data = {
                 "player_id": discord_id,
                 "name": riot_name,
@@ -320,10 +379,12 @@ def get_mmr_changes(winning_team, losing_team) -> list[StatChange]:
 
     # Calculate average MMR for winning and losing teams
     winning_team_mmr = sum(
-        player_mmr_data[(player["name"] + "#" + player["tag"]).lower()] for player in winning_team
+        player_mmr_data[(player["name"] + "#" + player["tag"]).lower()]
+        for player in winning_team
     ) / len(winning_team)
     losing_team_mmr = sum(
-        player_mmr_data[(player["name"] + "#" + player["tag"]).lower()] for player in losing_team
+        player_mmr_data[(player["name"] + "#" + player["tag"]).lower()]
+        for player in losing_team
     ) / len(losing_team)
 
     # Calculate expected results
@@ -365,8 +426,9 @@ def get_mmr_values_multiple_teams(winning_teams, losing_teams) -> dict:
             if not player_data:
                 # Initialize missing player data in the database
                 default_mmr = 1000
-                discord_id = users.find_one({"name": player["name"].lower(), "tag": player["tag"].lower()}).get(
-                    "discord_id", 0)
+                discord_id = users.find_one(
+                    {"name": player["name"].lower(), "tag": player["tag"].lower()}
+                ).get("discord_id", 0)
                 player_data = {
                     "player_id": discord_id,
                     "name": riot_name,
@@ -388,10 +450,12 @@ def get_mmr_values_multiple_teams(winning_teams, losing_teams) -> dict:
 
         # Calculate average MMR for winning and losing teams
         winning_team_mmr = sum(
-            player_mmr_data[(player["name"] + "#" + player["tag"]).lower()] for player in winning_team
+            player_mmr_data[(player["name"] + "#" + player["tag"]).lower()]
+            for player in winning_team
         ) / len(winning_team)
         losing_team_mmr = sum(
-            player_mmr_data[(player["name"] + "#" + player["tag"]).lower()] for player in losing_team
+            player_mmr_data[(player["name"] + "#" + player["tag"]).lower()]
+            for player in losing_team
         ) / len(losing_team)
 
         # Calculate expected results
