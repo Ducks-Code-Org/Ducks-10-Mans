@@ -1,13 +1,12 @@
-import asyncio
+import os
 import random
 import discord
 from discord.ext import commands
 import requests
-from table2ascii import table2ascii as t2a, PresetStyle
 from views.tdm_map_vote_view import TDMMapVoteView
-import os
 
 from database import users, tdm_matches, tdm_mmr_collection
+
 
 class TDMCommands(commands.Cog):
     def __init__(self, bot):
@@ -29,7 +28,9 @@ class TDMCommands(commands.Cog):
             return
 
         if self.bot.match_not_reported or self.tdm_match_ongoing:
-            await ctx.send("❌ A match is still in progress. Report it before starting another one.")
+            await ctx.send(
+                "❌ A match is still in progress. Report it before starting another one."
+            )
             return
 
         # Initialize TDM state
@@ -40,21 +41,23 @@ class TDMCommands(commands.Cog):
 
         # Create match channel
         self.tdm_match_name = f"tdm-{random.randrange(1, 10**4):04}"
-        
+
         try:
             # Create and position role
             self.tdm_match_role = await ctx.guild.create_role(
-                name=self.tdm_match_name,
-                hoist=True,
-                reason="TDM Match Role"
+                name=self.tdm_match_name, hoist=True, reason="TDM Match Role"
             )
             await ctx.guild.edit_role_positions(positions={self.tdm_match_role: 5})
 
             # Set up channel permissions
             match_channel_permissions = {
-                ctx.guild.default_role: discord.PermissionOverwrite(send_messages=False),
+                ctx.guild.default_role: discord.PermissionOverwrite(
+                    send_messages=False
+                ),
                 self.tdm_match_role: discord.PermissionOverwrite(send_messages=True),
-                ctx.guild.me: discord.PermissionOverwrite(send_messages=True, manage_messages=True)
+                ctx.guild.me: discord.PermissionOverwrite(
+                    send_messages=True, manage_messages=True
+                ),
             }
 
             # Create channel
@@ -63,7 +66,7 @@ class TDMCommands(commands.Cog):
                 category=ctx.channel.category,
                 position=0,
                 overwrites=match_channel_permissions,
-                reason="TDM Match Channel"
+                reason="TDM Match Channel",
             )
         except discord.Forbidden:
             self.tdm_signup_active = False
@@ -77,42 +80,46 @@ class TDMCommands(commands.Cog):
         # Create signup view
         view = discord.ui.View(timeout=None)
         signup_button = discord.ui.Button(
-            label="Sign Up (0/6)",
-            style=discord.ButtonStyle.green,
-            emoji="✅"
+            label="Sign Up (0/6)", style=discord.ButtonStyle.green, emoji="✅"
         )
         leave_button = discord.ui.Button(
-            label="Leave Queue",
-            style=discord.ButtonStyle.red,
-            emoji="❌"
+            label="Leave Queue", style=discord.ButtonStyle.red, emoji="❌"
         )
 
         async def signup_callback(interaction):
             if len(self.tdm_queue) >= 6:
-                await interaction.response.send_message("❌ Queue is full!", ephemeral=True)
+                await interaction.response.send_message(
+                    "❌ Queue is full!", ephemeral=True
+                )
                 return
 
             existing_user = users.find_one({"discord_id": str(interaction.user.id)})
             if not existing_user:
                 await interaction.response.send_message(
                     "❌ You must link your Riot account first using `!linkriot Name#Tag`",
-                    ephemeral=True
+                    ephemeral=True,
                 )
                 return
 
             if str(interaction.user.id) not in [p["id"] for p in self.tdm_queue]:
-                self.tdm_queue.append({"id": str(interaction.user.id), "name": interaction.user.name})
+                self.tdm_queue.append(
+                    {"id": str(interaction.user.id), "name": interaction.user.name}
+                )
                 signup_button.label = f"Sign Up ({len(self.tdm_queue)}/6)"
-                
+
                 # Ensure TDM MMR exists
                 self.bot.ensure_tdm_player_mmr(str(interaction.user.id))
                 try:
                     # Add role
-                    member = interaction.guild.get_member(interaction.user.id) or await interaction.guild.fetch_member(interaction.user.id)
+                    member = interaction.guild.get_member(
+                        interaction.user.id
+                    ) or await interaction.guild.fetch_member(interaction.user.id)
                     await member.add_roles(self.tdm_match_role)
                 except discord.Forbidden:
-                    await interaction.response.send_message("⚠️ Could not assign role due to permissions.", ephemeral=True)
-                
+                    await interaction.response.send_message(
+                        "⚠️ Could not assign role due to permissions.", ephemeral=True
+                    )
+
                 # Get all queued players' Riot names
                 riot_names = []
                 for player in self.tdm_queue:
@@ -127,23 +134,25 @@ class TDMCommands(commands.Cog):
                 embed = discord.Embed(
                     title="3v3 Team Deathmatch Queue",
                     description="Click below to join or leave the queue!",
-                    color=discord.Color.blue()
+                    color=discord.Color.blue(),
                 )
                 embed.add_field(
                     name=f"Current Queue ({len(self.tdm_queue)}/6)",
-                    value="\n".join(riot_names) if riot_names else "No players in queue",
-                    inline=False
+                    value=(
+                        "\n".join(riot_names) if riot_names else "No players in queue"
+                    ),
+                    inline=False,
                 )
                 embed.add_field(
                     name="About TDM Mode",
                     value="• 3v3 Team Deathmatch\n• Balanced teams based on TDM MMR\n• First team to reach the kill limit wins",
-                    inline=False
+                    inline=False,
                 )
 
                 await interaction.message.edit(embed=embed, view=view)
                 await interaction.response.send_message(
                     f"✅ You have successfully joined the queue as **{existing_user.get('name')}#{existing_user.get('tag')}**! ({len(self.tdm_queue)}/6)",
-                    ephemeral=True
+                    ephemeral=True,
                 )
 
                 if len(self.tdm_queue) == 6:
@@ -153,29 +162,39 @@ class TDMCommands(commands.Cog):
                             await self.tdm_current_message.delete()
                         except discord.NotFound:
                             pass
-                    
-                    await interaction.channel.send("Queue is full! Starting map vote...")
-                    
+
+                    await interaction.channel.send(
+                        "Queue is full! Starting map vote..."
+                    )
+
                     # Make sure the bot's tdm_queue is up to date
                     self.bot.tdm_queue = self.tdm_queue
-                    print(f"[DEBUG] Queue before creating map vote: {self.bot.tdm_queue}")
-                    
+                    print(
+                        f"[DEBUG] Queue before creating map vote: {self.bot.tdm_queue}"
+                    )
+
                     map_vote = TDMMapVoteView(interaction.channel, self.bot)
                     await map_vote.setup()
                     await map_vote.send_vote_view()
 
         async def leave_callback(interaction):
             if str(interaction.user.id) in [p["id"] for p in self.tdm_queue]:
-                self.tdm_queue = [p for p in self.tdm_queue if p["id"] != str(interaction.user.id)]
+                self.tdm_queue = [
+                    p for p in self.tdm_queue if p["id"] != str(interaction.user.id)
+                ]
                 signup_button.label = f"Sign Up ({len(self.tdm_queue)}/6)"
-                
+
                 try:
                     # Remove role
-                    member = interaction.guild.get_member(interaction.user.id) or await interaction.guild.fetch_member(interaction.user.id)
+                    member = interaction.guild.get_member(
+                        interaction.user.id
+                    ) or await interaction.guild.fetch_member(interaction.user.id)
                     await member.remove_roles(self.tdm_match_role)
                 except discord.Forbidden:
-                    await interaction.response.send_message("⚠️ Could not remove role due to permissions.", ephemeral=True)
-                
+                    await interaction.response.send_message(
+                        "⚠️ Could not remove role due to permissions.", ephemeral=True
+                    )
+
                 # Update queue display with remaining players
                 riot_names = []
                 for player in self.tdm_queue:
@@ -189,21 +208,26 @@ class TDMCommands(commands.Cog):
                 embed = discord.Embed(
                     title="3v3 Team Deathmatch Queue",
                     description="Click below to join or leave the queue!",
-                    color=discord.Color.blue()
+                    color=discord.Color.blue(),
                 )
                 embed.add_field(
                     name=f"Current Queue ({len(self.tdm_queue)}/6)",
-                    value="\n".join(riot_names) if riot_names else "No players in queue",
-                    inline=False
+                    value=(
+                        "\n".join(riot_names) if riot_names else "No players in queue"
+                    ),
+                    inline=False,
                 )
                 embed.add_field(
                     name="About TDM Mode",
                     value="• 3v3 Team Deathmatch\n• Balanced teams based on TDM MMR\n• First team to reach the kill limit wins",
-                    inline=False
+                    inline=False,
                 )
 
                 await interaction.message.edit(embed=embed, view=view)
-                await interaction.response.send_message(f"❌ You have left the queue. ({len(self.tdm_queue)}/6)", ephemeral=True)
+                await interaction.response.send_message(
+                    f"❌ You have left the queue. ({len(self.tdm_queue)}/6)",
+                    ephemeral=True,
+                )
 
         signup_button.callback = signup_callback
         leave_button.callback = leave_callback
@@ -215,21 +239,23 @@ class TDMCommands(commands.Cog):
         embed = discord.Embed(
             title="3v3 Team Deathmatch Queue",
             description="Click below to join or leave the queue!",
-            color=discord.Color.blue()
+            color=discord.Color.blue(),
         )
         embed.add_field(
-            name="Current Queue (0/6)",
-            value="No players in queue",
-            inline=False
+            name="Current Queue (0/6)", value="No players in queue", inline=False
         )
         embed.add_field(
             name="About TDM Mode",
             value="• 3v3 Team Deathmatch\n• Balanced teams based on TDM MMR\n• First team to reach the kill limit wins",
-            inline=False
+            inline=False,
         )
 
-        self.tdm_current_message = await self.tdm_match_channel.send(embed=embed, view=view)
-        await ctx.send(f"✅ TDM Queue started! Join here: <#{self.tdm_match_channel.id}>")
+        self.tdm_current_message = await self.tdm_match_channel.send(
+            embed=embed, view=view
+        )
+        await ctx.send(
+            f"✅ TDM Queue started! Join here: <#{self.tdm_match_channel.id}>"
+        )
 
     async def make_tdm_teams(self, channel):
         players = self.tdm_queue[:]
@@ -238,28 +264,37 @@ class TDMCommands(commands.Cog):
         # Initialize TDM MMR for any players who don't have it
         for player in players:
             self.bot.ensure_tdm_player_mmr(player["id"])
-            print(f"[DEBUG] Player {player['id']} TDM MMR: {self.bot.player_mmr[player['id']].get('tdm_mmr', 1000)}")
+            print(
+                f"[DEBUG] Player {player['id']} TDM MMR: {self.bot.player_mmr[player['id']].get('tdm_mmr', 1000)}"
+            )
 
         # Sort players by TDM MMR (highest to lowest)
         players.sort(
             key=lambda p: self.bot.player_mmr[p["id"]].get("tdm_mmr", 1000),
-            reverse=True
+            reverse=True,
         )
 
         # Try every possible combination of 3 players to find the most balanced teams
-        best_mmr_diff = float('inf')
+        best_mmr_diff = float("inf")
         best_team1 = None
         best_team2 = None
 
         from itertools import combinations
+
         for team1_players in combinations(players, 3):
             # Convert to list for easier handling
             team1 = list(team1_players)
             team2 = [p for p in players if p not in team1]
 
             # Calculate team MMRs using TDM MMR
-            team1_mmr = sum(self.bot.player_mmr[p["id"]].get("tdm_mmr", 1000) for p in team1) / 3
-            team2_mmr = sum(self.bot.player_mmr[p["id"]].get("tdm_mmr", 1000) for p in team2) / 3
+            team1_mmr = (
+                sum(self.bot.player_mmr[p["id"]].get("tdm_mmr", 1000) for p in team1)
+                / 3
+            )
+            team2_mmr = (
+                sum(self.bot.player_mmr[p["id"]].get("tdm_mmr", 1000) for p in team2)
+                / 3
+            )
 
             mmr_diff = abs(team1_mmr - team2_mmr)
             print(f"[DEBUG] Team split MMR diff: {mmr_diff}")
@@ -277,14 +312,16 @@ class TDMCommands(commands.Cog):
         embed = discord.Embed(
             title="3v3 Team Deathmatch Teams",
             description="Teams have been balanced by TDM MMR",
-            color=discord.Color.blue()
+            color=discord.Color.blue(),
         )
 
         # Format team displays
         for team_num, team in [(1, self.tdm_team1), (2, self.tdm_team2)]:
-            team_mmr = sum(self.bot.player_mmr[p["id"]].get("tdm_mmr", 1000) for p in team) / 3
+            team_mmr = (
+                sum(self.bot.player_mmr[p["id"]].get("tdm_mmr", 1000) for p in team) / 3
+            )
             team_text = []
-            
+
             for player in team:
                 user_data = users.find_one({"discord_id": player["id"]})
                 if user_data:
@@ -295,18 +332,20 @@ class TDMCommands(commands.Cog):
             embed.add_field(
                 name=f"Team {team_num} (Avg MMR: {team_mmr:.0f})",
                 value="\n".join(team_text),
-                inline=False
+                inline=False,
             )
 
         embed.add_field(
             name="MMR Difference",
             value=f"Team MMR difference: {best_mmr_diff:.1f}",
-            inline=False
+            inline=False,
         )
 
         await channel.send(embed=embed)
-        await channel.send("Teams are set! Start your match and use `!tdmreport` when finished.")
-        
+        await channel.send(
+            "Teams are set! Start your match and use `!tdmreport` when finished."
+        )
+
         # Update match status
         self.tdm_match_ongoing = True
         self.tdm_signup_active = False
@@ -326,7 +365,9 @@ class TDMCommands(commands.Cog):
 
         current_user = users.find_one({"discord_id": str(ctx.author.id)})
         if not current_user:
-            await ctx.send("You need to link your Riot account first using `!linkriot Name#Tag`")
+            await ctx.send(
+                "You need to link your Riot account first using `!linkriot Name#Tag`"
+            )
             return
 
         name = current_user.get("name", "").lower()
@@ -337,7 +378,9 @@ class TDMCommands(commands.Cog):
         # Get match data from API
         url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{name}/{tag}"
         try:
-            response = requests.get(url, headers={"Authorization": os.getenv("api_key")}, timeout=30)
+            response = requests.get(
+                url, headers={"Authorization": os.getenv("api_key")}, timeout=30
+            )
             match_data = response.json()
 
             if "data" not in match_data or not match_data["data"]:
@@ -373,19 +416,23 @@ class TDMCommands(commands.Cog):
 
             # Determine winning team by total kills
             team1_kills = sum(
-                player.get("stats", {}).get("kills", 0) 
-                for player in match_players 
+                player.get("stats", {}).get("kills", 0)
+                for player in match_players
                 if self._is_player_in_team(player, self.tdm_team1)
             )
-            
+
             team2_kills = sum(
                 player.get("stats", {}).get("kills", 0)
-                for player in match_players 
+                for player in match_players
                 if self._is_player_in_team(player, self.tdm_team2)
             )
 
-            winning_team = self.tdm_team1 if team1_kills > team2_kills else self.tdm_team2
-            losing_team = self.tdm_team2 if team1_kills > team2_kills else self.tdm_team1
+            winning_team = (
+                self.tdm_team1 if team1_kills > team2_kills else self.tdm_team2
+            )
+            losing_team = (
+                self.tdm_team2 if team1_kills > team2_kills else self.tdm_team1
+            )
 
             # Update player stats
             for player_stats in match_players:
@@ -393,38 +440,46 @@ class TDMCommands(commands.Cog):
 
             # Adjust MMR
             self.bot.adjust_tdm_mmr(winning_team, losing_team)
-            
+
             # Save both MMR data and stats
-            self.bot.save_tdm_mmr_data()  
-            
+            self.bot.save_tdm_mmr_data()
+
             for player in winning_team + losing_team:
                 player_id = player["id"]
                 if player_id in self.bot.player_mmr:
                     stats = self.bot.player_mmr[player_id]
                     user_data = users.find_one({"discord_id": str(player_id)})
-                    name = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}" if user_data else "Unknown"
-                    
+                    name = (
+                        f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
+                        if user_data
+                        else "Unknown"
+                    )
+
                     tdm_mmr_collection.update_one(
-                        {'player_id': player_id},
-                        {'$set': {
-                            'tdm_mmr': stats.get('tdm_mmr', 1000),
-                            'tdm_wins': stats.get('tdm_wins', 0),
-                            'tdm_losses': stats.get('tdm_losses', 0),
-                            'name': name,
-                            'tdm_total_kills': stats.get('tdm_total_kills', 0),
-                            'tdm_total_deaths': stats.get('tdm_total_deaths', 0),
-                            'tdm_matches_played': stats.get('tdm_matches_played', 0),
-                            'tdm_avg_kills': stats.get('tdm_avg_kills', 0),
-                            'tdm_kd_ratio': stats.get('tdm_kd_ratio', 0)
-                        }},
-                        upsert=True
+                        {"player_id": player_id},
+                        {
+                            "$set": {
+                                "tdm_mmr": stats.get("tdm_mmr", 1000),
+                                "tdm_wins": stats.get("tdm_wins", 0),
+                                "tdm_losses": stats.get("tdm_losses", 0),
+                                "name": name,
+                                "tdm_total_kills": stats.get("tdm_total_kills", 0),
+                                "tdm_total_deaths": stats.get("tdm_total_deaths", 0),
+                                "tdm_matches_played": stats.get(
+                                    "tdm_matches_played", 0
+                                ),
+                                "tdm_avg_kills": stats.get("tdm_avg_kills", 0),
+                                "tdm_kd_ratio": stats.get("tdm_kd_ratio", 0),
+                            }
+                        },
+                        upsert=True,
                     )
 
             # Create results embed
             embed = discord.Embed(
                 title="TDM Match Results",
                 description=f"Final Score: {max(team1_kills, team2_kills)} - {min(team1_kills, team2_kills)}",
-                color=discord.Color.blue()
+                color=discord.Color.blue(),
             )
 
             # Add team stats to embed
@@ -435,20 +490,32 @@ class TDMCommands(commands.Cog):
                     if user_data:
                         player_name = f"{user_data.get('name')}#{user_data.get('tag')}"
                         player_stats = next(
-                            (p for p in match_players if p["name"].lower() == user_data["name"].lower()),
-                            None
+                            (
+                                p
+                                for p in match_players
+                                if p["name"].lower() == user_data["name"].lower()
+                            ),
+                            None,
                         )
                         if player_stats:
                             kills = player_stats.get("stats", {}).get("kills", 0)
                             deaths = player_stats.get("stats", {}).get("deaths", 0)
-                            kd = f"{kills}/{deaths} ({kills/deaths:.2f})" if deaths > 0 else f"{kills}/0 (∞)"
-                            mmr_change = self.bot.player_mmr[player["id"]].get("latest_tdm_mmr_change", 0)
-                            team_stats.append(f"{player_name}: {kd} (MMR {mmr_change:+d})")
+                            kd = (
+                                f"{kills}/{deaths} ({kills/deaths:.2f})"
+                                if deaths > 0
+                                else f"{kills}/0 (∞)"
+                            )
+                            mmr_change = self.bot.player_mmr[player["id"]].get(
+                                "latest_tdm_mmr_change", 0
+                            )
+                            team_stats.append(
+                                f"{player_name}: {kd} (MMR {mmr_change:+d})"
+                            )
 
                 embed.add_field(
                     name=f"{'Winner' if team_num == 1 else 'Loser'} - Team {team_num}",
                     value="\n".join(team_stats) or "No stats available",
-                    inline=False
+                    inline=False,
                 )
 
             await ctx.send(embed=embed)
@@ -456,13 +523,13 @@ class TDMCommands(commands.Cog):
 
             # Save match to database
             tdm_matches.insert_one(match)
-            
+
             # Cleanup
             if self.tdm_match_channel:
                 await self.tdm_match_channel.delete()
             if self.tdm_match_role:
                 await self.tdm_match_role.delete()
-            
+
             self.tdm_match_ongoing = False
             self.tdm_queue = []
             self.tdm_team1 = []
@@ -475,19 +542,21 @@ class TDMCommands(commands.Cog):
     def _is_player_in_team(self, player_stats, team):
         player_name = player_stats.get("name", "").lower()
         player_tag = player_stats.get("tag", "").lower()
-        
+
         for team_player in team:
             user_data = users.find_one({"discord_id": str(team_player["id"])})
             if user_data:
-                if user_data.get("name", "").lower() == player_name and \
-                user_data.get("tag", "").lower() == player_tag:
+                if (
+                    user_data.get("name", "").lower() == player_name
+                    and user_data.get("tag", "").lower() == player_tag
+                ):
                     return True
         return False
 
     def _update_tdm_stats(self, player_stats):
         name = player_stats.get("name", "").lower()
         tag = player_stats.get("tag", "").lower()
-        
+
         user_entry = users.find_one({"name": name, "tag": tag})
         if not user_entry:
             return
@@ -496,28 +565,30 @@ class TDMCommands(commands.Cog):
         stats = player_stats.get("stats", {})
         kills = stats.get("kills", 0)
         deaths = stats.get("deaths", 0)
-        
+
         self.bot.ensure_tdm_player_mmr(discord_id)
-        
+
         # Update stats
         player_data = self.bot.player_mmr[discord_id]
         total_matches = player_data.get("tdm_matches_played", 0) + 1
         total_kills = player_data.get("tdm_total_kills", 0) + kills
         total_deaths = player_data.get("tdm_total_deaths", 0) + deaths
-        
+
         # Calculate averages
         avg_kills = total_kills / total_matches
         kd_ratio = total_kills / total_deaths if total_deaths > 0 else total_kills
 
         # Update player data
-        player_data.update({
-            "tdm_total_kills": total_kills,
-            "tdm_total_deaths": total_deaths,
-            "tdm_matches_played": total_matches,
-            "tdm_avg_kills": avg_kills,
-            "tdm_kd_ratio": kd_ratio
-        })
-    
+        player_data.update(
+            {
+                "tdm_total_kills": total_kills,
+                "tdm_total_deaths": total_deaths,
+                "tdm_matches_played": total_matches,
+                "tdm_avg_kills": avg_kills,
+                "tdm_kd_ratio": kd_ratio,
+            }
+        )
+
     @commands.command()
     @commands.has_role("Owner")
     async def canceltdm(self, ctx):
@@ -554,12 +625,14 @@ class TDMCommands(commands.Cog):
             except ValueError:
                 await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
                 return
-            
+
             player_data = users.find_one({"name": str(riot_name), "tag": str(riot_tag)})
             if player_data:
                 player_id = str(player_data.get("discord_id"))
             else:
-                await ctx.send("Could not find this player. Please check the name and tag.")
+                await ctx.send(
+                    "Could not find this player. Please check the name and tag."
+                )
                 return
         else:
             player_id = str(ctx.author.id)
@@ -567,19 +640,23 @@ class TDMCommands(commands.Cog):
         # Get TDM stats for the player
         if player_id in self.bot.player_mmr:
             stats_data = self.bot.player_mmr[player_id]
-            
+
             # Initialize stats with default values
             tdm_mmr = stats_data.get("tdm_mmr", 1000)
             tdm_wins = stats_data.get("tdm_wins", 0)
             tdm_losses = stats_data.get("tdm_losses", 0)
             tdm_total_kills = stats_data.get("tdm_total_kills", 0)
             tdm_total_deaths = stats_data.get("tdm_total_deaths", 0)
-            tdm_matches_played = stats_data.get("tdm_matches_played", tdm_wins + tdm_losses)
+            tdm_matches_played = stats_data.get(
+                "tdm_matches_played", tdm_wins + tdm_losses
+            )
             tdm_avg_kills = stats_data.get("tdm_avg_kills", 0)
             tdm_kd_ratio = stats_data.get("tdm_kd_ratio", 0)
 
             # Calculate additional stats
-            win_percent = (tdm_wins / tdm_matches_played * 100) if tdm_matches_played > 0 else 0
+            win_percent = (
+                (tdm_wins / tdm_matches_played * 100) if tdm_matches_played > 0 else 0
+            )
 
             # Get Riot name and tag
             user_data = users.find_one({"discord_id": str(player_id)})
@@ -591,11 +668,17 @@ class TDMCommands(commands.Cog):
                 player_name = ctx.author.name
 
             # Find leaderboard position
-            total_players = len([p for p in self.bot.player_mmr.values() if "tdm_mmr" in p])
+            total_players = len(
+                [p for p in self.bot.player_mmr.values() if "tdm_mmr" in p]
+            )
             sorted_mmr = sorted(
-                [(pid, stats) for pid, stats in self.bot.player_mmr.items() if "tdm_mmr" in stats],
+                [
+                    (pid, stats)
+                    for pid, stats in self.bot.player_mmr.items()
+                    if "tdm_mmr" in stats
+                ],
                 key=lambda x: x[1]["tdm_mmr"],
-                reverse=True
+                reverse=True,
             )
             position = None
             slash = "/"
@@ -606,35 +689,34 @@ class TDMCommands(commands.Cog):
 
             # Create and send embed
             embed = discord.Embed(
-                title=f"{player_name}'s TDM Stats",
-                color=discord.Color.blue()
+                title=f"{player_name}'s TDM Stats", color=discord.Color.blue()
             )
 
             # Main stats
             embed.add_field(
                 name="Rating",
                 value=f"TDM MMR: {tdm_mmr}\nRank: {position}{slash}{total_players}",
-                inline=False
+                inline=False,
             )
 
             # Match stats
             embed.add_field(
                 name="Match Stats",
                 value=f"Wins: {tdm_wins}\n"
-                      f"Losses: {tdm_losses}\n"
-                      f"Win Rate: {win_percent:.1f}%\n"
-                      f"Total Matches: {tdm_matches_played}",
-                inline=True
+                f"Losses: {tdm_losses}\n"
+                f"Win Rate: {win_percent:.1f}%\n"
+                f"Total Matches: {tdm_matches_played}",
+                inline=True,
             )
 
             # Combat stats
             embed.add_field(
                 name="Combat Stats",
                 value=f"Total Kills: {tdm_total_kills}\n"
-                      f"Total Deaths: {tdm_total_deaths}\n"
-                      f"K/D Ratio: {tdm_kd_ratio:.2f}\n"
-                      f"Avg Kills/Match: {tdm_avg_kills:.1f}",
-                inline=True
+                f"Total Deaths: {tdm_total_deaths}\n"
+                f"K/D Ratio: {tdm_kd_ratio:.2f}\n"
+                f"Avg Kills/Match: {tdm_avg_kills:.1f}",
+                inline=True,
             )
 
             await ctx.send(embed=embed)

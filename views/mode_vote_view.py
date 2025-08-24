@@ -1,8 +1,9 @@
 import asyncio
 import random
+
 import discord
-from discord.ui import Button, View
-import time
+from discord.ui import Button
+
 
 async def _safe_reply(interaction, *args, **kwargs):
     """Send an interaction reply exactly once; afterward, use followup."""
@@ -11,17 +12,22 @@ async def _safe_reply(interaction, *args, **kwargs):
     else:
         await interaction.response.send_message(*args, **kwargs)
 
+
 class ModeVoteView(discord.ui.View):
     def __init__(self, ctx, bot):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
-        self.balanced_button = Button(label="Balanced Teams (0)", style=discord.ButtonStyle.green)
-        self.captains_button = Button(label="Captains (0)", style=discord.ButtonStyle.blurple)
+        self.balanced_button = Button(
+            label="Balanced Teams (0)", style=discord.ButtonStyle.green
+        )
+        self.captains_button = Button(
+            label="Captains (0)", style=discord.ButtonStyle.blurple
+        )
         self.add_item(self.balanced_button)
         self.add_item(self.captains_button)
 
-        self.votes = {"Balanced":0, "Captains":0}
+        self.votes = {"Balanced": 0, "Captains": 0}
         self.voters = set()
 
         self.balanced_button.callback = self.balanced_callback
@@ -29,7 +35,7 @@ class ModeVoteView(discord.ui.View):
 
         self.voting_phase_ended = False
         self.timeout = False
-    
+
     def _disable_buttons(self):
         for child in self.children:
             if isinstance(child, discord.ui.Button):
@@ -40,7 +46,9 @@ class ModeVoteView(discord.ui.View):
             await interaction.response.defer(ephemeral=True)
 
         if self.voting_phase_ended:
-            await _safe_reply(interaction, "This voting phase has already ended", ephemeral=True)
+            await _safe_reply(
+                interaction, "This voting phase has already ended", ephemeral=True
+            )
             return
 
         # Must be queued
@@ -59,7 +67,6 @@ class ModeVoteView(discord.ui.View):
         print(f"[DEBUG] Updated vote count: {self.votes}")
         self.balanced_button.label = f"Balanced Teams ({self.votes['Balanced']})"
 
-
         await self.check_vote()
         try:
             await interaction.message.edit(view=self)
@@ -73,7 +80,9 @@ class ModeVoteView(discord.ui.View):
             await interaction.response.defer(ephemeral=True)
 
         if self.voting_phase_ended:
-            await _safe_reply(interaction, "This voting phase has already ended", ephemeral=True)
+            await _safe_reply(
+                interaction, "This voting phase has already ended", ephemeral=True
+            )
             return
 
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
@@ -105,10 +114,10 @@ class ModeVoteView(discord.ui.View):
         print(f"[DEBUG] Checking votes. Current state: {self.votes}")
         print(f"[DEBUG] Voting phase ended: {self.voting_phase_ended}")
         print(f"[DEBUG] Timeout status: {self.timeout}")
-        
-        #if self.voting_phase_ended:
-            #return
- 
+
+        # if self.voting_phase_ended:
+        # return
+
         if self.timeout:
             if self.votes["Balanced"] > self.votes["Captains"]:
                 print("[DEBUG] Balanced wins on timeout")
@@ -117,18 +126,20 @@ class ModeVoteView(discord.ui.View):
                 self.voting_phase_ended = True
                 self._disable_buttons()
                 try:
-                    await self.ctx.channel.send("Voting closed.")  
+                    await self.ctx.channel.send("Voting closed.")
                 except discord.HTTPException:
                     pass
                 await self._setup_balanced_teams()
             elif self.votes["Captains"] > self.votes["Balanced"]:
                 print("[DEBUG] Captains wins on timeout")
                 self.bot.chosen_mode = "Captains"
-                await self.ctx.send("Captains chosen! Captains will be set after map is chosen.")
+                await self.ctx.send(
+                    "Captains chosen! Captains will be set after map is chosen."
+                )
                 self.voting_phase_ended = True
                 self._disable_buttons()
                 try:
-                    await self.ctx.channel.send("Voting closed.")  
+                    await self.ctx.channel.send("Voting closed.")
                 except discord.HTTPException:
                     pass
             else:
@@ -146,7 +157,7 @@ class ModeVoteView(discord.ui.View):
             self.voting_phase_ended = True
             self._disable_buttons()
             try:
-                await self.ctx.channel.send("Voting closed.") 
+                await self.ctx.channel.send("Voting closed.")
             except discord.HTTPException:
                 pass
             await self.ctx.send("Balanced Teams chosen!")
@@ -159,27 +170,31 @@ class ModeVoteView(discord.ui.View):
             self.voting_phase_ended = True
             self._disable_buttons()
             try:
-                await self.ctx.channel.send("Voting closed.")  
+                await self.ctx.channel.send("Voting closed.")
             except discord.HTTPException:
                 pass
-            await self.ctx.send("Captains chosen! Captains will be set after map is chosen.")
+            await self.ctx.send(
+                "Captains chosen! Captains will be set after map is chosen."
+            )
             print(f"[DEBUG] Mode after setting: {self.bot.chosen_mode}")
             return
-      
+
         if self.timeout and not self.voting_phase_ended:
             balanced_votes = self.votes["Balanced"]
             captains_votes = self.votes["Captains"]
-            
+
             if balanced_votes > captains_votes:
                 print("[DEBUG] Balanced wins on timeout")
                 self.bot.chosen_mode = "Balanced"
                 self.voting_phase_ended = True
                 self._disable_buttons()
                 try:
-                    await self.ctx.channel.send("Voting closed.")  
+                    await self.ctx.channel.send("Voting closed.")
                 except discord.HTTPException:
                     pass
-                await self.ctx.send(f"Time's up! Balanced Teams wins with {balanced_votes} votes vs {captains_votes} votes!")
+                await self.ctx.send(
+                    f"Time's up! Balanced Teams wins with {balanced_votes} votes vs {captains_votes} votes!"
+                )
                 await self._setup_balanced_teams()
             elif captains_votes > balanced_votes:
                 print("[DEBUG] Captains wins on timeout")
@@ -190,7 +205,9 @@ class ModeVoteView(discord.ui.View):
                     await self.ctx.channel.send("Voting closed.")  # optional
                 except discord.HTTPException:
                     pass
-                await self.ctx.send(f"Time's up! Captains wins with {captains_votes} votes vs {balanced_votes} votes!")
+                await self.ctx.send(
+                    f"Time's up! Captains wins with {captains_votes} votes vs {balanced_votes} votes!"
+                )
             else:
                 # Handle tie
                 decision = "Balanced" if random.choice([True, False]) else "Captains"
@@ -201,15 +218,18 @@ class ModeVoteView(discord.ui.View):
                     await self.ctx.channel.send("Voting closed.")  # optional
                 except discord.HTTPException:
                     pass
-                await self.ctx.send(f"Time's up! Votes tied {balanced_votes}-{balanced_votes}. {decision} wins by coin flip!")
+                await self.ctx.send(
+                    f"Time's up! Votes tied {balanced_votes}-{balanced_votes}. {decision} wins by coin flip!"
+                )
                 if decision == "Balanced":
                     await self._setup_balanced_teams()
-            
+
             print(f"[DEBUG] Final mode selection: {self.bot.chosen_mode}")
             return
-    
+
     async def _setup_balanced_teams(self):
         players = self.bot.queue[:]
+
         def mmr_of(p):
             pid = str(p["id"])
             return self.bot.player_mmr.get(pid, {}).get("mmr", 1000)
@@ -230,13 +250,13 @@ class ModeVoteView(discord.ui.View):
         self.bot.team2 = team2
 
     async def start_timer(self):
-        await asyncio.sleep(25)  
-        if not self.voting_phase_ended:  
+        await asyncio.sleep(25)
+        if not self.voting_phase_ended:
             self.timeout = True
             await self.check_vote()
-            
 
         # After mode chosen, do map type vote
         from views.map_type_vote_view import MapTypeVoteView
-        map_type_vote=MapTypeVoteView(self.ctx,self.bot)
+
+        map_type_vote = MapTypeVoteView(self.ctx, self.bot)
         await map_type_vote.send_view()

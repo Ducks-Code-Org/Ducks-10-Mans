@@ -23,6 +23,7 @@ This guide will cover everything you need to do to set up the codebase for local
 - Clone the repository
 - In the root directory where you clone the repository, create a new file called `env.bat`
   - Add these contents (obv replacing with your values):
+
     ```cmd
     @echo off
     
@@ -30,6 +31,7 @@ This guide will cover everything you need to do to set up the codebase for local
     set "URI_KEY=<YOUR_MONGODB_STRING>"
     set "API_KEY=<YOUR_HENRIKDEV_KEY>"
     ```
+
 - Run the command `call env.bat` in a `cmd` terminal
   - This is needed to set the proper environment variables to run the bot, and will have to be run once each session
 - Run ther command `py main.py` to start the bot
