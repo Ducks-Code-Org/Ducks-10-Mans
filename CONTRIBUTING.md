@@ -1,5 +1,5 @@
 # Contributing
-- For each issue, a new branch should be made
+- For each issue, a new branch should be made off of `dev`
   - Naming format: `feature/<SHORT_DESCRIPTION>` or `bugfix/<SHORT_DESCRIPTION>`
 - Once finished, a PR should be opened on the branch
 - Once completed, the updated branch will be merged into `dev` by an authorized user
