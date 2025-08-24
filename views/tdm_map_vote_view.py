@@ -7,7 +7,7 @@ class MapButton(discord.ui.Button):
     def __init__(self, map_name, parent_view):
         super().__init__(label=f"{map_name} (0)", style=discord.ButtonStyle.secondary)
         self.map_name = map_name
-        self.parent_view = parent_view  
+        self.parent_view = parent_view
 
     async def callback(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)

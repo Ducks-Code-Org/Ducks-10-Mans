@@ -64,7 +64,6 @@ class LeaderboardView(discord.ui.View):
         self.refresh_button.callback = self.on_refresh
         self.toggle_mode_button.callback = self.on_toggle_mode
 
-        # Add them in the correct order
         self.add_item(self.previous_button)
         self.add_item(self.refresh_button)
         self.add_item(self.next_button)
@@ -74,7 +73,6 @@ class LeaderboardView(discord.ui.View):
         new_mode = "tdm" if self.mode == "normal" else "normal"
         collection = tdm_mmr_collection if new_mode == "tdm" else mmr_collection
         
-        # Get fresh data for the new mode
         if new_mode == "tdm":
             sorted_data = sorted(
                 collection.find(),
@@ -87,8 +85,7 @@ class LeaderboardView(discord.ui.View):
                 key=lambda x: x.get("mmr", 0),
                 reverse=True
             )
-        
-        # Create new view with new mode
+
         new_view = LeaderboardView(
             self.ctx,
             self.bot,
@@ -98,7 +95,6 @@ class LeaderboardView(discord.ui.View):
             mode=new_mode
         )
 
-        # Create leaderboard content
         leaderboard_data = []
         start_index = 0
         end_index = min(self.players_per_page, len(sorted_data))
@@ -276,15 +272,12 @@ class LeaderboardViewKD(View):
         self.current_page = 0
         self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
 
-        # Initialize button states
-        # Will be updated on each page change
-        self.previous_button.disabled = True  # On first page, can't go back
+        self.previous_button.disabled = True  
         self.next_button.disabled = (
             self.total_pages == 1
-        )  # If only one page, disable Next
+        )  # If only one page, disable next
 
     async def update_message(self, interaction: discord.Interaction):
-        # Calculate the people on the page
         start_index = self.current_page * self.players_per_page
         end_index = start_index + self.players_per_page
         page_data = self.sorted_mmr[start_index:end_index]
@@ -352,11 +345,10 @@ class LeaderboardViewKD(View):
             self.bot.player_mmr.items(),
             key=lambda x: x[1].get(
                 "kill_death_ratio", 0.0
-            ),  # Default to 0.0 if key is missing
+            ),
             reverse=True,
         )
 
-        # Recalculate total_pages if player count changed
         self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
         if self.current_page >= self.total_pages:
             self.current_page = max(0, self.total_pages - 1)
@@ -379,20 +371,17 @@ class LeaderboardViewWins(View):
         self.current_page = 0
         self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
 
-        # Initialize button states
-        # Will be updated on each page change
-        self.previous_button.disabled = True  # On first page, can't go back
+
+        self.previous_button.disabled = True # can't go back
         self.next_button.disabled = (
             self.total_pages == 1
-        )  # If only one page, disable Next
+        )  
 
     async def update_message(self, interaction: discord.Interaction):
-        # Calculate the people on the page
         start_index = self.current_page * self.players_per_page
         end_index = start_index + self.players_per_page
         page_data = self.sorted_mmr[start_index:end_index]
 
-        # make the leaderboard table for the page
         leaderboard_data = []
         names = []
         for player_id, stats in page_data:
@@ -437,7 +426,6 @@ class LeaderboardViewWins(View):
 
         content = f"## Wins Leaderboard (Page {self.current_page + 1}/{self.total_pages}) ##\n```\n{table_output}\n```"
 
-        # Update button based on the current page
         self.previous_button.disabled = self.current_page == 0
         self.next_button.disabled = self.current_page == self.total_pages - 1
 
@@ -448,7 +436,6 @@ class LeaderboardViewWins(View):
         self.current_page -= 1
         await self.update_message(interaction)
 
-    # Refresh the leaderboard
     @discord.ui.button(style=discord.ButtonStyle.blurple, emoji="🔄")
     async def refresh_button(self, interaction: discord.Interaction):
         self.sorted_mmr = sorted(
@@ -480,20 +467,17 @@ class LeaderboardViewACS(View):
         self.current_page = 0
         self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
 
-        # Initialize button states
-        # Will be updated on each page change
-        self.previous_button.disabled = True  # On first page, can't go back
+
+        self.previous_button.disabled = True 
         self.next_button.disabled = (
             self.total_pages == 1
-        )  # If only one page, disable Next
+        )  
 
     async def update_message(self, interaction: discord.Interaction):
-        # Calculate the people on the page
         start_index = self.current_page * self.players_per_page
         end_index = start_index + self.players_per_page
         page_data = self.sorted_mmr[start_index:end_index]
 
-        # make the leaderboard table for the page
         leaderboard_data = []
         names = []
         for player_id, stats in page_data:
@@ -538,7 +522,6 @@ class LeaderboardViewACS(View):
 
         content = f"## ACS Leaderboard (Page {self.current_page + 1}/{self.total_pages}) ##\n```\n{table_output}\n```"
 
-        # Update button based on the current page
         self.previous_button.disabled = self.current_page == 0
         self.next_button.disabled = self.current_page == self.total_pages - 1
 
@@ -549,18 +532,16 @@ class LeaderboardViewACS(View):
         self.current_page -= 1
         await self.update_message(interaction)
 
-    # Refresh the leaderboard
     @discord.ui.button(style=discord.ButtonStyle.blurple, emoji="🔄")
     async def refresh_button(self, interaction: discord.Interaction):
         self.sorted_mmr = sorted(
             self.bot.player_mmr.items(),
             key=lambda x: x[1].get(
                 "average_combat_score", 0.0
-            ),  # Default to 0.0 if key is missing
+            ), 
             reverse=True,
         )
 
-        # Recalculate total_pages if player count changed
         self.total_pages = math.ceil(len(self.sorted_mmr) / self.players_per_page)
         if self.current_page >= self.total_pages:
             self.current_page = max(0, self.total_pages - 1)

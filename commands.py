@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-import copy  # To make a copy of player_mmr
+import copy 
 import random
 
 import discord
@@ -10,8 +10,11 @@ from discord.ext import commands
 import requests
 from table2ascii import table2ascii as t2a, PresetStyle
 import wcwidth
+import unicodedata
 
-from database import users, all_matches, mmr_collection, tdm_mmr_collection
+from database import users, all_matches, mmr_collection, tdm_mmr_collection, seasons, interests
+from views.interest_view import InterestView
+
 from stats_helper import update_stats
 from views.captains_drafting_view import CaptainsDraftingView
 from views.mode_vote_view import ModeVoteView
@@ -24,12 +27,33 @@ from views.leaderboard_view import (
     truncate_by_display_width
 )
 
+from zoneinfo import ZoneInfo
+from datetime import datetime, timezone, timedelta
+
+from urllib.parse import quote
+from pymongo import ReturnDocument
+
+import aiohttp
+from riot_api import get_account_by_puuid, get_account_by_riot_id
+from identity import ensure_current_riot_identity
 
 # Initialize API
 api_key = os.getenv("api_key")
 headers = {
     "Authorization": api_key,
 }
+
+def _aware_utc(dt):
+        if not dt:
+            return None
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+def canonical_riot(name: str, tag: str) -> str:
+    def norm(s: str) -> str:
+        return unicodedata.normalize("NFKC", (s or "")).casefold().strip()
+    return f"{norm(name)}#{norm(tag)}"
 
 # FOR TESTING ONLY, REMEMBER TO SET WINNER AND total_rounds
 mock_match_data = {
@@ -110,9 +134,18 @@ class BotCommands(commands.Cog):
         self.leaderboard_view = None
         self.refresh_task = None
 
-        # Store chosen_mode and selected_map as state
-        # chosen_mode will be either "Balanced" or "Captains"
-        # selected_map will be set after map vote
+        self.leaderboard_message_kd = None
+        self.leaderboard_view_kd = None
+        self.refresh_task_kd = None
+
+        self.leaderboard_message_wins = None
+        self.leaderboard_view_wins = None
+        self.refresh_task_wins = None
+
+        self.leaderboard_message_acs = None
+        self.leaderboard_view_acs = None
+        self.refresh_task_acs = None
+
         self.bot.chosen_mode = None
         self.bot.selected_map = None
         self.bot.match_not_reported = False
@@ -125,21 +158,41 @@ class BotCommands(commands.Cog):
         self.bot.team1 = []
         self.bot.team2 = []
         print("[DEBUG] Checking the last match document in 'matches' DB for total rounds via 'rounds' array:")
-        last_match_doc = all_matches.find_one(sort=[("_id", -1)])  # fetch the most recent match
+        last_match_doc = all_matches.find_one(sort=[("_id", -1)])  
         if last_match_doc:
             rounds_array = last_match_doc.get("rounds", [])
             print(f"  [DEBUG DB] The last match in 'matches' had {len(rounds_array)} rounds (via last_match_doc['rounds']).")
         else:
             print("  [DEBUG DB] No matches found in the 'matches' collection.")
-
+    
+    async def _ensure_perms(self, ctx) -> bool:
+        me = ctx.guild.me
+        missing = []
+        if not me.guild_permissions.manage_roles:
+            missing.append("Manage Roles")
+        if not me.guild_permissions.manage_channels:
+            missing.append("Manage Channels")
+        if missing:
+            await ctx.send(f"I need the following permissions in this server: {', '.join(missing)}")
+            return False
+        return True
+    
     @commands.command()
     async def signup(self, ctx):
+        if not await self._ensure_perms(ctx):
+            return
+        
         if self.bot.signup_active:
             await ctx.send("A signup is already in progress.")
             return
 
         if self.bot.match_not_reported:
             await ctx.send("Report the last match before starting another one.")
+            return
+        
+        ok, msg, db_user = await ensure_current_riot_identity(ctx.author.id)
+        if not ok:
+            await ctx.send(msg)
             return
 
         self.bot.load_mmr_data()
@@ -150,7 +203,7 @@ class BotCommands(commands.Cog):
             self.bot.signup_view.cancel_signup_refresh()
             self.bot.signup_view = None
 
-        # Reset all match-related state
+        # Reset all match related states
         self.bot.signup_active = True
         self.bot.queue = []
         self.bot.captain1 = None
@@ -188,7 +241,7 @@ class BotCommands(commands.Cog):
 
             await ctx.send(f"Queue started! Signup: <#{self.bot.match_channel.id}>")
         except Exception as e:
-            # Cleanup if anything fails
+            # Cleanup
             self.bot.signup_active = False
             if hasattr(self.bot, 'match_role') and self.bot.match_role:
                 try:
@@ -201,6 +254,185 @@ class BotCommands(commands.Cog):
                 except:
                     pass
             await ctx.send(f"Error setting up queue: {str(e)}")
+
+    def _parse_when_to_utc(self, text: str):
+        if not text:
+            return None, "Provide a time, e.g. `!interest 9pm` or `!interest tomorrow 7`."
+
+        tz = ZoneInfo("America/Chicago")
+        now_local = datetime.now(tz)
+
+        s = text.strip().lower()
+        # Relative: "in 2h", "in 45m"
+        if s.startswith("in "):
+            parts = s[3:].strip()
+            mins = 0
+            try:
+                if parts.endswith("h"):
+                    hrs = float(parts[:-1].strip())
+                    mins = int(hrs * 60)
+                elif parts.endswith("m"):
+                    mins = int(parts[:-1].strip())
+                else:
+                    hrs, mins_part = 0, 0
+                    if "h" in parts:
+                        h_chunk, rest = parts.split("h", 1)
+                        hrs = int(h_chunk.strip() or 0)
+                        parts = rest.strip()
+                    if parts.endswith("m"):
+                        mins_part = int(parts[:-1].strip() or 0)
+                    mins = hrs * 60 + mins_part
+                target_local = now_local + timedelta(minutes=mins)
+                return target_local.astimezone(timezone.utc), None
+            except Exception:
+                return None, "Couldn’t parse relative time. Try `in 2h` or `in 45m`."
+
+        # Normalize helper functions
+        def try_formats(candidate, fmts):
+            for f in fmts:
+                try:
+                    return datetime.strptime(candidate, f)
+                except Exception:
+                    pass
+            return None
+
+        tokens = s.split()
+        base_date = now_local.date()
+
+        # Handle "today" / "tomorrow"
+        if tokens and tokens[0] in {"today", "tomorrow"}:
+            if tokens[0] == "tomorrow":
+                base_date = base_date + timedelta(days=1)
+            time_str = " ".join(tokens[1:]).strip()
+            if not time_str:
+                return None, "Add a time after today/tomorrow, e.g. `tomorrow 9pm`."
+
+            t_try = try_formats(
+                time_str,
+                ["%I%p", "%I:%M%p", "%H:%M", "%H"]
+            )
+            if not t_try:
+                return None, "Couldn’t parse time. Try formats like `9pm`, `9:30pm`, `21:00`."
+            dt_local = datetime(
+                base_date.year, base_date.month, base_date.day,
+                t_try.hour, t_try.minute, tzinfo=tz
+            )
+            return dt_local.astimezone(timezone.utc), None
+
+        only_time = try_formats(
+            s,
+            ["%I%p", "%I:%M%p", "%H:%M", "%H"]
+        )
+        if only_time:
+            dt_local = datetime(
+                base_date.year, base_date.month, base_date.day,
+                only_time.hour, only_time.minute, tzinfo=tz
+            )
+            if dt_local < now_local:
+                dt_local = dt_local + timedelta(days=1)
+            return dt_local.astimezone(timezone.utc), None
+
+        default_hour, default_minute = 21, 0
+
+        dt = try_formats(s, ["%Y-%m-%d %H:%M", "%Y-%m-%d %I:%M%p", "%Y-%m-%d %I%p", "%Y-%m-%d"])
+        if dt:
+            if dt.hour == 0 and len(s.strip().split()) == 1:
+                dt = dt.replace(hour=default_hour, minute=default_minute)
+            return dt.replace(tzinfo=tz).astimezone(timezone.utc), None
+        
+        for date_sep in ["/", "-"]:
+            try:
+                if " " in s:
+                    date_part, time_part = s.split(" ", 1)
+                else:
+                    date_part, time_part = s, ""
+
+                if date_sep in date_part:
+                    m, d = [int(x) for x in date_part.split(date_sep)]
+                    y = now_local.year
+                    
+                    base = datetime(y, m, d, tzinfo=tz)
+                    if not time_part:
+                        dt_local = base.replace(hour=default_hour, minute=default_minute)
+                    else:
+                        t_try = try_formats(time_part.strip(), ["%I%p", "%I:%M%p", "%H:%M", "%H"])
+                        if not t_try:
+                            return None, "Couldn’t parse the time. Try `8/22 9pm` or `8-22 21:00`."
+                        dt_local = datetime(y, m, d, t_try.hour, t_try.minute, tzinfo=tz)
+                    return dt_local.astimezone(timezone.utc), None
+            except Exception:
+                pass
+        return None, "Couldn’t understand that time. Examples: `9pm`, `tomorrow 7`, `8/22 9:30pm`, `in 2h`."
+
+    @commands.command(name="interest")
+    async def interest(self, ctx, *, when: str = None):
+        """
+        Plan a time to run Duck's 10 Mans and open a Join/Leave interest view.
+
+        Usage:
+          !interest 9pm
+          !interest tomorrow 7
+          !interest 8/22 9:30pm
+          !interest in 2h
+          !interest list
+        """
+        if when is None:
+            await ctx.send("Usage: `!interest <when>` (e.g., `!interest 9pm`) or `!interest list`.")
+            return
+
+        if when.strip().lower() in {"list", "ls"}:
+            now_utc = datetime.now(timezone.utc)
+            upcoming = list(interests.find({"scheduled_at_utc": {"$gte": now_utc}}).sort("scheduled_at_utc", 1).limit(8))
+            if not upcoming:
+                await ctx.send("No upcoming interest slots yet. Create one with `!interest 9pm`.")
+                return
+
+            tz = ZoneInfo("America/Chicago")
+            lines = []
+            for doc in upcoming:
+                t_utc = doc.get("scheduled_at_utc")
+                stamp = int(t_utc.timestamp())
+                count = len(doc.get("interested_ids", []))
+                t_local = t_utc.astimezone(tz)
+                lines.append(f"• **{t_local.strftime('%Y-%m-%d %I:%M %p %Z')}** — <t:{stamp}:R>  (**{count}** interested)")
+            await ctx.send("**Upcoming 10 Mans interest slots:**\n" + "\n".join(lines))
+            return
+
+        dt_utc, err = self._parse_when_to_utc(when)
+        if err:
+            await ctx.send(err)
+            return
+
+        # Round to 5 minutes
+        rounded = dt_utc.replace(second=0, microsecond=0)
+        minute = (rounded.minute // 5) * 5
+        rounded = rounded.replace(minute=minute)
+
+        # Ensure the doc exists
+        doc = interests.find_one_and_update(
+            {"scheduled_at_utc": rounded},
+            {
+                "$setOnInsert": {
+                    "scheduled_at_utc": rounded,
+                    "created_by": str(ctx.author.id),
+                    "created_at_utc": datetime.now(timezone.utc),
+                },
+                "$addToSet": {"interested_ids": str(ctx.author.id)},
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+
+        view = InterestView(rounded, timeout=None)
+        tz = ZoneInfo("America/Chicago")
+        embed = discord.Embed(
+            description="Creating interest slot…",
+            color=discord.Color.green()
+        )
+        msg = await ctx.send(embed=embed, view=view)
+        view.message = msg 
+
+        await view._render(await ctx.fetch_message(msg.id))
 
     async def cleanup_match_resources(self):
         try:
@@ -215,14 +447,14 @@ class BotCommands(commands.Cog):
                     self.bot.match_channel = None
 
             if hasattr(self.bot, 'match_role') and self.bot.match_role:
-                # Remove role from all members first
+
                 try:
                     for member in self.bot.match_role.members:
                         await member.remove_roles(self.bot.match_role)
                 except discord.HTTPException:
                     print("[DEBUG] Error removing roles from members")
 
-                # Then delete the role
+                # delete the role
                 try:
                     await self.bot.match_role.delete()
                 except discord.NotFound:
@@ -232,7 +464,6 @@ class BotCommands(commands.Cog):
                 finally:
                     self.bot.match_role = None
 
-            # Clear other match-related state
             self.bot.match_not_reported = False
             self.bot.match_ongoing = False
             self.bot.queue.clear()
@@ -248,32 +479,109 @@ class BotCommands(commands.Cog):
         except Exception as e:
             print(f"[DEBUG] Error during cleanup: {str(e)}")
     
+    @commands.command(name="newseason")
+    @commands.has_permissions(administrator=True)
+    async def new_season(self, ctx, *, no_reset: str = None):
+        """
+        Creates a new season that ends exactly 2 calendar months from now (UTC).
+        By default, resets everyone’s MMR + stats. If you pass 'noreset', it will keep stats.
+        Usage: !newseason    (resets)
+            !newseason noreset
+        """
+        reset = True
+        if no_reset and no_reset.lower() in {"noreset", "keep", "false", "0"}:
+            reset = False
+
+        doc = self.bot.create_new_season(reset_player_stats=reset)
+
+        start_cst = doc["started_at_cst"]   
+        end_cst   = doc["ends_at_cst"]
+
+        start_str = start_cst.strftime("%Y-%m-%d %I:%M %p %Z")
+        end_str   = end_cst.strftime("%Y-%m-%d %I:%M %p %Z")
+
+        await ctx.send(
+            f"**Season {doc['season_number']}** created.\n"
+            f"Starts (Central): `{start_str}`\n"
+            f"Ends (Central):   `{end_str}`\n"
+            f"{'All player MMR + stats were reset.' if reset else 'Player stats were preserved (no reset).'}"
+        )
+
     # Report the match
     @commands.command()
     async def report(self, ctx):
-
+        # linkage check
         current_user = users.find_one({"discord_id": str(ctx.author.id)})
         if not current_user:
-            await ctx.send(
-                "You need to link your Riot account first using `!linkriot Name#Tag`"
-            )
+            await ctx.send("You need to link your Riot account first using `!linkriot Name#Tag`")
             return
-        
-        print(f"[DEBUG] Current User: {current_user}")
 
-        name = current_user.get("name", "").lower()
-        tag = current_user.get("tag", "").lower()
-        region = "na"
-        platform = "pc"
+        name = (current_user.get("name") or "").lower().strip()
+        tag  = (current_user.get("tag")  or "").lower().strip()
+        if not name or not tag:
+            await ctx.send("Your Riot account looks incomplete. Re-link with `!linkriot Name#Tag`.")
+            return
 
-        url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{name}/{tag}"
-        response = requests.get(url, headers=headers, timeout=30)
-        match_data = response.json()
+        if not self.bot.match_ongoing:
+            await ctx.send("No match is currently active, use `!signup` to start one")
+            return
+        if not self.bot.selected_map:
+            await ctx.send("No map was selected for this match.")
+            return
 
-        match = match_data["data"][0]
-        metadata = match.get("metadata", {})
-        map_name = metadata.get("map", {}).get("name", "").lower()
-        print(f"[DEBUG] Map from API: {map_name}, Selected map: {self.bot.selected_map}")
+        def _norm_map(s: str) -> str:
+            m = (s or "").strip().lower()
+            aliases = {
+                "ice box": "icebox",
+                "the abyss": "abyss",
+                "fracc": "fracture",
+            }
+            return aliases.get(m, m)
+
+        from urllib.parse import quote
+        region, platform = "na", "pc"
+        q_name, q_tag = quote(name, safe=""), quote(tag, safe="")
+        url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{q_name}/{q_tag}"
+
+        try:
+            resp = requests.get(url, headers=headers, timeout=30)  # `headers` is defined at top of commands.py
+        except requests.RequestException as e:
+            await ctx.send(f"Network error reaching HenrikDev API: {e}")
+            return
+
+        if resp.status_code == 401:
+            await ctx.send("HenrikDev API rejected the request (401). Check that your API key is valid.")
+            return
+        if resp.status_code == 404:
+            await ctx.send("No recent matches found for your Riot ID (404).")
+            return
+        if resp.status_code == 429:
+            await ctx.send("Rate limit hit (429). Try again in a bit.")
+            return
+        if resp.status_code == 503:
+            await ctx.send("Riot/HenrikDev upstream is temporarily unavailable (503). Try again later.")
+            return
+        if resp.status_code != 200:
+            await ctx.send(f"Unexpected error from API ({resp.status_code}).")
+            return
+
+        data = resp.json()
+        if not isinstance(data, dict) or "data" not in data or not data["data"]:
+            await ctx.send("Could not retrieve match data.")
+            return
+
+        match = data["data"][0]
+        metadata = match.get("metadata") or {}
+
+        map_field = metadata.get("map")
+        if isinstance(map_field, dict):
+            api_map = _norm_map(map_field.get("name", ""))
+        else:
+            api_map = _norm_map(map_field or "")
+
+        if _norm_map(self.bot.selected_map) != api_map:
+            await ctx.send("Map doesn't match your most recent match. Unable to report it.")
+            return
 
         testing_mode = False  # TRUE WHILE TESTING
 
@@ -287,6 +595,7 @@ class BotCommands(commands.Cog):
             team2 = []
             self.bot.team1 = team1
             self.bot.team2 = team2
+            self.bot.queue = queue
 
             for player_data in match["players"]:
                 player_name = player_data["name"].lower()
@@ -331,31 +640,25 @@ class BotCommands(commands.Cog):
                 return
 
             # FOR TESTING PURPOSES
-            #self.bot.selected_map = map_name
+            # self.bot.selected_map = map_name
 
-            if self.bot.selected_map.lower() != map_name:
+            if _norm_map(self.bot.selected_map) != api_map:
                 await ctx.send(
                     "Map doesn't match your most recent match. Unable to report it."
                 )
                 return
 
-            if "data" not in match_data or not match_data["data"]:
-                await ctx.send("Could not retrieve match data.")
-                return
-
-            match = match_data["data"][0]
-
             # Get total rounds played from the match data
             teams = match.get("teams", [])
             if teams:
-                total_rounds = metadata.get("total_rounds")
+                total_rounds = (
+                    metadata.get("rounds_played")
+                    or metadata.get("total_rounds")
+                )
                 if not total_rounds:
-                    # fallback to length of the "rounds" array
-                    rounds_data = match.get("rounds", [])
+                    rounds_data = match.get("rounds") or []
                     total_rounds = len(rounds_data)
-                    print(f"[DEBUG] total_rounds fallback to match['rounds'] length = {total_rounds}")
-                else:
-                    print(f"[DEBUG] total_rounds from metadata = {total_rounds}")
+                total_rounds = int(total_rounds)
             else:
                 await ctx.send("No team data found in match data.")
                 return
@@ -463,26 +766,21 @@ class BotCommands(commands.Cog):
             self.bot.ensure_player_mmr(player_id, self.bot.player_names)
 
         # Get top players
+        self.bot.player_mmr = {str(k): v for k, v in self.bot.player_mmr.items()}
         pre_update_mmr = copy.deepcopy(self.bot.player_mmr)
-        
-        # Filter out entries without MMR and ensure proper data structure
+
         valid_mmr_entries = [
-            (pid, stats) for pid, stats in pre_update_mmr.items() 
+            (pid, stats) for pid, stats in pre_update_mmr.items()
             if isinstance(stats, dict) and "mmr" in stats
         ]
-        
+
         if valid_mmr_entries:
             sorted_mmr_before = sorted(valid_mmr_entries, key=lambda x: x[1]["mmr"], reverse=True)
             top_mmr_before = sorted_mmr_before[0][1]["mmr"]
             top_players_before = [str(pid) for pid, stats in sorted_mmr_before if stats["mmr"] == top_mmr_before]
         else:
-            # Handle case where no valid MMR entries exist
-            top_mmr_before = 1000  # Default MMR
+            top_mmr_before = 1000
             top_players_before = []
-
-        sorted_mmr_before = sorted(pre_update_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True)
-        top_mmr_before = sorted_mmr_before[0][1]["mmr"]
-        top_players_before = [str(pid) for pid, stats in sorted_mmr_before if stats["mmr"] == top_mmr_before]
 
         # Update stats for each player
         for player_stats in match_players:
@@ -500,19 +798,18 @@ class BotCommands(commands.Cog):
         self.bot.load_mmr_data()  # Reload the MMR data
         print("[DEBUG] Reloaded MMR data after save")
 
-        # Now save all updates to the database
+        # save all updates to the database
         print("Before player stats updated")
         
 
         for discord_id, stats in self.bot.player_mmr.items():
-            # Get the Riot name for the player
+            # Get the riot name for the player
             user_data = users.find_one({"discord_id": str(discord_id)})
             if user_data:
                 riot_name = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
             else:
                 riot_name = "Unknown"
 
-            # Create complete stats document with all fields
             complete_stats = {
                 "mmr": stats.get("mmr", 1000),
                 "wins": stats.get("wins", 0),
@@ -527,7 +824,6 @@ class BotCommands(commands.Cog):
                 "kill_death_ratio": stats.get("kill_death_ratio", 0)
             }
 
-            # Update database with all fields
             mmr_collection.update_one(
                 {"player_id": discord_id},
                 {"$set": complete_stats},
@@ -549,13 +845,114 @@ class BotCommands(commands.Cog):
                     riot_tag = user_data.get("tag", "Unknown")
                     await ctx.send(f"{riot_name}#{riot_tag} is now supersonic radiant!")
 
+        def _add_months(dt, months):
+            from calendar import monthrange
+            year = dt.year + (dt.month - 1 + months) // 12
+            month = (dt.month - 1 + months) % 12 + 1
+            day = min(dt.day, monthrange(year, month)[1])
+            return dt.replace(year=year, month=month, day=day)
+
         # Record every match played in a new collection
         all_matches.insert_one(match)
+        
+        now_utc = datetime.now(timezone.utc)
+        current = seasons.find_one({"_id": "current"}) or {}
+
+        started_at = _aware_utc(current.get("started_at"))  # <-- normalize
+        reset_months = int(current.get("reset_period_months", 2))
+
+        if not started_at:
+            started_at = now_utc
+            seasons.update_one(
+                {"_id": "current"},
+                {"$set": {"started_at": started_at, "is_closed": False}},
+                upsert=True,
+            )
+
+        season_end_utc = _aware_utc(_add_months(started_at, reset_months))  # <-- normalize
+
+        if not current.get("is_closed", False) and now_utc >= season_end_utc:
+            await self.end_season(ctx, started_at_utc=started_at, ended_at_utc=now_utc)
 
         await asyncio.sleep(5)
         self.bot.match_not_reported = False
         self.bot.match_ongoing = False
         await self.cleanup_match_resources()
+
+    async def end_season(self, ctx, started_at_utc=None, ended_at_utc=None):
+        current = seasons.find_one({"_id": "current"}) or {}
+        if current.get("is_closed"):
+            return
+
+        tz_central = ZoneInfo("America/Chicago")
+        now_utc = datetime.now(timezone.utc)
+
+        started_at_utc = _aware_utc(started_at_utc or current.get("started_at") or now_utc)
+        ended_at_utc   = _aware_utc(ended_at_utc or now_utc)
+
+        # Determine winner
+        top_doc = mmr_collection.find_one(sort=[("mmr", -1)])
+        if not top_doc:
+            winner_player_id = None
+            winner_name = "No players"
+            winner_mmr = 0
+        else:
+            winner_player_id = str(top_doc.get("player_id"))
+            winner_mmr = top_doc.get("mmr", 0)
+
+            u = users.find_one({"discord_id": winner_player_id})
+            if u:
+                winner_name = f"{u.get('name', 'Unknown')}#{u.get('tag', 'Unknown')}"
+            else:
+                winner_name = top_doc.get("name", "Unknown")
+
+        started_cst = started_at_utc.astimezone(tz_central) if started_at_utc else None
+        ended_cst = ended_at_utc.astimezone(tz_central)
+        started_str = started_cst.strftime("%Y-%m-%d %I:%M %p %Z") if started_cst else "unknown"
+        ended_str = ended_cst.strftime("%Y-%m-%d %I:%M %p %Z")
+
+        await ctx.send(
+            "🏁 **Season complete!**\n"
+            f"**Winner:** {winner_name}\n"
+            f"**Final MMR:** {winner_mmr}\n"
+            f"**Season window (Central):** {started_str} → {ended_str}"
+        )
+
+        seasons.update_one(
+            {"_id": "current"},
+            {"$set": {
+                "is_closed": True,
+                "ended_at": ended_at_utc,
+                "winner_player_id": winner_player_id,
+                "winner_name": winner_name,
+                "winner_mmr": winner_mmr,
+            }},
+            upsert=True,
+        )
+
+        # next season
+        next_season_number = int(current.get("season_number", 1)) + 1
+        reset_period_months = int(current.get("reset_period_months", 2))
+
+        seasons.update_one(
+            {"_id": "current"},
+            {"$set": {
+                "season_number": next_season_number,
+                "started_at": ended_at_utc,         
+                "is_closed": False,
+                "reset_period_months": reset_period_months,
+                "matches_played": 0,                
+                "last_season": {
+                    "season_number": current.get("season_number", 1),
+                    "started_at": started_at_utc,
+                    "ended_at": ended_at_utc,
+                    "winner_player_id": winner_player_id,
+                    "winner_name": winner_name,
+                    "winner_mmr": winner_mmr,
+                    "matches_played": current.get("matches_played", 0),
+                },
+            }},
+        )
 
     # Allow players to check their MMR and stats
     @commands.command()
@@ -580,7 +977,6 @@ class BotCommands(commands.Cog):
 
         if player_id in self.bot.player_mmr:
             stats_data = self.bot.player_mmr[player_id]
-            # Get stats with safe defaults
             mmr_value = stats_data.get("mmr", 1000)
             wins = stats_data.get("wins", 0)
             losses = stats_data.get("losses", 0)
@@ -590,7 +986,7 @@ class BotCommands(commands.Cog):
             kd_ratio = stats_data.get("kill_death_ratio", 0)
             win_percent = (wins / matches_played) * 100 if matches_played > 0 else 0
 
-            # Get Riot name and tag
+            # Get riot name and tag
             user_data = users.find_one({"discord_id": str(player_id)})
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
@@ -599,7 +995,6 @@ class BotCommands(commands.Cog):
             else:
                 player_name = ctx.author.name
 
-            # Find leaderboard position with safe dictionary access
             total_players = len(self.bot.player_mmr)
             sorted_mmr = sorted(
                 [(pid, stats) for pid, stats in self.bot.player_mmr.items() if "mmr" in stats],
@@ -717,7 +1112,7 @@ class BotCommands(commands.Cog):
             while True:
                 await asyncio.sleep(30)
                 if self.leaderboard_message_kd and self.leaderboard_view_kd:
-                    # Just edit with the same content and view
+                    # Just edit message
                     await self.leaderboard_message_kd.edit(
                         content=self.leaderboard_message_kd.content,
                         view=self.leaderboard_view_kd,
@@ -733,7 +1128,6 @@ class BotCommands(commands.Cog):
             while True:
                 await asyncio.sleep(30)
                 if self.leaderboard_message_wins and self.leaderboard_view_wins:
-                    # Just edit with the same content and view
                     await self.leaderboard_message_wins.edit(
                         content=self.leaderboard_message_wins.content,
                         view=self.leaderboard_view_wins,
@@ -749,7 +1143,6 @@ class BotCommands(commands.Cog):
             while True:
                 await asyncio.sleep(30)
                 if self.leaderboard_message_acs and self.leaderboard_view_acs:
-                    # Just edit with the same content and view
                     await self.leaderboard_message_acs.edit(
                         content=self.leaderboard_message_acs.content,
                         view=self.leaderboard_view_acs,
@@ -786,7 +1179,7 @@ class BotCommands(commands.Cog):
             self.bot.player_mmr.items(),
             key=lambda x: x[1].get(
                 "kill_death_ratio", 0.0
-            ),  # Default to 0.0 if key is missing
+            ),  
             reverse=True,
         )
 
@@ -848,14 +1241,13 @@ class BotCommands(commands.Cog):
         content = f"## K/D Leaderboard (Page {self.leaderboard_view_kd.current_page+1}/{self.leaderboard_view_kd.total_pages}) ##\n```\n{table_output}\n```"
         self.leaderboard_message_kd = await ctx.send(
             content=content, view=self.leaderboard_view_kd
-        )  #########
+        )
 
         # Start the refresh
         if self.refresh_task_kd is not None:
             self.refresh_task_kd.cancel()
         self.refresh_task_kd = asyncio.create_task(self.periodic_refresh_kd())
 
-    # Gives a leaderboard sorted by wins
     @commands.command()
     async def leaderboard_wins(self, ctx):
         if not self.bot.player_mmr:
@@ -865,7 +1257,7 @@ class BotCommands(commands.Cog):
         # Sort all players by wins
         sorted_wins = sorted(
             self.bot.player_mmr.items(),
-            key=lambda x: x[1].get("wins", 0.0),  # Default to 0.0 if key is missing
+            key=lambda x: x[1].get("wins", 0.0), 
             reverse=True,
         )
 
@@ -888,7 +1280,6 @@ class BotCommands(commands.Cog):
             else:
                 names.append("Unknown")
 
-        # Stats for leaderboard
         for idx, ((player_id, stats), name) in enumerate(
             zip(page_data, names), start=start_index + 1
         ):
@@ -946,14 +1337,13 @@ class BotCommands(commands.Cog):
             self.bot.player_mmr.items(),
             key=lambda x: x[1].get(
                 "average_combat_score", 0.0
-            ),  # Default to 0.0 if key is missing
+            ),  
             reverse=True,
         )
 
         # Create the view for pages
         view = LeaderboardView(ctx, self.bot, sorted_acs, players_per_page=10)
 
-        # Calculate the page indexes
         start_index = view.current_page * view.players_per_page
         end_index = start_index + view.players_per_page
         page_data = sorted_acs[start_index:end_index]
@@ -969,7 +1359,6 @@ class BotCommands(commands.Cog):
             else:
                 names.append("Unknown")
 
-        # Stats for leaderboard
         for idx, ((player_id, stats), name) in enumerate(
             zip(page_data, names), start=start_index + 1
         ):
@@ -1010,7 +1399,6 @@ class BotCommands(commands.Cog):
             content=content, view=self.leaderboard_view_acs
         )  #########
 
-        # Start the refresh
         if self.refresh_task_acs is not None:
             self.refresh_task_acs.cancel()
         self.refresh_task_acs = asyncio.create_task(self.periodic_refresh_acs())
@@ -1019,51 +1407,10 @@ class BotCommands(commands.Cog):
     @commands.has_role("Owner")  # Restrict this command to admins
     async def initialize_rounds(self, ctx):
         result = mmr_collection.update_many(
-            {}, {"$set": {"total_rounds_played": 0}}  # Update all documents
+            {}, {"$set": {"total_rounds_played": 0}}  # Update
         )
         await ctx.send(
             f"Initialized total_rounds_played for {result.modified_count} players."
-        )
-
-    # To recalculate average combat score after bug
-    @commands.command()
-    @commands.has_role("Owner")
-    async def recalculate(self, ctx):
-        players = mmr_collection.find()
-        updated_count = 0
-        for player in players:
-            player_id = player.get("player_id")
-            total_combat_score = player.get("total_combat_score", 0)
-            total_rounds_played = player.get("total_rounds_played", 0)
-
-            if total_rounds_played > 0:
-                average_combat_score = total_combat_score / total_rounds_played
-            else:
-                average_combat_score = 0
-
-            # Update the database
-            mmr_collection.update_one(
-                {"player_id": player_id},
-                {"$set": {"average_combat_score": average_combat_score}},
-            )
-
-            # Update the in-memory player_mmr dictionary
-            if player_id in self.bot.player_mmr:
-                self.bot.player_mmr[player_id][
-                    "average_combat_score"
-                ] = average_combat_score
-            else:
-                # In case the player is not in player_mmr (should not happen)
-                self.bot.player_mmr[player_id] = {
-                    "average_combat_score": average_combat_score
-                }
-
-            updated_count += 1
-
-        self.bot.load_mmr_data()
-
-        await ctx.send(
-            f"Recalculated average combat score for {updated_count} players."
         )
 
     # Simulate a queue
@@ -1097,195 +1444,92 @@ class BotCommands(commands.Cog):
             f"Simulated full queue: {', '.join([player['name'] for player in queue])}"
         )
 
-        # Proceed to the voting stage
         await ctx.send("The queue is now full, proceeding to the voting stage.")
 
         mode_vote = ModeVoteView(ctx, self.bot)
         await mode_vote.send_view()
 
-    @commands.command()
-    @commands.has_role("Owner")
-    async def test(self, ctx):
-        self.bot.signup_active = True
-        self.bot.queue = []
-        self.bot.captain1 = None
-        self.bot.captain2 = None
-        self.bot.team1 = []
-        self.bot.team2 = []
-        self.bot.chosen_mode = None
-        self.bot.selected_map = None
-        self.bot.match_not_reported = False
-        self.bot.match_ongoing = False
-
-        # Add 10 dummy players to the queue
-        queue = [{"id": i, "name": f"TestPlayer{i}"} for i in range(1, 11)]
-        for player in queue:
-            self.bot.queue.append(player)
-            if player["id"] not in self.bot.player_mmr:
-                self.bot.player_mmr[player["id"]] = {
-                    "mmr": random.randint(900,1100),  # Assign random MMR for testing
-                    "wins": 0,
-                    "losses": 0
-                }
-            self.bot.player_names[player["id"]] = player["name"]
-
-        self.bot.save_mmr_data()
-        await ctx.send("Simulated a full queue of 10 test players.")
-
-        self.bot.chosen_mode = "Captains"
-        await ctx.send("Forced chosen mode: Captains")
-
-        # If captains chosen and not set, pick top 2 MMR as captains
-        if self.bot.chosen_mode == "Captains":
-            sorted_players = sorted(self.bot.queue, key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], reverse=True)
-            self.bot.captain1 = sorted_players[0]
-            self.bot.captain2 = sorted_players[1]
-            await ctx.send(f"Captains chosen automatically: Captain1={self.bot.captain1['name']}, Captain2={self.bot.captain2['name']}")
-
-        # Force map pool
-        from globals import official_maps
-        chosen_maps = official_maps
-        await ctx.send("Map pool chosen: Competitive")
-
-        # Choose a random map from chosen_maps
-        self.bot.selected_map = random.choice(chosen_maps)
-        await ctx.send(f"Selected Map: {self.bot.selected_map}")
-
-        if self.bot.chosen_mode == "Captains":
-            remaining_players = [p for p in self.bot.queue if p not in [self.bot.captain1, self.bot.captain2]]
-            remaining_players.sort(key=lambda p: self.bot.player_mmr[p["id"]]["mmr"], reverse=True)
-
-            self.bot.team1 = [self.bot.captain1]
-            self.bot.team2 = [self.bot.captain2]
-
-            turn = 0
-            for player in remaining_players:
-                if turn % 2 == 0:
-                    self.bot.team1.append(player)
-                else:
-                    self.bot.team2.append(player)
-                turn += 1
-
-            await ctx.send("Automatically assigned teams for captains mode.")
-
-        # Mark the match as ongoing so we can report later if needed
-        self.bot.match_ongoing = True
-
-        # Finalize
-        attackers = []
-        from database import users
-        for p in self.bot.team1:
-            ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = self.bot.player_mmr[p["id"]]["mmr"]
-            if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
-                attackers.append(f"{rn}#{rt} (MMR:{mmr})")
-            else:
-                attackers.append(f"{p['name']} (MMR:{mmr})")
-
-        defenders = []
-        for p in self.bot.team2:
-            ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = self.bot.player_mmr[p["id"]]["mmr"]
-            if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
-                defenders.append(f"{rn}#{rt} (MMR:{mmr})")
-            else:
-                defenders.append(f"{p['name']} (MMR:{mmr})")
-
-        teams_embed = discord.Embed(
-            title=f"Teams for the match on {self.bot.selected_map}",
-            description="Good luck to both teams!",
-            color=discord.Color.blue(),
-        )
-        teams_embed.add_field(
-            name="**Attackers:**", value="\n".join(attackers), inline=False
-        )
-        teams_embed.add_field(
-            name="**Defenders:**", value="\n".join(defenders), inline=False
-        )
-        await ctx.send(embed=teams_embed)
-
-        await ctx.send("Setup complete! You can now `!report` after a match is done.")
-
     # Link Riot Account
     @commands.command()
     async def linkriot(self, ctx, *, riot_input):
+        # Validate "Name#Tag"
         try:
             riot_name, riot_tag = riot_input.rsplit("#", 1)
         except ValueError:
             await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
             return
 
-        data = requests.get(
-            f"https://api.henrikdev.xyz/valorant/v1/account/{riot_name}/{riot_tag}",
-            headers=headers,
-            timeout=30,
-        )
-        user = data.json()
+        api_key = os.getenv("api_key")
+        if not api_key or not api_key.strip():
+            await ctx.send("API key is not configured")
+            return
 
-        if "data" not in user:
-            await ctx.send(
-                "Could not find your Riot account. Please check the name and tag."
-            )
-        else:
-            # Update users collection
-            discord_id = str(ctx.author.id)
-            user_data = {
+        from urllib.parse import quote
+        q_name = quote(riot_name, safe="")
+        q_tag  = quote(riot_tag,  safe="")
+
+        url = f"https://api.henrikdev.xyz/valorant/v2/account/{q_name}/{q_tag}"
+        try:
+            resp = requests.get(url, headers={"Authorization": api_key}, timeout=30)
+        except requests.RequestException as e:
+            await ctx.send(f"Network error reaching HenrikDev API: {e}")
+            return
+
+        # fully document API outcomes
+        if resp.status_code == 401:
+            await ctx.send("HenrikDev API rejected the request (401). Check that your API key is valid.")
+            return
+        if resp.status_code == 429:
+            await ctx.send("Rate limit hit (429). Try again in a bit.")
+            return
+        if resp.status_code == 503:
+            await ctx.send("Riot/HenrikDev upstream is temporarily unavailable (503). Try again later.")
+            return
+        if resp.status_code == 404:
+            await ctx.send("Could not find that Riot account. Double-check the name and tag.")
+            return
+        if resp.status_code != 200:
+            await ctx.send(f"Unexpected error from API ({resp.status_code}).")
+            return
+
+        data = resp.json()
+        if "data" not in data:
+            await ctx.send("Could not find your Riot account. Please check the name and tag.")
+            return
+
+        discord_id = str(ctx.author.id)
+        users.update_one(
+            {"discord_id": discord_id},
+            {"$set": {
                 "discord_id": discord_id,
-                "name": riot_name.lower(),
-                "tag": riot_tag.lower(),
-            }
-            users.update_one(
-                {"discord_id": discord_id}, 
-                {"$set": user_data}, 
-                upsert=True
-            )
+                "name": riot_name.lower().strip(),
+                "tag":  riot_tag.lower().strip(),
+            }},
+            upsert=True
+        )
 
-            # Update name in mmr collections
-            full_name = f"{riot_name}#{riot_tag}"
-            mmr_collection.update_one(
-                {"player_id": str(ctx.author.id)},
-                {"$set": {"name": full_name}},
-                upsert=False
-            )
+        full_name = f"{riot_name}#{riot_tag}"
+        mmr_collection.update_one({"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False)
+        tdm_mmr_collection.update_one({"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False)
 
-            tdm_mmr_collection.update_one(
-                {"player_id": str(ctx.author.id)},
-                {"$set": {"name": full_name}},
-                upsert=False
-            )
-
-            # Check if user is in an active queue
-            if self.bot.signup_active and any(p["id"] == discord_id for p in self.bot.queue):
-                # Update the signup message if it exists
-                if self.bot.current_signup_message:
-                    riot_names = []
-                    for player in self.bot.queue:
-                        player_data = users.find_one({"discord_id": player["id"]})
-                        if player_data:
-                            player_riot_name = f"{player_data.get('name')}#{player_data.get('tag')}"
-                            riot_names.append(player_riot_name)
-                        else:
-                            riot_names.append("Unknown")
-                    
-                    try:
-                        await self.bot.current_signup_message.edit(
-                            content="Click a button to manage your queue status!" + "\n" +
-                            f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}"
-                        )
-                    except discord.NotFound:
-                        pass  # Message might have been deleted
-
-                await ctx.send(
-                    f"Successfully linked {riot_name}#{riot_tag} to your Discord account and updated your active queue entry."
-                )
-            else:
-                await ctx.send(
-                    f"Successfully linked {riot_name}#{riot_tag} to your Discord account."
-                )
+        if self.bot.signup_active and any(p["id"] == discord_id for p in self.bot.queue):
+            if self.bot.current_signup_message:
+                riot_names = []
+                for player in self.bot.queue:
+                    player_data = users.find_one({"discord_id": player["id"]})
+                    riot_names.append(
+                        f"{player_data.get('name')}#{player_data.get('tag')}" if player_data else "Unknown"
+                    )
+                try:
+                    await self.bot.current_signup_message.edit(
+                        content="Click a button to manage your queue status!\n" +
+                                f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}"
+                    )
+                except discord.NotFound:
+                    pass
+            await ctx.send(f"Successfully linked {full_name} to your Discord account and updated your active queue entry.")
+        else:
+            await ctx.send(f"Successfully linked {full_name} to your Discord account.")
 
     # Set captain1
     @commands.command()
@@ -1381,7 +1625,7 @@ class BotCommands(commands.Cog):
             except discord.HTTPException:
                 pass
 
-    # Stop the signup process, only owner can do this
+    # Stop the signup process
     @commands.command()
     @commands.has_role("Owner")
     async def cancel(self, ctx):
@@ -1422,142 +1666,6 @@ class BotCommands(commands.Cog):
         draft = CaptainsDraftingView(ctx, self.bot)
         await draft.send_current_draft_view()
 
-    # Recalculate every stat from matches database
-    @commands.command()
-    @commands.has_role("Owner")
-    async def reaggregate_matches(self, ctx):
-        """
-        Recalculate *all* players' stats AND MMR based on the entire history 
-        of matches stored in the all_matches collection.
-        """
-
-        # 1) Clear or reset in-memory dictionaries for fresh aggregation
-        #    This ensures everyone is starting from base MMR and 0 stats.
-        self.bot.player_mmr.clear()
-        self.bot.player_names.clear()
-
-        # 2) Optionally, fetch all user docs from the DB to set base MMR = 1000
-        #    Or you can just do it on the fly when we first see a user.
-        all_users_cursor = users.find()
-        for udoc in all_users_cursor:
-            d_id = int(udoc["discord_id"])
-            self.bot.player_mmr[d_id] = {
-                "mmr": 1000,
-                "wins": 0,
-                "losses": 0,
-                "total_combat_score": 0,
-                "total_kills": 0,
-                "total_deaths": 0,
-                "matches_played": 0,
-                "total_rounds_played": 0,
-                "average_combat_score": 0,
-                "kill_death_ratio": 0,
-            }
-            self.bot.player_names[d_id] = udoc["name"].lower()
-
-        # 3) Pull out all the stored matches from the database
-        #    IMPORTANT: Sort them in chronological order so MMR is updated match by match
-        #    (Change "created_at" or "started_at" to match your actual field.)
-        all_docs = all_matches.find().sort("started_at", 1)
-        total_matches_processed = 0
-
-        for match_doc in all_docs:
-            total_matches_processed += 1
-
-            # 3a) Identify total rounds from match['rounds']
-            rounds_data = match_doc.get("rounds", [])
-            total_rounds = len(rounds_data)
-
-            # 3b) Identify the winning_team_id
-            teams = match_doc.get("teams", [])
-            winning_team_id = None
-            for t in teams:
-                if t.get("won"):
-                    winning_team_id = t.get("team_id", "").lower()
-                    break
-
-            # 3c) Build sets (or lists) of players for each side
-            match_players = match_doc.get("players", [])
-            match_team_players = {"red": [], "blue": []}
-
-            # We'll store them as a *list of dicts* so they mimic your usual "team" structure
-            for pinfo in match_players:
-                raw_team_id = pinfo.get("team_id", "").lower()
-                name = pinfo.get("name", "").lower()
-                tag = pinfo.get("tag", "").lower()
-
-                # Look up the user to get the discord_id
-                user_entry = users.find_one({"name": name, "tag": tag})
-                if not user_entry:
-                    # If user isn't found or not linked, skip or handle appropriately
-                    continue
-
-                d_id = int(user_entry["discord_id"])
-
-                # We can build a "player dict" as your code normally does
-                player_obj = {"id": d_id, "name": name}
-
-                if raw_team_id in match_team_players:
-                    match_team_players[raw_team_id].append(player_obj)
-
-                # Also do the stats update here:
-                # because this is effectively your "report" process
-                update_stats(
-                    pinfo, 
-                    total_rounds,
-                    self.bot.player_mmr,
-                    self.bot.player_names
-                )
-
-            # 3d) Determine "winning_team" vs "losing_team" as *lists of dicts*
-            winning_team = []
-            losing_team = []
-
-            # If the winning_team_id is "red", then winning_team = match_team_players["red"], etc.
-            if winning_team_id == "red":
-                winning_team = match_team_players["red"]
-                losing_team = match_team_players["blue"]
-            elif winning_team_id == "blue":
-                winning_team = match_team_players["blue"]
-                losing_team = match_team_players["red"]
-            else:
-                # If we can't determine a winning team, skip or handle error
-                continue
-
-            # 3e) Increment wins/losses for each player in memory
-            for wplayer in winning_team:
-                d_id = wplayer["id"]
-                if d_id in self.bot.player_mmr:
-                    self.bot.player_mmr[d_id]["wins"] = self.bot.player_mmr[d_id].get("wins", 0) + 1
-
-            for lplayer in losing_team:
-                d_id = lplayer["id"]
-                if d_id in self.bot.player_mmr:
-                    self.bot.player_mmr[d_id]["losses"] = self.bot.player_mmr[d_id].get("losses", 0) + 1
-
-
-        for d_id, stats in self.bot.player_mmr.items():
-            mmr_collection.update_one(
-                {"player_id": d_id},
-                {
-                    "$set": {
-                        "mmr": stats.get("mmr", 1000),
-                        "wins": stats.get("wins", 0),
-                        "losses": stats.get("losses", 0),
-                        "total_combat_score": stats.get("total_combat_score", 0),
-                        "total_kills": stats.get("total_kills", 0),
-                        "total_deaths": stats.get("total_deaths", 0),
-                        "matches_played": stats.get("matches_played", 0),
-                        "total_rounds_played": stats.get("total_rounds_played", 0),
-                        "average_combat_score": stats.get("average_combat_score", 0),
-                        "kill_death_ratio": stats.get("kill_death_ratio", 0),
-                        # store "name" if you want or any other fields
-                    }
-                },
-                upsert=True
-            )
-
-        await ctx.send(f"Re-aggregated stats + MMR for all players from {total_matches_processed} stored matches!")
 
     # Custom Help Command
     @commands.command()

@@ -25,7 +25,7 @@ class MapVoteView(discord.ui.View):
         for m in random_maps:
             btn=Button(label=f"{m} (0)", style=discord.ButtonStyle.secondary)
             async def cb(interaction: discord.Interaction, chosen=m):
-                if str(interaction.user.id) not in [p["id"] for p in self.bot.queue]:
+                if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
                     await interaction.response.send_message("Must be in queue!", ephemeral=True)
                     return
                 if str(interaction.user.id) in self.voters:
@@ -38,64 +38,104 @@ class MapVoteView(discord.ui.View):
                         b.label=f"{chosen} ({self.map_votes[chosen]})"
                 await interaction.message.edit(view=self)
                 await interaction.response.send_message(f"Voted {chosen}.", ephemeral=True)
+                await self._check_vote()
             btn.callback=cb
             self.map_buttons.append(btn)
 
+
+    def _disable_buttons(self):
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+
+    async def _start_timer(self):
+        await asyncio.sleep(25)
+        # If majority already handled, do nothing
+        max_votes = max(self.map_votes.values()) if self.map_votes else 0
+        if max_votes > 4:
+            return
+
+        if not self.map_votes:
+            winning_map = random.choice(self.chosen_maps)
+            await self.ctx.send(f"No votes received! Randomly selected map: **{winning_map}**")
+        else:
+            max_votes = max(self.map_votes.values())
+            winners = [m for m, v in self.map_votes.items() if v == max_votes]
+            if len(winners) > 1:
+                winning_map = random.choice(winners)
+                await self.ctx.send(f"Tie! Randomly selected: **{winning_map}**")
+            else:
+                winning_map = winners[0]
+
+        self._disable_buttons()
+        try:
+            if hasattr(self, "_message") and self._message:
+                await self._message.edit(view=self)
+        except discord.HTTPException:
+            pass
+
+        await self._finalize_and_advance(winning_map)
+
+    async def _finalize_and_advance(self, winning_map: str):
+        self.winning_map = winning_map
+        self.bot.selected_map = winning_map
+
+        await self.ctx.send(f"Selected map: **{winning_map}**")
+
+        if self.bot.chosen_mode == "Balanced":
+            await self.finalize()
+        elif self.bot.chosen_mode == "Captains":
+            # Ensure captains exist
+            if not self.bot.captain1 or not self.bot.captain2:
+                sorted_players = sorted(
+                    self.bot.queue,
+                    key=lambda p: self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", 1000),
+                    reverse=True
+                )
+                self.bot.captain1 = sorted_players[0]
+                self.bot.captain2 = sorted_players[1]
+
+            choice_view = SecondCaptainChoiceView(self.ctx, self.bot)
+            await self.ctx.send(
+                f"<@{self.bot.captain2['id']}>, choose draft type:",
+                view=choice_view
+            )
+        else:
+            await self.ctx.send("Error: No game mode selected!")
+
+    async def _check_vote(self):
+        # majority check (5+)
+        if not self.map_votes:
+            return
+
+        max_votes = max(self.map_votes.values())
+        if max_votes > 4:
+            winners = [m for m, v in self.map_votes.items() if v == max_votes]
+            winning_map = random.choice(winners)
+            self._disable_buttons()
+            try:
+                if hasattr(self, "_message") and self._message:
+                    await self._message.edit(view=self)
+            except discord.HTTPException:
+                pass
+            await self._finalize_and_advance(winning_map)
+
     async def send_view(self):
-        if not self.bot.bot.chosen_mode:
+        if not self.bot.chosen_mode:
             print("[DEBUG] No mode selected at start of map vote")
             await self.ctx.send("Error: Game mode not selected. Please start a new queue.")
             return
+
         for b in self.map_buttons:
             self.add_item(b)
-        message = await self.ctx.send("Vote for the map to play:", view=self)
-        
-        try:
-            await asyncio.sleep(25)
-            
-            if not self.map_votes:  # If no votes received
-                self.winning_map = random.choice(self.chosen_maps)
-                await self.ctx.send(f"No votes received! Randomly selected map: **{self.winning_map}**")
-            else:
-                max_votes = max(self.map_votes.values())
-                winning_maps = [m for m, v in self.map_votes.items() if v == max_votes]
-                
-                if len(winning_maps) > 1:
-                    self.winning_map = random.choice(winning_maps)
-                    await self.ctx.send(f"Tie! Randomly selected: **{self.winning_map}**")
-                else:
-                    self.winning_map = winning_maps[0]
-                    await self.ctx.send(f"Selected map: **{self.winning_map}**")
 
-            self.bot.selected_map = self.winning_map
+        self._message = await self.ctx.send("Vote for the map to play:", view=self)
 
-            # Now check chosen_mode and proceed accordingly
-            if self.bot.chosen_mode == "Balanced":
-                await self.finalize()
-            elif self.bot.chosen_mode == "Captains":
-                if not self.bot.captain1 or not self.bot.captain2:
-                    sorted_players = sorted(
-                        self.bot.queue,
-                        key=lambda p: self.bot.player_mmr[p["id"]]["mmr"],
-                        reverse=True
-                    )
-                    self.bot.captain1 = sorted_players[0]
-                    self.bot.captain2 = sorted_players[1]
-                
-                from views.captains_drafting_view import SecondCaptainChoiceView
-                choice_view = SecondCaptainChoiceView(self.ctx, self.bot)
-                await self.ctx.send(
-                    f"<@{self.bot.captain2['id']}>, choose draft type:",
-                    view=choice_view
-                )
-            else:
-                await self.ctx.send("Error: No game mode selected!")
-                
-        except Exception as e:
-            await self.ctx.send(f"Error during map selection: {str(e)}")
+        asyncio.create_task(self._start_timer())
+
 
     async def finalize(self):
-        # Finalize teams after map chosen.
+        # Finalize teams after map chosen
         teams_embed=discord.Embed(
             title=f"Teams on {self.winning_map}",
             description="Good luck!",
@@ -105,7 +145,7 @@ class MapVoteView(discord.ui.View):
         attackers=[]
         for p in self.bot.team1:
             ud=users.find_one({"discord_id": str(p["id"])})
-            mmr=self.bot.player_mmr.get(p["id"],{}).get("mmr",1000)
+            mmr=self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", 1000)
             if ud:
                 rn=ud.get("name","Unknown")
                 rt=ud.get("tag","Unknown")
@@ -116,7 +156,7 @@ class MapVoteView(discord.ui.View):
         defenders=[]
         for p in self.bot.team2:
             ud=users.find_one({"discord_id": str(p["id"])})
-            mmr=self.bot.player_mmr.get(p["id"],{}).get("mmr",1000)
+            mmr=self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", 1000)
             if ud:
                 rn=ud.get("name","Unknown")
                 rt=ud.get("tag","Unknown")

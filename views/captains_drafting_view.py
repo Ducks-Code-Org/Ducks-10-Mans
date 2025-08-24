@@ -1,8 +1,7 @@
-"""Captains drafting after second captain choice."""
 
 import asyncio
 import discord
-from discord.ui import Select, Button
+from discord.ui import Select
 from database import users
 
 class SecondCaptainChoiceView(discord.ui.View):
@@ -11,33 +10,35 @@ class SecondCaptainChoiceView(discord.ui.View):
         self.ctx = ctx
         self.bot = bot
 
-        # Create buttons as class attributes
+        # Buttons
         self.first_pick_button = discord.ui.Button(
-            label="Single Pick",
-            style=discord.ButtonStyle.green,
-            custom_id="single_pick"
+            label="First Pick", style=discord.ButtonStyle.green, custom_id="single_pick"
         )
         self.double_pick_button = discord.ui.Button(
-            label="Double Pick",
-            style=discord.ButtonStyle.blurple,
-            custom_id="double_pick"
+            label="2nd + 3rd Pick", style=discord.ButtonStyle.blurple, custom_id="double_pick"
         )
 
-        # Set up callbacks
+        # Callbacks
         self.first_pick_button.callback = self.first_pick_callback
         self.double_pick_button.callback = self.double_pick_callback
 
-        # Add buttons to view
+        # Add to view
         self.add_item(self.first_pick_button)
         self.add_item(self.double_pick_button)
 
     async def send_view(self):
-        """Call this method to display the captains and show the single/double pick buttons."""
+        """Show captains and present draft mode choice."""
         c1_data = users.find_one({"discord_id": str(self.bot.captain1["id"])})
         c2_data = users.find_one({"discord_id": str(self.bot.captain2["id"])})
-        
-        c1_name = f"{c1_data.get('name', 'Unknown')}#{c1_data.get('tag', 'Unknown')}" if c1_data else self.bot.captain1["name"]
-        c2_name = f"{c2_data.get('name', 'Unknown')}#{c2_data.get('tag', 'Unknown')}" if c2_data else self.bot.captain2["name"]
+
+        c1_name = (
+            f"{c1_data.get('name', 'Unknown')}#{c1_data.get('tag', 'Unknown')}"
+            if c1_data else self.bot.captain1["name"]
+        )
+        c2_name = (
+            f"{c2_data.get('name', 'Unknown')}#{c2_data.get('tag', 'Unknown')}"
+            if c2_data else self.bot.captain2["name"]
+        )
 
         embed = discord.Embed(
             title="Team Captains",
@@ -47,63 +48,70 @@ class SecondCaptainChoiceView(discord.ui.View):
         embed.add_field(name="Captain 1", value=c1_name, inline=True)
         embed.add_field(name="Captain 2", value=c2_name, inline=True)
         embed.add_field(
-            name="Instructions", 
+            name="Instructions",
             value=f"<@{self.bot.captain2['id']}> must choose either Single Pick or Double Pick",
             inline=False
         )
 
         await self.ctx.send(embed=embed, view=self)
 
-    async def first_pick_callback(self, interaction: discord.Interaction):
+    async def _validate_second_captain(self, interaction: discord.Interaction) -> bool:
         if str(interaction.user.id) != str(self.bot.captain2["id"]):
             await interaction.response.send_message(
                 "Only the second captain can make this choice!",
                 ephemeral=True
             )
+            return False
+        return True
+
+    async def first_pick_callback(self, interaction: discord.Interaction):
+        if not await self._validate_second_captain(interaction):
             return
 
-        # Disable buttons after valid choice
+        # Disable buttons after
         self.first_pick_button.disabled = True
         self.double_pick_button.disabled = True
         await interaction.message.edit(view=self)
 
-        await interaction.response.send_message("Single pick mode selected!", ephemeral=True)
+        await interaction.response.send_message("First pick selected!", ephemeral=True)
         await self.start_draft(single_pick=True)
 
     async def double_pick_callback(self, interaction: discord.Interaction):
-        if str(interaction.user.id) != str(self.bot.captain2["id"]):
-            await interaction.response.send_message(
-                "Only the second captain can make this choice!",
-                ephemeral=True
-            )
+        if not await self._validate_second_captain(interaction):
             return
 
-        # Disable buttons after valid choice
         self.first_pick_button.disabled = True
         self.double_pick_button.disabled = True
         await interaction.message.edit(view=self)
 
-        await interaction.response.send_message("Double pick mode selected!", ephemeral=True)
+        await interaction.response.send_message("2nd + 3rd pick selected!", ephemeral=True)
         await self.start_draft(single_pick=False)
 
     async def start_draft(self, single_pick: bool):
         mode_name = "Single Pick" if single_pick else "Double Pick"
-        await self.ctx.send(f"**{mode_name}** mode chosen! Starting draft phase...")
-        
+        await self.ctx.send(f"**{mode_name}** chosen! Starting draft phase...")
+
         drafting_view = CaptainsDraftingView(self.ctx, self.bot, single_pick)
+
         await drafting_view.send_current_draft_view()
 
+        # Lock buttons
         for child in self.children:
             child.disabled = True
 
+
 class CaptainsDraftingView(discord.ui.View):
-    def __init__(self, ctx, bot, single_pick):
+    def __init__(self, ctx, bot, single_pick: bool):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
-        self.player_select = Select(placeholder="Pick player", options=[])
-        self.add_item(self.player_select)
-        self.remaining_players = [p for p in self.bot.queue if p not in [self.bot.captain1, self.bot.captain2]]
+
+        # Build remaining pool
+        cap1_id = str(self.bot.captain1["id"])
+        cap2_id = str(self.bot.captain2["id"])
+        self.remaining_players = [p for p in self.bot.queue if str(p["id"]) not in {cap1_id, cap2_id}]
+
+        # Pick order patterns
         if single_pick:
             self.pick_order = [
                 self.bot.captain2,
@@ -126,33 +134,95 @@ class CaptainsDraftingView(discord.ui.View):
                 self.bot.captain2,
                 self.bot.captain1,
             ]
+
         self.pick_count = 0
+        self.draft_finished = False
+
         self.remaining_players_message = None
         self.drafting_message = None
         self.captain_pick_message = None
-        c1_data = users.find_one({"discord_id": str(self.bot.captain1["id"])})
-        self.captain1_name = f"{c1_data.get('name','Unknown')}#{c1_data.get('tag','Unknown')}" if c1_data else self.bot.captain1["name"]
-        c2_data = users.find_one({"discord_id": str(self.bot.captain2["id"])})
-        self.captain2_name = f"{c2_data.get('name','Unknown')}#{c2_data.get('tag','Unknown')}" if c2_data else self.bot.captain2["name"]
-        self.draft_finished = False
 
+        if not getattr(self.bot, "team1", None):
+            self.bot.team1 = []
+        if not getattr(self.bot, "team2", None):
+            self.bot.team2 = []
+        if not self.bot.team1 or self.bot.team1[0].get("id") != self.bot.captain1["id"]:
+            if not any(p.get("id") == self.bot.captain1["id"] for p in self.bot.team1):
+                self.bot.team1.insert(0, self.bot.captain1)
+        if not self.bot.team2 or self.bot.team2[0].get("id") != self.bot.captain2["id"]:
+            if not any(p.get("id") == self.bot.captain2["id"] for p in self.bot.team2):
+                self.bot.team2.insert(0, self.bot.captain2)
+
+        c1_data = users.find_one({"discord_id": str(self.bot.captain1["id"])})
+        c2_data = users.find_one({"discord_id": str(self.bot.captain2["id"])})
+        self.captain1_name = (
+            f"{c1_data.get('name','Unknown')}#{c1_data.get('tag','Unknown')}"
+            if c1_data else self.bot.captain1["name"]
+        )
+        self.captain2_name = (
+            f"{c2_data.get('name','Unknown')}#{c2_data.get('tag','Unknown')}"
+            if c2_data else self.bot.captain2["name"]
+        )
+
+        # component for picking players
+        self.player_select = Select(placeholder="Pick player", options=[])
         self.player_select.callback = self.select_callback
+        self.add_item(self.player_select)
+
+    # logic
+    def _team_cap(self) -> int:
+        """Max players per team INCLUDING the captain. Default 5."""
+        return getattr(self, "max_per_team", 5)
+
+    def _picks_exhausted(self) -> bool:
+        """
+        Stop if:
+        - we've used all entries in pick_order, OR
+        - both teams reached the cap, OR
+        - no players left to pick.
+        """
+        cap = self._team_cap()
+
+        team1_len = len(self.bot.team1)
+        team2_len = len(self.bot.team2)
+
+        out_of_turns = self.pick_count >= len(self.pick_order)
+        teams_full = (team1_len >= cap) and (team2_len >= cap)
+        pool_empty = len(self.remaining_players) == 0
+
+        return out_of_turns or teams_full or pool_empty
+
+    def picks_exhausted(self) -> bool:
+        return self._picks_exhausted()
 
     async def finalize_draft(self):
+        """Finalize teams, cleanup UI, announce result."""
+        if self.draft_finished:
+            return
         self.draft_finished = True
-        self.pick_count = 0
-        if self.remaining_players_message:
-            await self.remaining_players_message.delete()
-        if self.drafting_message:
-            await self.drafting_message.delete()
-        if self.captain_pick_message:
-            await self.captain_pick_message.delete()
 
-        self.bot.team1.insert(0, self.bot.captain1)
-        self.bot.team2.insert(0, self.bot.captain2)
+        try:
+            self.player_select.disabled = True
+        except Exception:
+            pass
 
+        while self.remaining_players:
+            target = self.bot.team1 if len(self.bot.team1) <= len(self.bot.team2) else self.bot.team2
+            target.append(self.remaining_players.pop(0))
+
+        for msg_attr in ("remaining_players_message", "drafting_message", "captain_pick_message"):
+            msg = getattr(self, msg_attr, None)
+            if msg:
+                try:
+                    await msg.delete()
+                except discord.NotFound:
+                    pass
+                setattr(self, msg_attr, None)
+
+        # final teams embed
+        map_name = getattr(self.bot, "selected_map", "Map")
         teams_embed = discord.Embed(
-            title=f"Teams on {self.bot.selected_map}",
+            title=f"Teams on {map_name}",
             description="Good luck!",
             color=discord.Color.blue()
         )
@@ -160,10 +230,9 @@ class CaptainsDraftingView(discord.ui.View):
         attackers = []
         for p in self.bot.team1:
             ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = self.bot.player_mmr[p["id"]]["mmr"]
+            mmr = getattr(self.bot, "player_mmr", {}).get(str(p["id"]), {}).get("mmr", 1000)
             if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
+                rn = ud.get("name", "Unknown"); rt = ud.get("tag", "Unknown")
                 attackers.append(f"{rn}#{rt} (MMR:{mmr})")
             else:
                 attackers.append(f"{p['name']} (MMR:{mmr})")
@@ -171,49 +240,72 @@ class CaptainsDraftingView(discord.ui.View):
         defenders = []
         for p in self.bot.team2:
             ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = self.bot.player_mmr[p["id"]]["mmr"]
+            mmr = getattr(self.bot, "player_mmr", {}).get(str(p["id"]), {}).get("mmr", 1000)
             if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
+                rn = ud.get("name", "Unknown"); rt = ud.get("tag", "Unknown")
                 defenders.append(f"{rn}#{rt} (MMR:{mmr})")
             else:
                 defenders.append(f"{p['name']} (MMR:{mmr})")
 
-        teams_embed.add_field(name="**Attackers:**", value="\n".join(attackers), inline=False)
-        teams_embed.add_field(name="**Defenders:**", value="\n".join(defenders), inline=False)
+        teams_embed.add_field(name="**Attackers:**", value="\n".join(attackers) or "—", inline=False)
+        teams_embed.add_field(name="**Defenders:**", value="\n".join(defenders) or "—", inline=False)
 
         await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match and use `!report` to finalize results.")
+
         self.bot.match_ongoing = True
         self.bot.match_not_reported = True
+
+        # prevent further callbacks
+        try:
+            self.stop()
+        except Exception:
+            pass
+
+    async def finish_draft(self, *args, **kwargs):
+        await self.finalize_draft()
+
 
     async def select_callback(self, interaction: discord.Interaction):
         if self.draft_finished:
             await interaction.response.send_message("Draft is already complete!", ephemeral=True)
             return
-            
-        current_captain_id = self.pick_order[self.pick_count]["id"]
+
+        if self._picks_exhausted():
+            await self.finalize_draft()
+            return
+
+        # Enforce turn taking
+        current_captain_id = str(self.pick_order[self.pick_count]["id"])
         if str(interaction.user.id) != current_captain_id:
             await interaction.response.send_message("Not your turn.", ephemeral=True)
             return
 
-        selected_id = self.player_select.values[0]
-        player_dict = next((p for p in self.remaining_players if p["id"] == selected_id), None)
+        selected_id = str(self.player_select.values[0])
+        player_dict = next((p for p in self.remaining_players if str(p["id"]) == selected_id), None)
         if not player_dict:
             await interaction.response.send_message("Player not available.", ephemeral=True)
             return
 
-        if current_captain_id == self.bot.captain1["id"]:
+        # Assign to current captain's team
+        if current_captain_id == str(self.bot.captain1["id"]):
             self.bot.team1.append(player_dict)
         else:
             self.bot.team2.append(player_dict)
+
         self.pick_count += 1
-        self.remaining_players.remove(player_dict)
-        await interaction.response.defer()
+        try:
+            self.remaining_players.remove(player_dict)
+        except ValueError:
+            pass
+
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
         await self.draft_next_player()
 
     async def draft_next_player(self):
-        if len(self.remaining_players) == 0:
+        if self._picks_exhausted():
             await self.finalize_draft()
             return
         await self.send_current_draft_view()
@@ -221,103 +313,128 @@ class CaptainsDraftingView(discord.ui.View):
     async def send_current_draft_view(self):
         if self.draft_finished:
             return
-            
+
+        # If no one left to pick, finish
+        if not self.remaining_players or self._picks_exhausted():
+            await self.finalize_draft()
+            return
+
+        # Rebuild select options from remaining players
         options = []
         for p in self.remaining_players:
             ud = users.find_one({"discord_id": str(p["id"])})
             if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
-                label = f"{rn}#{rt}"
+                label = f"{ud.get('name', 'Unknown')}#{ud.get('tag', 'Unknown')}"
             else:
                 label = p["name"]
             options.append(discord.SelectOption(label=label, value=str(p["id"])))
         self.player_select.options = options
 
+        # Remaining players embed
         remaining_players_names = []
         for p in self.remaining_players:
             ud = users.find_one({"discord_id": str(p["id"])})
             if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
-                name = f"{rn}#{rt}"
+                remaining_players_names.append(f"{ud.get('name','Unknown')}#{ud.get('tag','Unknown')}")
             else:
-                name = p["name"]
-            remaining_players_names.append(name)
+                remaining_players_names.append(p["name"])
 
         remaining_players_embed = discord.Embed(
             title="Remaining Players",
-            description="\n".join(remaining_players_names),
+            description="\n".join(remaining_players_names) if remaining_players_names else "—",
             color=discord.Color.blue()
         )
-        
-        team1_names = []
-        for p in self.bot.team1:
-            ud = users.find_one({"discord_id": str(p["id"])})
-            if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
-                team1_names.append(f"{rn}#{rt}")
-            else:
-                team1_names.append(p["name"])
 
-        team2_names = []
-        for p in self.bot.team2:
-            ud = users.find_one({"discord_id": str(p["id"])})
-            if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
-                team2_names.append(f"{rn}#{rt}")
-            else:
-                team2_names.append(p["name"])
+        # Teams embed
+        def list_names(team):
+            out = []
+            for p in team:
+                ud = users.find_one({"discord_id": str(p["id"])})
+                if ud:
+                    out.append(f"{ud.get('name','Unknown')}#{ud.get('tag','Unknown')}")
+                else:
+                    out.append(p["name"])
+            return "\n".join(out) if out else "No players yet"
 
         drafting_embed = discord.Embed(title="Current Draft", color=discord.Color.green())
         drafting_embed.add_field(
             name=f"{self.captain1_name}'s Team",
-            value="\n".join(team1_names) if team1_names else "No players yet",
+            value=list_names(self.bot.team1),
             inline=False
         )
         drafting_embed.add_field(
             name=f"{self.captain2_name}'s Team",
-            value="\n".join(team2_names) if team2_names else "No players yet",
+            value=list_names(self.bot.team2),
             inline=False
         )
 
+        # Prompt for current captain
         current_captain_id = self.pick_order[self.pick_count]["id"]
         ud = users.find_one({"discord_id": str(current_captain_id)})
         if ud:
             curr_captain_name = f"{ud.get('name','Unknown')}#{ud.get('tag','Unknown')}"
         else:
-            c = (self.bot.captain1 if self.bot.captain1["id"] == current_captain_id else self.bot.captain2)
+            c = self.bot.captain1 if self.bot.captain1["id"] == current_captain_id else self.bot.captain2
             curr_captain_name = c["name"]
 
         message = f"**{curr_captain_name}**, pick a player:"
 
-        if self.captain_pick_message:
-            await self.remaining_players_message.edit(embed=remaining_players_embed)
-            await self.drafting_message.edit(embed=drafting_embed)
-            await self.captain_pick_message.edit(content=message, view=self)
+        if self.captain_pick_message and self.remaining_players_message and self.drafting_message:
+            try:
+                await self.remaining_players_message.edit(embed=remaining_players_embed)
+                await self.drafting_message.edit(embed=drafting_embed)
+                await self.captain_pick_message.edit(content=message, view=self)
+            except discord.NotFound:
+                self.remaining_players_message = await self.ctx.send(embed=remaining_players_embed)
+                self.drafting_message = await self.ctx.send(embed=drafting_embed)
+                self.captain_pick_message = await self.ctx.send(content=message, view=self)
         else:
             self.remaining_players_message = await self.ctx.send(embed=remaining_players_embed)
             self.drafting_message = await self.ctx.send(embed=drafting_embed)
             self.captain_pick_message = await self.ctx.send(content=message, view=self)
 
-        if not self.draft_finished:  # Only set up the timeout if draft isn't finished
+        if not self.draft_finished:
             try:
                 await self.bot.wait_for(
                     "interaction",
-                    check=lambda i: i.data.get("component_type") == 3 and i.user.id == int(current_captain_id),
+                    check=lambda i: i.data.get("component_type") == 3
+                                    and str(i.user.id) == str(current_captain_id),
                     timeout=60
                 )
             except asyncio.TimeoutError:
-                if not self.draft_finished:  # Double check it hasn't finished while waiting
-                    current_captain = next(
-                        (c for c in [self.bot.captain1, self.bot.captain2] if c["id"] == current_captain_id),
-                        None
-                    )
-                    current_captain_name = current_captain["name"]
-                    await self.ctx.send(f"{current_captain_name} took too long. Draft canceled.")
-                    await asyncio.sleep(5)
+                if not self.draft_finished:
+                    await self.ctx.send(f"{curr_captain_name} took too long. Draft canceled. Cleaning up…")
+                    await asyncio.sleep(2)
+
+                    # Reset state
+                    self.bot.signup_active = False
+                    self.bot.match_ongoing = False
+                    self.bot.match_not_reported = False
                     self.bot.queue.clear()
-                    await self.bot.match_channel.delete()
-                    await self.bot.match_role.delete()
+                    self.bot.team1 = []
+                    self.bot.team2 = []
+                    self.bot.captain1 = None
+                    self.bot.captain2 = None
+                    self.bot.chosen_mode = None
+                    self.bot.selected_map = None
+
+                    try:
+                        if getattr(self.bot, "match_channel", None):
+                            await self.bot.match_channel.delete()
+                    except discord.NotFound:
+                        pass
+                    finally:
+                        self.bot.match_channel = None
+
+                    try:
+                        if getattr(self.bot, "match_role", None):
+                            await self.bot.match_role.delete()
+                    except discord.NotFound:
+                        pass
+                    finally:
+                        self.bot.match_role = None
+
+                    try:
+                        self.stop()
+                    except Exception:
+                        pass
