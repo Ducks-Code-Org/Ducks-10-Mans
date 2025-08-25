@@ -1,11 +1,14 @@
 """This file stores global variables that are used throughout the program. These will need to be updated based on map pool changes."""
 
 import os
+from zoneinfo import ZoneInfo
 
 # Global constants
-API_KEY = os.getenv("API_KEY")  # For HenrikDev API
-URI_KEY = os.getenv("URI_KEY")  # URI for MongoDB
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # Discord bot token
+API_KEY: str | None = os.getenv("API_KEY")  # For HenrikDev API
+URI_KEY: str | None = os.getenv("URI_KEY")  # URI for MongoDB
+BOT_TOKEN: str | None = os.getenv("BOT_TOKEN")  # Discord bot token
+
+TIME_ZONE_CST: ZoneInfo = ZoneInfo("America/Chicago")
 
 official_maps = ["Haven", "Sunset", "Ascent", "Abyss", "Lotus", "Bind", "Corrode"]
 all_maps = [
