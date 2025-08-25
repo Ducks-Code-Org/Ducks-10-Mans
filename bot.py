@@ -5,10 +5,8 @@ from zoneinfo import ZoneInfo
 
 from discord.ext import commands
 
-from commands import BotCommands
 from views.signup_view import SignupView
 from database import mmr_collection, users, tdm_mmr_collection, seasons
-from tdm_commands import TDMCommands
 
 CST = ZoneInfo("America/Chicago")
 
@@ -173,7 +171,7 @@ class CustomBot(commands.Bot):
         )
 
         # 3) Reset in-memory cache
-        for pid, stats in list(self.player_mmr.items()):
+        for _pid, stats in list(self.player_mmr.items()):
             # Core 10-mans
             stats.update(
                 {
@@ -496,8 +494,15 @@ class CustomBot(commands.Bot):
                 player_names[player_id] = "Unknown"
 
     async def setup_hook(self):
-        await self.add_cog(BotCommands(self))
-        await self.add_cog(TDMCommands(self))
+        await self.load_extension("commands.admin_commands")
+        await self.load_extension("commands.help")
+        await self.load_extension("commands.interest")
+        await self.load_extension("commands.leaderboard_commands")
+        await self.load_extension("commands.linkriot")
+        await self.load_extension("commands.report")
+        await self.load_extension("commands.signup")
+        await self.load_extension("commands.stats")
+        await self.load_extension("commands.tdm_commands")
         print("Bot is ready and cogs are loaded.")
 
     def some_custom_method(self):

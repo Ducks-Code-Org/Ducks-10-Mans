@@ -1,25 +1,24 @@
-import os
+"Commands for managing 3v3 Team Deathmatch (TDM) mode."
+
 import random
+
 import discord
 from discord.ext import commands
 import requests
+
+from commands import BotCommands
 from views.tdm_map_vote_view import TDMMapVoteView
+from globals import api_key
+
 
 from database import users, tdm_matches, tdm_mmr_collection
 
 
-class TDMCommands(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        self.tdm_signup_active = False
-        self.tdm_match_ongoing = False
-        self.tdm_queue = []
-        self.tdm_team1 = []
-        self.tdm_team2 = []
-        self.tdm_match_channel = None
-        self.tdm_match_role = None
-        self.tdm_current_message = None
+async def setup(bot):
+    await bot.add_cog(TDMCommands(bot))
 
+
+class TDMCommands(BotCommands):
     @commands.command()
     async def tdm(self, ctx):
         # Check if any match is in progress
@@ -378,9 +377,7 @@ class TDMCommands(commands.Cog):
         # Get match data from API
         url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{name}/{tag}"
         try:
-            response = requests.get(
-                url, headers={"Authorization": os.getenv("api_key")}, timeout=30
-            )
+            response = requests.get(url, headers={"Authorization": api_key}, timeout=30)
             match_data = response.json()
 
             if "data" not in match_data or not match_data["data"]:
