@@ -4,7 +4,7 @@ import random
 import discord
 from discord.ui import Button
 
-from globals import official_maps, all_maps
+from maps_service import get_competitive_maps, get_standard_maps
 
 
 async def _safe_reply(interaction, *args, **kwargs):
@@ -50,19 +50,24 @@ class MapTypeVoteView(discord.ui.View):
         comp = self.map_pool_votes["Competitive"]
         allm = self.map_pool_votes["All"]
 
+        STANDARD_MAP_LIST = get_standard_maps()
+        COMPETITIVE_MAP_LIST = get_competitive_maps()
+
         # 5+ wins immediately
         if comp > 4 or allm > 4 or self.timeout:
             # decide winner
             if comp > allm:
                 await self.ctx.send("Competitive Maps chosen!")
-                chosen_maps = official_maps
+                chosen_maps = COMPETITIVE_MAP_LIST
             elif allm > comp:
                 await self.ctx.send("All Maps chosen!")
-                chosen_maps = all_maps
+                chosen_maps = STANDARD_MAP_LIST
             else:
                 decision = "All" if random.choice([True, False]) else "Competitive"
                 await self.ctx.send(f"Tie! {decision} Maps chosen!")
-                chosen_maps = all_maps if decision == "All" else official_maps
+                chosen_maps = (
+                    STANDARD_MAP_LIST if decision == "All" else COMPETITIVE_MAP_LIST
+                )
 
             self.voting_phase_ended = True
             self._disable_buttons()
