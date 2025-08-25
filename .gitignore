@@ -9,3 +9,5 @@
 DebugTools/tools/match_reporter.py
 env.bat
 **/ducks-10-mans
+*.egg-info
+**/build
