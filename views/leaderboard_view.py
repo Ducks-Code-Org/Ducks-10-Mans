@@ -45,11 +45,15 @@ class LeaderboardView(discord.ui.View):
         self.ctx = ctx
         self.bot = bot
         self.sorted_data = sorted_data
+        if self.mode == "tdm":
+            self.sorted_data = [d for d in self.sorted_data if _has_played_tdm(d)]
+        else:
+            self.sorted_data = [d for d in self.sorted_data if _has_played_normal(d)]
         
         self.players_per_page = players_per_page
         self.current_page = 0
         self.mode = mode  # "normal" or "tdm"
-        self.total_pages = math.ceil(len(self.sorted_data) / self.players_per_page)
+        self.total_pages = max(1, math.ceil(len(self.sorted_data) / self.players_per_page))
 
         self.previous_button = Button(
             style=discord.ButtonStyle.blurple,
@@ -270,6 +274,10 @@ class LeaderboardView(discord.ui.View):
                 key=lambda x: x.get("mmr", 0),
                 reverse=True
             )
+        if self.mode == "tdm":
+            self.sorted_data = [d for d in self.sorted_data if _has_played_tdm(d)]
+        else:
+            self.sorted_data = [d for d in self.sorted_data if _has_played_normal(d)]
             
         self.total_pages = math.ceil(len(self.sorted_data) / self.players_per_page)
         if self.current_page >= self.total_pages:
