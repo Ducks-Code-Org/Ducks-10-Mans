@@ -3,6 +3,7 @@ import random
 
 import discord
 from discord.ui import Button
+from maps_service import get_tdm_maps
 
 
 class MapButton(discord.ui.Button):
@@ -50,9 +51,9 @@ class TDMMapVoteView(discord.ui.View):
         print(f"[DEBUG] Queue at init: {self.tdm_queue}")
 
     async def setup(self):
-        from globals import tdm_maps
+        TDM_MAP_LIST = get_tdm_maps()
 
-        random_maps = random.sample(tdm_maps, 3)
+        random_maps = random.sample(TDM_MAP_LIST, 3)
         self.chosen_maps = random_maps
         self.map_votes = {m: 0 for m in random_maps}
 
