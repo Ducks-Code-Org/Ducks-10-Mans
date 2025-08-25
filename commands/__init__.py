@@ -3,7 +3,6 @@ from datetime import timezone
 from discord.ext import commands
 
 from database import all_matches
-from globals import api_key
 
 
 def convert_to_utc(datetime):
