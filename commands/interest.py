@@ -1,7 +1,6 @@
 "Plans a time to run Duck's 10 Mans and open a Join/Leave interest view."
 
 from datetime import datetime, timezone, timedelta
-from zoneinfo import ZoneInfo
 from pymongo import ReturnDocument
 
 import discord
@@ -10,6 +9,7 @@ from discord.ext import commands
 from commands import BotCommands
 from database import interests
 from views.interest_view import InterestView
+from globals import TIME_ZONE_CST
 
 
 async def setup(bot):
@@ -46,13 +46,12 @@ class InterestCommand(BotCommands):
                 )
                 return
 
-            tz = ZoneInfo("America/Chicago")
             lines = []
             for doc in upcoming:
                 t_utc = doc.get("scheduled_at_utc")
                 stamp = int(t_utc.timestamp())
                 count = len(doc.get("interested_ids", []))
-                t_local = t_utc.astimezone(tz)
+                t_local = t_utc.astimezone(TIME_ZONE_CST)
                 lines.append(
                     f"• **{t_local.strftime('%Y-%m-%d %I:%M %p %Z')}** — <t:{stamp}:R>  (**{count}** interested)"
                 )
@@ -85,7 +84,6 @@ class InterestCommand(BotCommands):
         )
 
         view = InterestView(rounded, timeout=None)
-        tz = ZoneInfo("America/Chicago")
         embed = discord.Embed(
             description="Creating interest slot…", color=discord.Color.green()
         )
@@ -102,8 +100,7 @@ def parse_time_to_utc(time: str):
             "Provide a time, e.g. `!interest 9pm` or `!interest tomorrow 7`.",
         )
 
-    tz = ZoneInfo("America/Chicago")
-    now_local = datetime.now(tz)
+    now_local = datetime.now(TIME_ZONE_CST)
 
     s = time.strip().lower()
     # Relative: "in 2h", "in 45m"
@@ -162,7 +159,7 @@ def parse_time_to_utc(time: str):
             base_date.day,
             t_try.hour,
             t_try.minute,
-            tzinfo=tz,
+            tzinfo=TIME_ZONE_CST,
         )
         return dt_local.astimezone(timezone.utc), None
 
@@ -174,7 +171,7 @@ def parse_time_to_utc(time: str):
             base_date.day,
             only_time.hour,
             only_time.minute,
-            tzinfo=tz,
+            tzinfo=TIME_ZONE_CST,
         )
         if dt_local < now_local:
             dt_local = dt_local + timedelta(days=1)
@@ -188,7 +185,7 @@ def parse_time_to_utc(time: str):
     if dt:
         if dt.hour == 0 and len(s.strip().split()) == 1:
             dt = dt.replace(hour=default_hour, minute=default_minute)
-        return dt.replace(tzinfo=tz).astimezone(timezone.utc), None
+        return dt.replace(tzinfo=TIME_ZONE_CST).astimezone(timezone.utc), None
 
     for date_sep in ["/", "-"]:
         try:
@@ -201,7 +198,7 @@ def parse_time_to_utc(time: str):
                 m, d = [int(x) for x in date_part.split(date_sep)]
                 y = now_local.year
 
-                base = datetime(y, m, d, tzinfo=tz)
+                base = datetime(y, m, d, tzinfo=TIME_ZONE_CST)
                 if not time_part:
                     dt_local = base.replace(hour=default_hour, minute=default_minute)
                 else:
@@ -213,7 +210,9 @@ def parse_time_to_utc(time: str):
                             None,
                             "Couldn’t parse the time. Try `8/22 9pm` or `8-22 21:00`.",
                         )
-                    dt_local = datetime(y, m, d, t_try.hour, t_try.minute, tzinfo=tz)
+                    dt_local = datetime(
+                        y, m, d, t_try.hour, t_try.minute, tzinfo=TIME_ZONE_CST
+                    )
                 return dt_local.astimezone(timezone.utc), None
         except Exception:
             pass

@@ -1,14 +1,12 @@
 """Hold various general functions of the bot."""
 
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 
 from discord.ext import commands
 
 from views.signup_view import SignupView
 from database import mmr_collection, users, tdm_mmr_collection, seasons
-
-CST = ZoneInfo("America/Chicago")
+from globals import TIME_ZONE_CST
 
 try:
     from dateutil.relativedelta import relativedelta
@@ -122,8 +120,8 @@ class CustomBot(commands.Bot):
             "season_number": next_num,
             "started_at": starts,  # UTC
             "ends_at_expected": ends,  # UTC
-            "started_at_cst": starts.astimezone(CST),
-            "ends_at_cst": ends.astimezone(CST),
+            "started_at_cst": starts.astimezone(TIME_ZONE_CST),
+            "ends_at_cst": ends.astimezone(TIME_ZONE_CST),
             "is_closed": False,
         }
 
