@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
 
 import requests
 import aiohttp
 
+from globals import API_KEY
+
 # Base API
 HENRIK_BASE = "https://api.henrikdev.xyz/valorant"
-API_KEY = os.getenv("api_key")
 
 
 def _headers() -> Dict[str, str]:

@@ -12,7 +12,7 @@ from discord.ext import commands
 
 from commands import BotCommands, convert_to_utc
 from database import users, mmr_collection, seasons, all_matches
-from globals import api_key, mock_match_data
+from globals import API_KEY, mock_match_data
 from stats_helper import update_stats
 
 
@@ -62,7 +62,7 @@ class ReportCommand(BotCommands):
         url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{q_name}/{q_tag}"
 
         try:
-            resp = requests.get(url, headers={"Authorization": api_key}, timeout=30)
+            resp = requests.get(url, headers={"Authorization": API_KEY}, timeout=30)
         except requests.RequestException as e:
             await ctx.send(f"Network error reaching HenrikDev API: {e}")
             return

@@ -6,7 +6,7 @@ from discord.ext import commands
 
 from commands import BotCommands
 from database import users, mmr_collection, tdm_mmr_collection
-from globals import api_key
+from globals import API_KEY
 
 
 async def setup(bot):
@@ -23,7 +23,7 @@ class LinkRiotCommand(BotCommands):
             await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
             return
 
-        if not api_key or not api_key.strip():
+        if not API_KEY or not API_KEY.strip():
             await ctx.send("API key is not configured")
             return
 
@@ -34,7 +34,7 @@ class LinkRiotCommand(BotCommands):
 
         url = f"https://api.henrikdev.xyz/valorant/v2/account/{q_name}/{q_tag}"
         try:
-            resp = requests.get(url, headers={"Authorization": api_key}, timeout=30)
+            resp = requests.get(url, headers={"Authorization": API_KEY}, timeout=30)
         except requests.RequestException as e:
             await ctx.send(f"Network error reaching HenrikDev API: {e}")
             return
