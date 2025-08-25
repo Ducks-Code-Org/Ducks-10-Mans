@@ -1,3 +1,6 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
 [project]
 name = "ducks-10-mans"
 version = "1.4.0"
@@ -8,10 +11,6 @@ dependencies = [
     "aiosignal==1.4.0",
     "attrs==25.3.0",
     "beautifulsoup4==4.13.5",
-    "bs4==0.0.2",
-    "certifi==2025.8.3",
-    "charset-normalizer==3.4.3",
-    "discord==2.3.2",
     "discord.py==2.6.1",
     "dnspython==2.7.0",
     "frozenlist==1.7.0",
@@ -30,5 +29,6 @@ dependencies = [
     "wcwidth==0.2.13",
     "yarl==1.20.1"
 ]
+
 [tool.setuptools.packages.find]
 include = ["*"]

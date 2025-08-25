@@ -4,9 +4,9 @@ import os
 from zoneinfo import ZoneInfo
 
 # Global constants
-API_KEY: str | None = os.getenv("API_KEY")  # For HenrikDev API
-URI_KEY: str | None = os.getenv("URI_KEY")  # URI for MongoDB
-BOT_TOKEN: str | None = os.getenv("BOT_TOKEN")  # Discord bot token
+API_KEY: str | None = os.getenv("api_key")  # For HenrikDev API
+URI_KEY: str | None = os.getenv("uri_key")  # URI for MongoDB
+BOT_TOKEN: str | None = os.getenv("bot_token")  # Discord bot token
 
 TIME_ZONE_CST: ZoneInfo = ZoneInfo("America/Chicago")
 
