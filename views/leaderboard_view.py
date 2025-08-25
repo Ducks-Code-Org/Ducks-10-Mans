@@ -44,15 +44,18 @@ class LeaderboardView(discord.ui.View):
         super().__init__(timeout=timeout)
         self.ctx = ctx
         self.bot = bot
+        self.players_per_page = players_per_page
+        self.current_page = 0
+        self.mode = mode  # "normal" or "tdm"
         self.sorted_data = sorted_data
+
+        # Hide users with zero matches
         if self.mode == "tdm":
             self.sorted_data = [d for d in self.sorted_data if _has_played_tdm(d)]
         else:
             self.sorted_data = [d for d in self.sorted_data if _has_played_normal(d)]
-        
-        self.players_per_page = players_per_page
-        self.current_page = 0
-        self.mode = mode  # "normal" or "tdm"
+
+        # compute pages after filtering
         self.total_pages = max(1, math.ceil(len(self.sorted_data) / self.players_per_page))
 
         self.previous_button = Button(
@@ -84,6 +87,8 @@ class LeaderboardView(discord.ui.View):
         self.add_item(self.refresh_button)
         self.add_item(self.next_button)
         self.add_item(self.toggle_mode_button)
+
+        print(f"[LB] mode={self.mode} items={len(self.sorted_data)} per_page={self.players_per_page} pages={self.total_pages}")
 
     async def on_toggle_mode(self, interaction: discord.Interaction):
         new_mode = "tdm" if self.mode == "normal" else "normal"

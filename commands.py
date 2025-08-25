@@ -1107,20 +1107,18 @@ class BotCommands(commands.Cog):
         sorted_data.sort(key=lambda x: x.get("mmr", 0), reverse=True)
 
         self.leaderboard_view = LeaderboardView(
-            ctx, 
-            self.bot, 
-            sorted_data, 
-            players_per_page=10, 
-            timeout=None, 
+            ctx,
+            self.bot,
+            sorted_data,            
+            players_per_page=10,
+            timeout=None,
             mode="normal"
         )
 
-        # Calculate initial page data
         start_index = 0
-        end_index = min(10, len(sorted_data))
-        page_data = sorted_data[start_index:end_index]
+        end_index = min(self.leaderboard_view.players_per_page, len(self.leaderboard_view.sorted_data))
+        page_data = self.leaderboard_view.sorted_data[start_index:end_index]
 
-        # Create initial leaderboard table
         leaderboard_data = []
         for idx, stats in enumerate(page_data, start=1):
             user_data = users.find_one({"discord_id": str(stats["player_id"])})
@@ -1140,7 +1138,7 @@ class BotCommands(commands.Cog):
                 stats.get("wins", 0),
                 stats.get("losses", 0),
                 f"{stats.get('average_combat_score', 0):.2f}",
-                f"{stats.get('kill_death_ratio', 0):.2f}"
+                f"{stats.get('kill_death_ratio', 0):.2f}",
             ])
 
         table_output = t2a(
@@ -1151,7 +1149,6 @@ class BotCommands(commands.Cog):
         )
 
         content = f"## MMR Leaderboard (Page 1/{self.leaderboard_view.total_pages}) ##\n```\n{table_output}\n```"
-        
         self.leaderboard_message = await ctx.send(content=content, view=self.leaderboard_view)
 
         if self.refresh_task is not None:
