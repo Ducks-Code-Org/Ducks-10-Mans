@@ -27,11 +27,12 @@ This guide will cover everything you need to do to set up the codebase for local
     ```cmd
     @echo off
     
-    set "BOT_TOKEN=<YOUR_BOT_TOKEN>"
-    set "URI_KEY=<YOUR_MONGODB_STRING>"
-    set "API_KEY=<YOUR_HENRIKDEV_KEY>"
+    set "bot_token=<YOUR_BOT_TOKEN>"
+    set "uri_key=<YOUR_MONGODB_STRING>"
+    set "api_key=<YOUR_HENRIKDEV_KEY>"
     ```
 
+- Install needed packages with `pip install -r requirements.txt`
 - Run the command `call env.bat` in a `cmd` terminal
   - This is needed to set the proper environment variables to run the bot, and will have to be run once each session
 - Run ther command `py main.py` to start the bot
