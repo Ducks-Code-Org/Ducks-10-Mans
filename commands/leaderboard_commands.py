@@ -29,10 +29,12 @@ class LeaderboardCommands(BotCommands):
             ctx, self.bot, sorted_data, players_per_page=10, timeout=None, mode="normal"
         )
 
-        # Calculate initial page data
         start_index = 0
-        end_index = min(10, len(sorted_data))
-        page_data = sorted_data[start_index:end_index]
+        end_index = min(
+            self.leaderboard_view.players_per_page,
+            len(self.leaderboard_view.sorted_data),
+        )
+        page_data = self.leaderboard_view.sorted_data[start_index:end_index]
 
         # Create initial leaderboard table
         leaderboard_data = []
