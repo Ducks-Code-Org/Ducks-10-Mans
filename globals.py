@@ -10,27 +10,9 @@ BOT_TOKEN: str | None = os.getenv("BOT_TOKEN")  # Discord bot token
 
 TIME_ZONE_CST: ZoneInfo = ZoneInfo("America/Chicago")
 
-official_maps = ["Haven", "Sunset", "Ascent", "Abyss", "Lotus", "Bind", "Corrode"]
-all_maps = [
-    "Bind",
-    "Haven",
-    "Split",
-    "Ascent",
-    "Icebox",
-    "Breeze",
-    "Fracture",
-    "Pearl",
-    "Lotus",
-    "Sunset",
-    "Abyss",
-    "Corrode",
-]
-
-tdm_maps = ["District", "Drift", "Glitch", "Kasbah", "Piazza"]
-
+# Developer Tools/Settings
 SEASON_2_START_DATE = "2024-12-15T00:00:00.000Z"
 MATCHES_PER_SEASON = 20
-
 
 mock_match_data = {
     "players": [
