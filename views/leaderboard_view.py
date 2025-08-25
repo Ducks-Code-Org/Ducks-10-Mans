@@ -7,6 +7,17 @@ from table2ascii import table2ascii as t2a, PresetStyle
 from database import users, mmr_collection, tdm_mmr_collection
 import wcwidth
 
+def _has_played_normal(doc: dict) -> bool:
+    # Normal mode
+    mp = doc.get("matches_played")
+    if isinstance(mp, (int, float)):
+        return mp > 0
+    return (doc.get("wins", 0) + doc.get("losses", 0)) > 0
+
+def _has_played_tdm(doc: dict) -> bool:
+    # TDM
+    return (doc.get("tdm_wins", 0) + doc.get("tdm_losses", 0)) > 0
+
 def truncate_by_display_width(original_string, max_width=15, ellipsis=True):
     display_len = wcwidth.wcswidth(original_string)
     if display_len <= max_width:
@@ -34,6 +45,7 @@ class LeaderboardView(discord.ui.View):
         self.ctx = ctx
         self.bot = bot
         self.sorted_data = sorted_data
+        
         self.players_per_page = players_per_page
         self.current_page = 0
         self.mode = mode  # "normal" or "tdm"
@@ -79,12 +91,14 @@ class LeaderboardView(discord.ui.View):
                 key=lambda x: x.get("tdm_mmr", 0),
                 reverse=True
             )
+            sorted_data = [d for d in sorted_data if _has_played_tdm(d)]
         else:
             sorted_data = sorted(
                 collection.find(),
                 key=lambda x: x.get("mmr", 0),
                 reverse=True
             )
+            sorted_data = [d for d in sorted_data if _has_played_normal(d)]
 
         new_view = LeaderboardView(
             self.ctx,
