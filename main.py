@@ -1,8 +1,9 @@
 """Running this file starts the bot."""
 
-import os
 import discord
+
 from bot import CustomBot
+from globals import BOT_TOKEN
 
 # Set up bot
 intents = discord.Intents.default()
@@ -17,7 +18,5 @@ bot = CustomBot(
     help_command=None,
 )
 
-bot_token = os.getenv("bot_token")
-
 # Run the bot
-bot.run(bot_token)
+bot.run(BOT_TOKEN)

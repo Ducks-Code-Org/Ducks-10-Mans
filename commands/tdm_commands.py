@@ -8,7 +8,7 @@ import requests
 
 from commands import BotCommands
 from views.tdm_map_vote_view import TDMMapVoteView
-from globals import api_key
+from globals import API_KEY
 
 
 from database import users, tdm_matches, tdm_mmr_collection
@@ -377,7 +377,7 @@ class TDMCommands(BotCommands):
         # Get match data from API
         url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{name}/{tag}"
         try:
-            response = requests.get(url, headers={"Authorization": api_key}, timeout=30)
+            response = requests.get(url, headers={"Authorization": API_KEY}, timeout=30)
             match_data = response.json()
 
             if "data" not in match_data or not match_data["data"]:
