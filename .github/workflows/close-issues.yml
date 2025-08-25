@@ -6,6 +6,9 @@ on:
     branches:
       - dev
 
+permissions:
+  issues: write
+
 jobs:
   close-linked-issues:
     if: github.event.pull_request.merged == true
