@@ -2,7 +2,6 @@
 
 from datetime import datetime, timezone
 import copy
-from zoneinfo import ZoneInfo
 import asyncio
 from calendar import monthrange
 
@@ -12,7 +11,7 @@ from discord.ext import commands
 
 from commands import BotCommands, convert_to_utc
 from database import users, mmr_collection, seasons, all_matches
-from globals import api_key, mock_match_data
+from globals import API_KEY, TIME_ZONE_CST, mock_match_data
 from stats_helper import update_stats
 
 
@@ -62,7 +61,7 @@ class ReportCommand(BotCommands):
         url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{q_name}/{q_tag}"
 
         try:
-            resp = requests.get(url, headers={"Authorization": api_key}, timeout=30)
+            resp = requests.get(url, headers={"Authorization": API_KEY}, timeout=30)
         except requests.RequestException as e:
             await ctx.send(f"Network error reaching HenrikDev API: {e}")
             return
@@ -515,7 +514,6 @@ async def end_season(ctx, started_at_utc=None, ended_at_utc=None):
     if current.get("is_closed"):
         return
 
-    tz_central = ZoneInfo("America/Chicago")
     now_utc = datetime.now(timezone.utc)
 
     started_at_utc = convert_to_utc(
@@ -539,8 +537,8 @@ async def end_season(ctx, started_at_utc=None, ended_at_utc=None):
         else:
             winner_name = top_doc.get("name", "Unknown")
 
-    started_cst = started_at_utc.astimezone(tz_central) if started_at_utc else None
-    ended_cst = ended_at_utc.astimezone(tz_central)
+    started_cst = started_at_utc.astimezone(TIME_ZONE_CST) if started_at_utc else None
+    ended_cst = ended_at_utc.astimezone(TIME_ZONE_CST)
     started_str = (
         started_cst.strftime("%Y-%m-%d %I:%M %p %Z") if started_cst else "unknown"
     )

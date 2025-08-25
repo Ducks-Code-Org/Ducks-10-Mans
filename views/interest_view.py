@@ -1,10 +1,9 @@
 # views/interest_view.py
-from zoneinfo import ZoneInfo
-
 import discord
 from discord.ui import View, Button
 
 from database import interests, users
+from globals import TIME_ZONE_CST
 
 
 class InterestView(View):
@@ -54,8 +53,7 @@ class InterestView(View):
             )
 
     def _format_header(self):
-        tz = ZoneInfo("America/Chicago")
-        local = self.scheduled_at_utc.astimezone(tz)
+        local = self.scheduled_at_utc.astimezone(TIME_ZONE_CST)
         stamp = int(self.scheduled_at_utc.timestamp())
         return (
             f"**Duck’s 10 Mans – Interest Slot**\n"
