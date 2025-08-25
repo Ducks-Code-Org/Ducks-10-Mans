@@ -317,16 +317,90 @@ class ReportCommand(BotCommands):
             top_mmr_before = 1000
             top_players_before = []
 
+        # Helper
+        riot_to_teamlabel = {}
+        for p in self.bot.team1:
+            u = users.find_one({"discord_id": str(p["id"])})
+            if u:
+                riot_to_teamlabel[
+                    (u.get("name", "").lower(), u.get("tag", "").lower())
+                ] = "team1"
+        for p in self.bot.team2:
+            u = users.find_one({"discord_id": str(p["id"])})
+            if u:
+                riot_to_teamlabel[
+                    (u.get("name", "").lower(), u.get("tag", "").lower())
+                ] = "team2"
+
+        team1_ids = [str(p["id"]) for p in self.bot.team1]
+        team2_ids = [str(p["id"]) for p in self.bot.team2]
+
+        def _mmr_of(pid):
+            d = pre_update_mmr.get(pid)
+            if isinstance(d, dict):
+                return int(d.get("mmr", 1000))
+            return 1000
+
+        self.team1_mmr = sum(_mmr_of(pid) for pid in team1_ids)
+        self.team2_mmr = sum(_mmr_of(pid) for pid in team2_ids)
+
+        riot_to_api_color = {}
+        for p in match_players:
+            nm = (p.get("name") or "").lower()
+            tg = (p.get("tag") or "").lower()
+            color = (p.get("team_id") or "").lower()
+            riot_to_api_color[(nm, tg)] = color
+
+        # Helper to get the API color
+        def _team_api_color(team_players):
+            for pl in team_players:
+                u = users.find_one({"discord_id": str(pl["id"])})
+                if u:
+                    key = (u.get("name", "").lower(), u.get("tag", "").lower())
+                    return riot_to_api_color.get(key)
+            return None
+
+        team1_api_color = _team_api_color(self.bot.team1)
+        team2_api_color = _team_api_color(self.bot.team2)
+
+        api_rounds = {}
+        for t in teams:
+            tid = (t.get("team_id") or "").lower()
+            rw = int(t.get("rounds_won") or t.get("rounds", 0) or 0)
+            api_rounds[tid] = rw
+
+        self.team1_rounds = int(api_rounds.get(team1_api_color, 0))
+        self.team2_rounds = int(api_rounds.get(team2_api_color, 0))
+        round_diff_val = abs(self.team1_rounds - self.team2_rounds)
+        self.winning_team = (
+            "team1" if winning_match_team_players == team1_riot_ids else "team2"
+        )
+
         # Update stats for each player
         for player_stats in match_players:
+            p_name = (player_stats.get("name") or "").lower()
+            p_tag = (player_stats.get("tag") or "").lower()
+            team_label = riot_to_teamlabel.get((p_name, p_tag))
+            if not team_label:
+                continue
+
             update_stats(
-                player_stats, total_rounds, self.bot.player_mmr, self.bot.player_names
+                player_stats,
+                total_rounds,
+                self.bot.player_mmr,
+                self.bot.player_names,
+                team_sum_mmr=(
+                    self.team1_mmr if team_label == "team1" else self.team2_mmr
+                ),
+                opp_sum_mmr=self.team2_mmr if team_label == "team1" else self.team1_mmr,
+                team_won=(self.winning_team == team_label),
+                round_diff=round_diff_val,
             )
         print("[DEBUG] Basic stats updated")
 
         # Adjust MMR once
-        self.bot.adjust_mmr(winning_team, losing_team)
-        print("[DEBUG] MMR adjusted")
+        # self.bot.adjust_mmr(winning_team, losing_team)
+        # print("[DEBUG] MMR adjusted")
         await ctx.send("Match stats and MMR updated!")
 
         self.bot.save_mmr_data()

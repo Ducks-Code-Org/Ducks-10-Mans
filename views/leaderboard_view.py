@@ -10,6 +10,19 @@ import wcwidth
 from database import users, mmr_collection, tdm_mmr_collection
 
 
+def _has_played_normal(doc: dict) -> bool:
+    # Normal mode
+    mp = doc.get("matches_played")
+    if isinstance(mp, (int, float)):
+        return mp > 0
+    return (doc.get("wins", 0) + doc.get("losses", 0)) > 0
+
+
+def _has_played_tdm(doc: dict) -> bool:
+    # TDM
+    return (doc.get("tdm_wins", 0) + doc.get("tdm_losses", 0)) > 0
+
+
 def truncate_by_display_width(original_string, max_width=15, ellipsis=True):
     display_len = wcwidth.wcswidth(original_string)
     if display_len <= max_width:
@@ -39,11 +52,21 @@ class LeaderboardView(discord.ui.View):
         super().__init__(timeout=timeout)
         self.ctx = ctx
         self.bot = bot
-        self.sorted_data = sorted_data
         self.players_per_page = players_per_page
         self.current_page = 0
         self.mode = mode  # "normal" or "tdm"
-        self.total_pages = math.ceil(len(self.sorted_data) / self.players_per_page)
+        self.sorted_data = sorted_data
+
+        # Hide users with zero matches
+        if self.mode == "tdm":
+            self.sorted_data = [d for d in self.sorted_data if _has_played_tdm(d)]
+        else:
+            self.sorted_data = [d for d in self.sorted_data if _has_played_normal(d)]
+
+        # compute pages after filtering
+        self.total_pages = max(
+            1, math.ceil(len(self.sorted_data) / self.players_per_page)
+        )
 
         self.previous_button = Button(
             style=discord.ButtonStyle.blurple,
@@ -73,6 +96,10 @@ class LeaderboardView(discord.ui.View):
         self.add_item(self.next_button)
         self.add_item(self.toggle_mode_button)
 
+        print(
+            f"[LB] mode={self.mode} items={len(self.sorted_data)} per_page={self.players_per_page} pages={self.total_pages}"
+        )
+
     async def on_toggle_mode(self, interaction: discord.Interaction):
         new_mode = "tdm" if self.mode == "normal" else "normal"
         collection = tdm_mmr_collection if new_mode == "tdm" else mmr_collection
@@ -81,10 +108,12 @@ class LeaderboardView(discord.ui.View):
             sorted_data = sorted(
                 collection.find(), key=lambda x: x.get("tdm_mmr", 0), reverse=True
             )
+            sorted_data = [d for d in sorted_data if _has_played_tdm(d)]
         else:
             sorted_data = sorted(
                 collection.find(), key=lambda x: x.get("mmr", 0), reverse=True
             )
+            sorted_data = [d for d in sorted_data if _has_played_normal(d)]
 
         new_view = LeaderboardView(
             self.ctx,
@@ -246,6 +275,10 @@ class LeaderboardView(discord.ui.View):
             self.sorted_data = sorted(
                 collection.find(), key=lambda x: x.get("mmr", 0), reverse=True
             )
+        if self.mode == "tdm":
+            self.sorted_data = [d for d in self.sorted_data if _has_played_tdm(d)]
+        else:
+            self.sorted_data = [d for d in self.sorted_data if _has_played_normal(d)]
 
         self.total_pages = math.ceil(len(self.sorted_data) / self.players_per_page)
         if self.current_page >= self.total_pages:
