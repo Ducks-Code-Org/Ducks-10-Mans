@@ -43,6 +43,33 @@ headers = {
     "Authorization": api_key,
 }
 
+def _to_int_rounds(value):
+    if isinstance(value, dict):
+        for key in ("won", "w", "value", "wins", "count"):
+            v = value.get(key)
+            if isinstance(v, (int, float, str)):
+                try:
+                    return int(v)
+                except Exception:
+                    pass
+        numeric_vals = [v for v in value.values() if isinstance(v, (int, float))]
+        if numeric_vals:
+            return int(max(numeric_vals))
+        return 0
+
+    if isinstance(value, (list, tuple)):
+        if value:
+            try:
+                return int(value[0])
+            except Exception:
+                return 0
+        return 0
+
+    try:
+        return int(value)
+    except Exception:
+        return 0
+    
 def _aware_utc(dt):
         if not dt:
             return None
@@ -827,7 +854,8 @@ class BotCommands(commands.Cog):
         api_rounds = {}
         for t in teams:
             tid = (t.get("team_id") or "").lower()
-            rw = int(t.get("rounds_won") or t.get("rounds", 0) or 0)
+            rw_raw = t.get("rounds_won", t.get("rounds", 0))
+            rw = _to_int_rounds(rw_raw)
             api_rounds[tid] = rw
 
         self.team1_rounds = int(api_rounds.get(team1_api_color, 0))
@@ -909,8 +937,8 @@ class BotCommands(commands.Cog):
             for new_top_player_id in new_top_players:
                 user_data = users.find_one({"discord_id": str(new_top_player_id)})
                 if user_data:
-                    riot_name = user_data.get("name", "Unknown")
-                    riot_tag = user_data.get("tag", "Unknown")
+                    riot_name = user_data.get("name", "Unknown").lower()
+                    riot_tag = user_data.get("tag", "Unknown").lower()
                     await ctx.send(f"{riot_name}#{riot_tag} is now supersonic radiant!")
 
         def _add_months(dt, months):
