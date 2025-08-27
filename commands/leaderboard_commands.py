@@ -74,10 +74,6 @@ class LeaderboardCommands(BotCommands):
             content=content, view=self.leaderboard_view
         )
 
-        if self.refresh_task is not None:
-            self.refresh_task.cancel()
-        self.refresh_task = asyncio.create_task(self.periodic_refresh())
-
     @commands.command()
     async def leaderboard_KD(self, ctx):
         if not self.bot.player_mmr:
@@ -151,11 +147,6 @@ class LeaderboardCommands(BotCommands):
             content=content, view=self.leaderboard_view_kd
         )
 
-        # Start the refresh
-        if self.refresh_task_kd is not None:
-            self.refresh_task_kd.cancel()
-        self.refresh_task_kd = asyncio.create_task(self.periodic_refresh_kd())
-
     @commands.command()
     async def leaderboard_wins(self, ctx):
         if not self.bot.player_mmr:
@@ -226,12 +217,7 @@ class LeaderboardCommands(BotCommands):
         content = f"## Wins Leaderboard (Page {self.leaderboard_view_wins.current_page+1}/{self.leaderboard_view_wins.total_pages}) ##\n```\n{table_output}\n```"
         self.leaderboard_message_wins = await ctx.send(
             content=content, view=self.leaderboard_view_wins
-        )  #########
-
-        # Start the refresh
-        if self.refresh_task_wins is not None:
-            self.refresh_task_wins.cancel()
-        self.refresh_task_wins = asyncio.create_task(self.periodic_refresh_wins())
+        )
 
     @commands.command()
     async def leaderboard_ACS(self, ctx):
@@ -302,70 +288,4 @@ class LeaderboardCommands(BotCommands):
         content = f"## ACS Leaderboard (Page {self.leaderboard_view_acs.current_page+1}/{self.leaderboard_view_acs.total_pages}) ##\n```\n{table_output}\n```"
         self.leaderboard_message_acs = await ctx.send(
             content=content, view=self.leaderboard_view_acs
-        )  #########
-
-        if self.refresh_task_acs is not None:
-            self.refresh_task_acs.cancel()
-        self.refresh_task_acs = asyncio.create_task(self.periodic_refresh_acs())
-
-    async def periodic_refresh(self):
-        await self.bot.wait_until_ready()
-        try:
-            while True:
-                await asyncio.sleep(30)
-                if self.leaderboard_message and self.leaderboard_view:
-                    # Just edit with the same content and view
-                    await self.leaderboard_message.edit(
-                        content=self.leaderboard_message.content,
-                        view=self.leaderboard_view,
-                    )
-                else:
-                    break
-        except asyncio.CancelledError:
-            pass
-
-    async def periodic_refresh_kd(self):
-        await self.bot.wait_until_ready()
-        try:
-            while True:
-                await asyncio.sleep(30)
-                if self.leaderboard_message_kd and self.leaderboard_view_kd:
-                    # Just edit message
-                    await self.leaderboard_message_kd.edit(
-                        content=self.leaderboard_message_kd.content,
-                        view=self.leaderboard_view_kd,
-                    )
-                else:
-                    break
-        except asyncio.CancelledError:
-            pass
-
-    async def periodic_refresh_wins(self):
-        await self.bot.wait_until_ready()
-        try:
-            while True:
-                await asyncio.sleep(30)
-                if self.leaderboard_message_wins and self.leaderboard_view_wins:
-                    await self.leaderboard_message_wins.edit(
-                        content=self.leaderboard_message_wins.content,
-                        view=self.leaderboard_view_wins,
-                    )
-                else:
-                    break
-        except asyncio.CancelledError:
-            pass
-
-    async def periodic_refresh_acs(self):
-        await self.bot.wait_until_ready()
-        try:
-            while True:
-                await asyncio.sleep(30)
-                if self.leaderboard_message_acs and self.leaderboard_view_acs:
-                    await self.leaderboard_message_acs.edit(
-                        content=self.leaderboard_message_acs.content,
-                        view=self.leaderboard_view_acs,
-                    )
-                else:
-                    break
-        except asyncio.CancelledError:
-            pass
+        )
