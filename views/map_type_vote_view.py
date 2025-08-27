@@ -7,13 +7,6 @@ from discord.ui import Button
 from maps_service import get_competitive_maps, get_standard_maps
 
 
-async def _safe_reply(interaction, *args, **kwargs):
-    if interaction.response.is_done():
-        await interaction.followup.send(*args, **kwargs)
-    else:
-        await interaction.response.send_message(*args, **kwargs)
-
-
 class MapTypeVoteView(discord.ui.View):
     def __init__(self, ctx, bot):
         super().__init__(timeout=None)

@@ -4,13 +4,7 @@ import random
 import discord
 from discord.ui import Button
 
-
-async def _safe_reply(interaction, *args, **kwargs):
-    """Send an interaction reply exactly once; afterward, use followup."""
-    if interaction.response.is_done():
-        await interaction.followup.send(*args, **kwargs)
-    else:
-        await interaction.response.send_message(*args, **kwargs)
+from views import safe_reply
 
 
 class ModeVoteView(discord.ui.View):
@@ -26,6 +20,8 @@ class ModeVoteView(discord.ui.View):
         )
         self.add_item(self.balanced_button)
         self.add_item(self.captains_button)
+
+        self.is_handling_vote = False
 
         self.votes = {"Balanced": 0, "Captains": 0}
         self.voters = set()
@@ -45,20 +41,28 @@ class ModeVoteView(discord.ui.View):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
+        if self.is_handling_vote:
+            await safe_reply("Please wait a few seconds and try again!", ephemeral=True)
+            return
+        self.is_handling_vote = True
+
         if self.voting_phase_ended:
-            await _safe_reply(
+            await safe_reply(
                 interaction, "This voting phase has already ended", ephemeral=True
             )
+            self.is_handling_vote = False
             return
 
         # Must be queued
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
-            await _safe_reply(interaction, "Must be in queue!", ephemeral=True)
+            await safe_reply(interaction, "Must be in queue!", ephemeral=True)
+            self.is_handling_vote = False
             return
 
         # No double voting
         if str(interaction.user.id) in self.voters:
-            await _safe_reply(interaction, "Already voted!", ephemeral=True)
+            await safe_reply(interaction, "Already voted!", ephemeral=True)
+            self.is_handling_vote = False
             return
 
         # Count vote
@@ -73,24 +77,33 @@ class ModeVoteView(discord.ui.View):
         except discord.HTTPException:
             pass
 
-        await _safe_reply(interaction, "Voted Balanced!", ephemeral=True)
+        await safe_reply(interaction, "Voted Balanced!", ephemeral=True)
+        self.is_handling_vote = False
 
     async def captains_callback(self, interaction: discord.Interaction):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
+        if self.is_handling_vote:
+            await safe_reply("Please wait a few seconds and try again!", ephemeral=True)
+            return
+        self.is_handling_vote = True
+
         if self.voting_phase_ended:
-            await _safe_reply(
+            await safe_reply(
                 interaction, "This voting phase has already ended", ephemeral=True
             )
+            self.is_handling_vote = False
             return
 
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
-            await _safe_reply(interaction, "Must be in queue!", ephemeral=True)
+            await safe_reply(interaction, "Must be in queue!", ephemeral=True)
+            self.is_handling_vote = False
             return
 
         if str(interaction.user.id) in self.voters:
-            await _safe_reply(interaction, "Already voted!", ephemeral=True)
+            await safe_reply(interaction, "Already voted!", ephemeral=True)
+            self.is_handling_vote = False
             return
 
         self.votes["Captains"] += 1
@@ -104,7 +117,8 @@ class ModeVoteView(discord.ui.View):
         except discord.HTTPException:
             pass
 
-        await _safe_reply(interaction, "Voted Captains!", ephemeral=True)
+        self.is_handling_vote = False
+        await safe_reply(interaction, "Voted Captains!", ephemeral=True)
 
     async def send_view(self):
         await self.ctx.send("Vote for mode (Balanced/Captains):", view=self)
