@@ -1,5 +1,6 @@
 """This file holds the StatChange class which makes it easy to display potential changes being made to the database."""
 
+
 class StatChange:
     def __init__(self, collection, document_filter, player_name, stat_name, old, new):
         self.collection = collection
@@ -9,7 +10,9 @@ class StatChange:
         self.old = old
         self.new = new
 
+
 class FieldNotFound(Exception):
     """A custom exception for alerting when a field is not found."""
+
     def __init__(self, message):
         super().__init__(message)

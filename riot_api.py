@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import quote
 
 import requests
 import aiohttp
-from urllib.parse import quote
+
+from globals import API_KEY
 
 # Base API
 HENRIK_BASE = "https://api.henrikdev.xyz/valorant"
-API_KEY = os.getenv("api_key")
 
 
 def _headers() -> Dict[str, str]:
@@ -33,11 +33,14 @@ def _normalize_account_payload(payload: Dict[str, Any]) -> Dict[str, Optional[st
         "tagLine": (acc.get("tag") or acc.get("tagLine") or "").strip() or None,
         "region": (acc.get("region") or "").strip() or None,
         "riotId": (
-            f"{(acc.get('name') or acc.get('gameName') or '').strip()}#"
-            f"{(acc.get('tag') or acc.get('tagLine') or '').strip()}"
-        ).strip("#")
-        if (acc.get("name") or acc.get("gameName")) and (acc.get("tag") or acc.get("tagLine"))
-        else None,
+            (
+                f"{(acc.get('name') or acc.get('gameName') or '').strip()}#"
+                f"{(acc.get('tag') or acc.get('tagLine') or '').strip()}"
+            ).strip("#")
+            if (acc.get("name") or acc.get("gameName"))
+            and (acc.get("tag") or acc.get("tagLine"))
+            else None
+        ),
         "_raw": acc,
     }
 
@@ -68,7 +71,7 @@ async def get_account_by_puuid(
     *,
     timeout: int = 10,
 ) -> Optional[Dict[str, Any]]:
-    
+
     puuid = (puuid or "").strip()
     url = f"{HENRIK_BASE}/v1/by-puuid/account/{puuid}"
 
@@ -80,12 +83,11 @@ async def get_account_by_puuid(
         return _normalize_account_payload(data)
 
 
-
 # requests
 def verify_riot_account(name: str, tag: str) -> Tuple[bool, str]:
 
     name = (name or "").strip()
-    tag = (tag  or "").strip()
+    tag = (tag or "").strip()
 
     if not name or not tag:
         return (False, "Missing Riot name or tag.")
@@ -105,7 +107,10 @@ def verify_riot_account(name: str, tag: str) -> Tuple[bool, str]:
         return (False, f"Account `{name}#{tag}` not found.")
 
     if r.status_code in (401, 403):
-        return (False, "Riot lookup failed: API key missing or invalid. Ask an admin to set env `api_key`.")
+        return (
+            False,
+            "Riot lookup failed: API key missing or invalid. Ask an admin to set env `api_key`.",
+        )
 
     # fallback
     return (False, f"Riot API error ({r.status_code}). Try again later.")

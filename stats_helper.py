@@ -2,7 +2,10 @@
 
 from database import users, mmr_collection
 
-def _calc_mmr_delta(*, won: bool, team_sum_mmr: float, opp_sum_mmr: float, acs: float, round_diff: int) -> int:
+
+def _calc_mmr_delta(
+    *, won: bool, team_sum_mmr: float, opp_sum_mmr: float, acs: float, round_diff: int
+) -> int:
     team_sum_mmr = float(team_sum_mmr or 0)
     opp_sum_mmr = float(opp_sum_mmr or 0)
     if team_sum_mmr <= 0 or opp_sum_mmr <= 0:
@@ -40,8 +43,19 @@ def _calc_mmr_delta(*, won: bool, team_sum_mmr: float, opp_sum_mmr: float, acs: 
     delta = int((base + rd) // 1)
     return delta
 
+
 # Update stats
-def update_stats(player_stats, total_rounds, player_mmr, player_names, *,team_sum_mmr=None, opp_sum_mmr=None,team_won=None, round_diff=None):
+def update_stats(
+    player_stats,
+    total_rounds,
+    player_mmr,
+    player_names,
+    *,
+    team_sum_mmr=None,
+    opp_sum_mmr=None,
+    team_won=None,
+    round_diff=None,
+):
     """Update player stats with proper initialization and error handling"""
     name = player_stats.get("name", "").lower()
     tag = player_stats.get("tag", "").lower()
@@ -68,7 +82,7 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names, *,team_su
         player_data.setdefault("total_kills", 0)
         player_data.setdefault("total_deaths", 0)
         player_data.setdefault("total_rounds_played", 0)
-        
+
         # Update stats
         total_matches = player_data["matches_played"] + 1
         total_combat_score = player_data["total_combat_score"] + score
@@ -77,21 +91,32 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names, *,team_su
         total_rounds_played = player_data["total_rounds_played"] + total_rounds
 
         # Calculate averages
-        average_combat_score = total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
-        kill_death_ratio = total_kills / total_deaths if total_deaths > 0 else total_kills
+        average_combat_score = (
+            total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
+        )
+        kill_death_ratio = (
+            total_kills / total_deaths if total_deaths > 0 else total_kills
+        )
 
         # Update player_mmr dictionary
-        player_mmr[discord_id].update({
-            "total_combat_score": total_combat_score,
-            "total_kills": total_kills,
-            "total_deaths": total_deaths,
-            "matches_played": total_matches,
-            "total_rounds_played": total_rounds_played,
-            "average_combat_score": average_combat_score,
-            "kill_death_ratio": kill_death_ratio
-        })
+        player_mmr[discord_id].update(
+            {
+                "total_combat_score": total_combat_score,
+                "total_kills": total_kills,
+                "total_deaths": total_deaths,
+                "matches_played": total_matches,
+                "total_rounds_played": total_rounds_played,
+                "average_combat_score": average_combat_score,
+                "kill_death_ratio": kill_death_ratio,
+            }
+        )
 
-        if (team_sum_mmr is not None and opp_sum_mmr is not None and team_won is not None and round_diff is not None):
+        if (
+            team_sum_mmr is not None
+            and opp_sum_mmr is not None
+            and team_won is not None
+            and round_diff is not None
+        ):
 
             acs_this_match = (score / total_rounds) if total_rounds > 0 else 0.0
             old_mmr = int(player_data.get("mmr", 1000))
@@ -100,16 +125,20 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names, *,team_su
                 team_sum_mmr=float(team_sum_mmr),
                 opp_sum_mmr=float(opp_sum_mmr),
                 acs=float(acs_this_match),
-                round_diff=int(round_diff)
+                round_diff=int(round_diff),
             )
             new_mmr = old_mmr + delta
             player_mmr[discord_id]["mmr"] = new_mmr
 
             # Wins/Losses total
             if team_won:
-                player_mmr[discord_id]["wins"] = player_mmr[discord_id].get("wins", 0) + 1
+                player_mmr[discord_id]["wins"] = (
+                    player_mmr[discord_id].get("wins", 0) + 1
+                )
             else:
-                player_mmr[discord_id]["losses"] = player_mmr[discord_id].get("losses", 0) + 1
+                player_mmr[discord_id]["losses"] = (
+                    player_mmr[discord_id].get("losses", 0) + 1
+                )
 
         # Update database with all fields
         mmr_collection.update_one(
@@ -125,10 +154,10 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names, *,team_su
                     "average_combat_score": average_combat_score,
                     "kill_death_ratio": kill_death_ratio,
                     "total_kills": total_kills,
-                    "total_deaths": total_deaths
+                    "total_deaths": total_deaths,
                 }
             },
-            upsert=True
+            upsert=True,
         )
 
     else:
@@ -138,8 +167,12 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names, *,team_su
         total_kills = kills
         total_deaths = deaths
         total_rounds_played = total_rounds
-        average_combat_score = total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
-        kill_death_ratio = total_kills / total_deaths if total_deaths > 0 else total_kills
+        average_combat_score = (
+            total_combat_score / total_rounds_played if total_rounds_played > 0 else 0
+        )
+        kill_death_ratio = (
+            total_kills / total_deaths if total_deaths > 0 else total_kills
+        )
 
         player_mmr[discord_id] = {
             "mmr": 1000,
@@ -151,21 +184,27 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names, *,team_su
             "matches_played": total_matches,
             "total_rounds_played": total_rounds_played,
             "average_combat_score": average_combat_score,
-            "kill_death_ratio": kill_death_ratio
+            "kill_death_ratio": kill_death_ratio,
         }
         player_names[discord_id] = name
 
-        if (team_sum_mmr is not None and opp_sum_mmr is not None and
-            team_won is not None and round_diff is not None):
+        if (
+            team_sum_mmr is not None
+            and opp_sum_mmr is not None
+            and team_won is not None
+            and round_diff is not None
+        ):
 
-            acs_this_match = (score / total_rounds_played) if total_rounds_played > 0 else 0.0
+            acs_this_match = (
+                (score / total_rounds_played) if total_rounds_played > 0 else 0.0
+            )
             old_mmr = 1000
             delta = _calc_mmr_delta(
                 won=bool(team_won),
                 team_sum_mmr=float(team_sum_mmr),
                 opp_sum_mmr=float(opp_sum_mmr),
                 acs=float(acs_this_match),
-                round_diff=int(round_diff)
+                round_diff=int(round_diff),
             )
             player_mmr[discord_id]["mmr"] = old_mmr + delta
             if team_won:
@@ -190,8 +229,8 @@ def update_stats(player_stats, total_rounds, player_mmr, player_names, *,team_su
                     "matches_played": total_matches,
                     "total_rounds_played": total_rounds_played,
                     "average_combat_score": average_combat_score,
-                    "kill_death_ratio": kill_death_ratio
+                    "kill_death_ratio": kill_death_ratio,
                 }
             },
-            upsert=True
+            upsert=True,
         )
