@@ -424,7 +424,7 @@ class ReportCommand(BotCommands):
                 "mmr": stats.get("mmr", 1000),
                 "wins": stats.get("wins", 0),
                 "losses": stats.get("losses", 0),
-                "name": riot_name,
+                "name": riot_name.lower(),
                 "total_combat_score": stats.get("total_combat_score", 0),
                 "total_kills": stats.get("total_kills", 0),
                 "total_deaths": stats.get("total_deaths", 0),

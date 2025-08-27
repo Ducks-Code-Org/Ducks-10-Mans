@@ -46,10 +46,11 @@ async def ensure_current_riot_identity(discord_id: int):
         if new_puuid and new_puuid != puuid:
             updates["puuid"] = new_puuid
         if new_name and new_name != name:
-            updates["name"] = new_name
+            updates["name"] = new_name.lower().strip()
         if new_tag and new_tag != tag:
-            updates["tag"] = new_tag
+            updates["tag"] = new_tag.lower().strip()
 
+        print(f"[DEBUG]: Updating database for: {new_name}#{new_tag}")
         if updates:
             users.update_one({"_id": doc["_id"]}, {"$set": updates})
             doc.update(updates)
