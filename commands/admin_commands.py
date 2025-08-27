@@ -87,21 +87,6 @@ class AdminCommands(BotCommands):
         await mode_vote.send_view()
 
     @commands.command()
-    @commands.has_role("Owner")
-    async def stop_leaderboard(self, ctx):
-        # Stop the refresh
-        if self.refresh_task:
-            self.refresh_task.cancel()
-            self.refresh_task = None
-        if self.leaderboard_message:
-            await self.leaderboard_message.edit(
-                content="Leaderboard closed.", view=None
-            )
-            self.leaderboard_message = None
-            self.leaderboard_view = None
-        await ctx.send("Leaderboard closed and refresh stopped.")
-
-    @commands.command()
     @commands.has_role("blood")
     async def setcaptain1(self, ctx, *, riot_name_tag):
         try:
