@@ -4,6 +4,7 @@ import random
 import discord
 from discord.ui import Button
 from maps_service import get_tdm_maps
+from views import safe_reply
 
 
 class MapButton(discord.ui.Button):
@@ -46,6 +47,7 @@ class TDMMapVoteView(discord.ui.View):
         self.chosen_maps = []
         self.winning_map = ""
         self.voters = set()
+        self.is_handling_vote = False
         # Store direct reference to tdm_queue
         self.tdm_queue = bot.tdm_queue
         print(f"[DEBUG] Queue at init: {self.tdm_queue}")
@@ -62,6 +64,16 @@ class TDMMapVoteView(discord.ui.View):
 
             async def make_callback(map_name=m):  # Note the default argument
                 async def callback(interaction: discord.Interaction):
+                    if not interaction.response.is_done():
+                        await interaction.response.defer(ephemeral=True)
+
+                    if self.is_handling_vote:
+                        await safe_reply(
+                            "Please wait a few seconds and try again!", ephemeral=True
+                        )
+                        return
+                    self.is_handling_vote = True
+
                     # Get current queue IDs at time of vote
                     queue_ids = [str(p["id"]) for p in self.bot.tdm_queue]
                     user_id = str(interaction.user.id)
@@ -70,15 +82,15 @@ class TDMMapVoteView(discord.ui.View):
                     print(f"[DEBUG] Current queue IDs: {queue_ids}")
 
                     if user_id not in queue_ids:
-                        await interaction.response.send_message(
+                        await safe_reply(
                             "You must be in queue to vote!", ephemeral=True
                         )
+                        self.is_handling_vote = False
                         return
 
                     if user_id in self.voters:
-                        await interaction.response.send_message(
-                            "Already voted!", ephemeral=True
-                        )
+                        await safe_reply("Already voted!", ephemeral=True)
+                        self.is_handling_vote = False
                         return
 
                     self.map_votes[map_name] += 1
@@ -92,6 +104,7 @@ class TDMMapVoteView(discord.ui.View):
                     await interaction.response.send_message(
                         f"Voted for {map_name}!", ephemeral=True
                     )
+                    self.is_handling_vote = False
 
                 return callback
 
