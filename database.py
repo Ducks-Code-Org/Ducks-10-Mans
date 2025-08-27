@@ -1,10 +1,10 @@
 # database.py
-import os
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 
-uri = os.getenv("uri_key")
-client = MongoClient(uri, server_api=ServerApi("1"), serverSelectionTimeoutMS=8000)
+from globals import URI_KEY
+
+client = MongoClient(URI_KEY, server_api=ServerApi("1"), serverSelectionTimeoutMS=8000)
 
 try:
     client.admin.command("ping")
@@ -12,6 +12,7 @@ try:
 except Exception as e:
     raise SystemExit(f"[DB] Mongo connection failed: {e}")
 
+# Models
 db = client["valorant"]
 users = db["users"]
 mmr_collection = db["mmr_data"]

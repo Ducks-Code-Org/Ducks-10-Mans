@@ -15,7 +15,7 @@ This guide will cover everything you need to do to set up the codebase for local
   - Invite this new bot to a discord server of your choice (for testing)
 - Click on "Bot" on the left menu, then select "Reset Token"
   - Copy this token somewhere useful
-- Head to the MongoDB Atlas site, and add a new cluster
+- Head to the [MongoDB Atlas](https://www.mongodb.com/try?tck=community_atlas_ct) site, and add a new cluster
   - Follow the prompts to get a connection string for the application using the method of your choice
   - Copy this string somewhere useful
 - Join the [HenrikDev Systems Discord](https://discord.com/invite/henrikdev-systems-704231681309278228) and get a free "Basic Key" from the `#get-a-key` channel
@@ -23,13 +23,16 @@ This guide will cover everything you need to do to set up the codebase for local
 - Clone the repository
 - In the root directory where you clone the repository, create a new file called `env.bat`
   - Add these contents (obv replacing with your values):
+
     ```cmd
     @echo off
     
-    set "BOT_TOKEN=<YOUR_BOT_TOKEN>"
-    set "URI_KEY=<YOUR_MONGODB_STRING>"
-    set "API_KEY=<YOUR_HENRIKDEV_KEY>"
+    set "bot_token=<YOUR_BOT_TOKEN>"
+    set "uri_key=<YOUR_MONGODB_STRING>"
+    set "api_key=<YOUR_HENRIKDEV_KEY>"
     ```
+
+- Install needed packages with `pip install -r requirements.txt`
 - Run the command `call env.bat` in a `cmd` terminal
   - This is needed to set the proper environment variables to run the bot, and will have to be run once each session
 - Run ther command `py main.py` to start the bot

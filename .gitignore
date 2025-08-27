@@ -5,6 +5,7 @@
 *.xml
 .idea/workspace.xml
 /.idea
-10mansbot.zip
+*.zip
 DebugTools/tools/match_reporter.py
 env.bat
+**/*venv*
