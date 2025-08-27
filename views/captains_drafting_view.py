@@ -1,6 +1,9 @@
 import asyncio
+from typing import Dict
+
 import discord
 from discord.ui import Select
+
 from database import users
 
 
@@ -357,31 +360,46 @@ class CaptainsDraftingView(discord.ui.View):
 
         # Rebuild select options from remaining players
         options = []
-        for p in self.remaining_players:
-            ud = users.find_one({"discord_id": str(p["id"])})
-            if ud:
-                label = f"{ud.get('name', 'Unknown')}#{ud.get('tag', 'Unknown')}"
+        for player in self.remaining_players:
+            user_data = users.find_one({"discord_id": str(player["id"])})
+            if user_data:
+                label = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
             else:
-                label = p["name"]
-            options.append(discord.SelectOption(label=label, value=str(p["id"])))
+                label = player["name"]
+            options.append(discord.SelectOption(label=label, value=str(player["id"])))
         self.player_select.options = options
 
         # Remaining players embed
-        remaining_players_names = []
-        for p in self.remaining_players:
-            ud = users.find_one({"discord_id": str(p["id"])})
-            if ud:
-                remaining_players_names.append(
-                    f"{ud.get('name','Unknown')}#{ud.get('tag','Unknown')}"
+
+        remaining_players_data: Dict[str, str | None] = (
+            {}
+        )  # Maps player names to tracker.gg links
+        for player in self.remaining_players:
+            user_data = users.find_one({"discord_id": str(player["id"])})
+            if user_data:
+                user_name = f"{user_data.get('name','Unknown')}"
+                user_tag = f"{user_data.get('tag','Unknown')}"
+                remaining_players_data[f"{user_name}#{user_tag}"] = (
+                    f"https://tracker.gg/valorant/profile/riot/{user_name}%23{user_tag}/overview"
                 )
             else:
-                remaining_players_names.append(p["name"])
+                remaining_players_data[player["name"]] = None
+
+        remaining_players_text: str = ""
+        if remaining_players_data:
+            for name, tracker_link in remaining_players_data.items():
+                if tracker_link:
+                    remaining_players_text += f"[{name}]({tracker_link})\n"
+                else:
+                    remaining_players_text += f"{name}\n"
+            # Remove trailing newline
+            remaining_players_text = remaining_players_text.rstrip("\n")
+        else:
+            remaining_players_text = "—"
 
         remaining_players_embed = discord.Embed(
             title="Remaining Players",
-            description=(
-                "\n".join(remaining_players_names) if remaining_players_names else "—"
-            ),
+            description=remaining_players_text,
             color=discord.Color.blue(),
         )
 
