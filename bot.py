@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 
+import discord
 from discord.ext import commands
 
 from views.signup_view import SignupView
@@ -503,5 +504,49 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.tdm_commands")
         print("Bot is ready and cogs are loaded.")
 
-    def some_custom_method(self):
-        print("This is a custom method for the bot.")
+    async def purge_old_match_roles(self):
+        print("Checking for old match roles to delete...")
+        for guild in self.guilds:
+            # Find roles with 'match' or 'tdm' in the name (case-insensitive)
+            old_roles = list(
+                filter(
+                    lambda r: "match" in r.name.lower() or "tdm" in r.name.lower(),
+                    guild.roles,
+                )
+            )
+            if old_roles:
+                print(
+                    f"Deleting roles in guild '{guild.name}':",
+                    [role.name for role in old_roles],
+                )
+                for role in old_roles:
+                    try:
+                        await role.delete()
+                    except discord.HTTPException:
+                        pass
+
+    async def purge_old_match_channels(self):
+        print("Checking for old match channels to delete...")
+        for guild in self.guilds:
+            # Find channels with 'match' or 'tdm' in the name (case-insensitive)
+            old_channels = list(
+                filter(
+                    lambda c: "match" in c.name.lower() or "tdm" in c.name.lower(),
+                    guild.channels,
+                )
+            )
+            if old_channels:
+                print(
+                    f"Deleting channels in guild '{guild.name}':",
+                    [channel.name for channel in old_channels],
+                )
+                for channel in old_channels:
+                    try:
+                        await channel.delete()
+                    except discord.HTTPException:
+                        pass
+
+    async def on_ready(self):
+        print(f"Bot connected as {self.user}.")
+        await self.purge_old_match_roles()
+        await self.purge_old_match_channels()
