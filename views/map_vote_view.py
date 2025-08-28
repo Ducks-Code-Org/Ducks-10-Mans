@@ -29,35 +29,41 @@ class MapVoteView(discord.ui.View):
         for map in random_maps:
             btn = Button(label=f"{map} (0)", style=discord.ButtonStyle.secondary)
 
-            btn.callback = self.map_callback
+            async def map_callback(interaction: discord.Interaction, chosen=map):
+                if not interaction.response.is_done():
+                    await interaction.response.defer(ephemeral=True)
+
+                if self.is_handling_vote:
+                    await safe_reply(
+                        interaction,
+                        "Please wait a few seconds and try again!",
+                        ephemeral=True,
+                    )
+                    return
+                self.is_handling_vote = True
+
+                if str(interaction.user.id) not in [
+                    str(p["id"]) for p in self.bot.queue
+                ]:
+                    await safe_reply(interaction, "Must be in queue!", ephemeral=True)
+                    self.is_handling_vote = False
+                    return
+                if str(interaction.user.id) in self.voters:
+                    await safe_reply(interaction, "Already voted!", ephemeral=True)
+                    self.is_handling_vote = False
+                    return
+                self.map_votes[chosen] += 1
+                self.voters.add(str(interaction.user.id))
+                for b in self.map_buttons:
+                    if b.label.startswith(chosen):
+                        b.label = f"{chosen} ({self.map_votes[chosen]})"
+                await interaction.message.edit(view=self)
+                await safe_reply(interaction, f"Voted {chosen}.", ephemeral=True)
+                self.is_handling_vote = False
+                await self._check_vote()
+
+            btn.callback = map_callback
             self.map_buttons.append(btn)
-
-    async def map_callback(self, interaction: discord.Interaction, chosen=map):
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
-        if self.is_handling_vote:
-            await safe_reply("Please wait a few seconds and try again!", ephemeral=True)
-            return
-        self.is_handling_vote = True
-
-        if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
-            await safe_reply("Must be in queue!", ephemeral=True)
-            self.is_handling_vote = False
-            return
-        if str(interaction.user.id) in self.voters:
-            await safe_reply("Already voted!", ephemeral=True)
-            self.is_handling_vote = False
-            return
-        self.map_votes[chosen] += 1
-        self.voters.add(str(interaction.user.id))
-        for b in self.map_buttons:
-            if b.label.startswith(chosen):
-                b.label = f"{chosen} ({self.map_votes[chosen]})"
-        await interaction.message.edit(view=self)
-        await safe_reply(f"Voted {chosen}.", ephemeral=True)
-        self.is_handling_vote = False
-        await self._check_vote()
 
     def _disable_buttons(self):
         for child in self.children:

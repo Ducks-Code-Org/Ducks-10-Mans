@@ -69,7 +69,9 @@ class TDMMapVoteView(discord.ui.View):
 
                     if self.is_handling_vote:
                         await safe_reply(
-                            "Please wait a few seconds and try again!", ephemeral=True
+                            interaction,
+                            "Please wait a few seconds and try again!",
+                            ephemeral=True,
                         )
                         return
                     self.is_handling_vote = True
@@ -83,13 +85,13 @@ class TDMMapVoteView(discord.ui.View):
 
                     if user_id not in queue_ids:
                         await safe_reply(
-                            "You must be in queue to vote!", ephemeral=True
+                            interaction, "You must be in queue to vote!", ephemeral=True
                         )
                         self.is_handling_vote = False
                         return
 
                     if user_id in self.voters:
-                        await safe_reply("Already voted!", ephemeral=True)
+                        await safe_reply(interaction, "Already voted!", ephemeral=True)
                         self.is_handling_vote = False
                         return
 

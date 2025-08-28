@@ -51,7 +51,9 @@ class SignupView(discord.ui.View):
             await interaction.response.defer(ephemeral=True)
 
         if self.is_handling_signup:
-            await safe_reply("Please wait a few seconds and try again!", ephemeral=True)
+            await safe_reply(
+                interaction, "Please wait a few seconds and try again!", ephemeral=True
+            )
             return
         self.is_handling_signup = True
 
