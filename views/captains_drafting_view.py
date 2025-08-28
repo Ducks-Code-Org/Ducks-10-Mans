@@ -3,6 +3,7 @@ from typing import Dict
 
 import discord
 from discord.ui import Select
+from urllib.parse import quote
 
 from database import users
 
@@ -377,8 +378,8 @@ class CaptainsDraftingView(discord.ui.View):
         for player in self.remaining_players:
             user_data = users.find_one({"discord_id": str(player["id"])})
             if user_data:
-                user_name = f"{user_data.get('name','Unknown')}"
-                user_tag = f"{user_data.get('tag','Unknown')}"
+                user_name = quote(f"{user_data.get('name','Unknown')}")
+                user_tag = quote(f"{user_data.get('tag','Unknown')}")
                 remaining_players_data[f"{user_name}#{user_tag}"] = (
                     f"https://tracker.gg/valorant/profile/riot/{user_name}%23{user_tag}/overview"
                 )
