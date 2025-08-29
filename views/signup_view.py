@@ -254,32 +254,16 @@ class SignupView(discord.ui.View):
         try:
             while self.bot.signup_active:
                 new_channel_name = f"{self.bot.match_name}《{len(self.bot.queue)}∕10》"
-                retry_after = 720
 
                 if self.bot.match_channel.name != new_channel_name:
                     try:
                         await self.bot.match_channel.edit(name=new_channel_name)
                         print(f"Renamed channel to {new_channel_name}")
-                    except discord.HTTPException as e:
-                        if e.status == 429:  # rate limited
-                            try:
-                                response_data = await e.response.json()
-                                retry_after = response_data.get(
-                                    "retry_after", retry_after
-                                )
-                            except Exception:
-                                pass
-                            print(
-                                f"Match channel rename is rate limited. Retrying in {retry_after:.2f}s"
-                            )
-                        else:
-                            print(
-                                f"Failed to rename channel {self.bot.match_name}: {e}"
-                            )
-                        await asyncio.sleep(retry_after)
-                        continue
+                    except discord.HTTPException:
+                        print(f"Failed to rename channel {self.bot.match_name}")
+                    await asyncio.sleep(720)
                 else:
-                    await asyncio.sleep(5)  # small delay to avoid busy loop
+                    await asyncio.sleep(10)  # small delay to avoid busy loop
         except asyncio.CancelledError:
             pass
 

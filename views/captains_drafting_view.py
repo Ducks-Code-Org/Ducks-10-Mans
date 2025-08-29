@@ -290,7 +290,7 @@ class CaptainsDraftingView(discord.ui.View):
 
         self.bot.match_ongoing = True
         self.bot.match_not_reported = True
-        self.bot.match_channel.edit(name=f"{self.bot.match_name}《LIVE》")
+        await self.bot.match_channel.edit(name=f"{self.bot.match_name}《in-game》")
 
         # prevent further callbacks
         try:
