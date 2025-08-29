@@ -20,7 +20,7 @@ class SignupView(discord.ui.View):
 
         self.signup_refresh_task = asyncio.create_task(self.refresh_signup_message())
         self.channel_name_refresh_task = asyncio.create_task(
-            self.refresh_channel_name()
+            self.channel_rename_worker()
         )
 
         self.sign_up_button = Button(
@@ -51,7 +51,9 @@ class SignupView(discord.ui.View):
             await interaction.response.defer(ephemeral=True)
 
         if self.is_handling_signup:
-            await safe_reply("Please wait a few seconds and try again!", ephemeral=True)
+            await safe_reply(
+                interaction, "Please wait a few seconds and try again!", ephemeral=True
+            )
             return
         self.is_handling_signup = True
 
@@ -248,16 +250,36 @@ class SignupView(discord.ui.View):
             self.signup_refresh_task.cancel()
             self.signup_refresh_task = None
 
-    async def refresh_channel_name(self):
+    async def channel_rename_worker(self):
         try:
             while self.bot.signup_active:
-                try:
-                    await self.bot.match_channel.edit(
-                        name=f"{self.bot.match_name}《{len(self.bot.queue)}∕10》"
-                    )
-                except discord.HTTPException:
-                    pass
-                await asyncio.sleep(720)
+                new_channel_name = f"{self.bot.match_name}《{len(self.bot.queue)}∕10》"
+                retry_after = 361  # default delay 2 min
+
+                if self.bot.match_channel.name != new_channel_name:
+                    try:
+                        await self.bot.match_channel.edit(name=new_channel_name)
+                        print(f"Renamed channel to {new_channel_name}")
+                    except discord.HTTPException as e:
+                        if e.status == 429:  # rate limited
+                            try:
+                                response_data = await e.response.json()
+                                retry_after = response_data.get(
+                                    "retry_after", retry_after
+                                )
+                            except Exception:
+                                pass
+                            print(
+                                f"Match channel rename is rate limited. Retrying in {retry_after:.2f}s"
+                            )
+                        else:
+                            print(
+                                f"Failed to rename channel {self.bot.match_name}: {e}"
+                            )
+                        await asyncio.sleep(retry_after)
+                        continue
+                else:
+                    await asyncio.sleep(5)  # small delay to avoid busy loop
         except asyncio.CancelledError:
             pass
 
