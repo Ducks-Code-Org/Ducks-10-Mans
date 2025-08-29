@@ -36,7 +36,22 @@ class MapTypeVoteView(discord.ui.View):
         self.timeout = False
         self._message = None
 
-        self.is_handling_vote = False
+        self.interaction_request_queue = []  # List of (interaction, map_type, future)
+        self.interaction_queue_task = asyncio.create_task(
+            self.process_interaction_queue()
+        )
+
+    async def process_interaction_queue(self):
+        while True:
+            if not self.interaction_request_queue:
+                await asyncio.sleep(0.1)
+                continue
+            interaction, map_type, fut = self.interaction_request_queue.pop(0)
+            try:
+                await self._handle_vote(interaction, map_type)
+            finally:
+                if not fut.done():
+                    fut.set_result(None)
 
     def _disable_buttons(self):
         for child in self.children:
@@ -70,7 +85,12 @@ class MapTypeVoteView(discord.ui.View):
 
             self.voting_phase_ended = True
             self._disable_buttons()
-            self.is_handling_vote = False
+
+            if hasattr(self, "interaction_queue_task") and self.interaction_queue_task:
+                self.interaction_queue_task.cancel()
+                self.interaction_queue_task = None
+            self.interaction_request_queue.clear()
+
             # try to reflect disabled buttons
             try:
                 if self._message:
@@ -80,8 +100,6 @@ class MapTypeVoteView(discord.ui.View):
                 pass
 
             await self._go_to_map_vote(chosen_maps)
-        else:
-            self.is_handling_vote = False
 
     async def _go_to_map_vote(self, chosen_maps):
         from views.map_vote_view import MapVoteView
@@ -90,59 +108,59 @@ class MapTypeVoteView(discord.ui.View):
         await map_vote.setup()
         await map_vote.send_view()
 
-    async def comp_callback(self, interaction: discord.Interaction):
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
-        if self.is_handling_vote:
-            await safe_reply(
-                interaction, "Please wait a few seconds and try again!", ephemeral=True
-            )
-            return
-        self.is_handling_vote = True
-
+    async def _handle_vote(self, interaction: discord.Interaction, map_type: str):
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
             await interaction.response.send_message("Must be in queue!", ephemeral=True)
-            self.is_handling_vote = False
             return
         if str(interaction.user.id) in self.voters:
             await interaction.response.send_message("Already voted!", ephemeral=True)
-            self.is_handling_vote = False
             return
-        self.map_pool_votes["Competitive"] += 1
+
+        self.map_pool_votes[map_type] += 1
         self.voters.add(str(interaction.user.id))
-        self.competitive_button.label = (
-            f"Competitive Maps ({self.map_pool_votes['Competitive']})"
-        )
+        if map_type == "Competitive":
+            self.competitive_button.label = (
+                f"Competitive Maps ({self.map_pool_votes['Competitive']})"
+            )
+        else:
+            self.all_maps_button.label = f"All Maps ({self.map_pool_votes['All']})"
         await interaction.message.edit(view=self)
-        await safe_reply(interaction, "Voted Competitive Maps!", ephemeral=True)
+        await safe_reply(interaction, f"Voted {map_type} Maps!", ephemeral=True)
         await self._check_vote()
+
+    async def comp_callback(self, interaction: discord.Interaction):
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except Exception as e:
+                if isinstance(e, discord.errors.NotFound):
+                    # Interaction expired, do not queue
+                    return
+                else:
+                    raise
+
+        # Add the interaction to the interaction queue and wait for processing
+        loop = asyncio.get_event_loop()
+        fut = loop.create_future()
+        self.interaction_request_queue.append((interaction, "Competitive", fut))
+        await fut  # Wait until this request is processed
 
     async def all_callback(self, interaction: discord.Interaction):
         if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except Exception as e:
+                if isinstance(e, discord.errors.NotFound):
+                    # Interaction expired, do not queue
+                    return
+                else:
+                    raise
 
-        if self.is_handling_vote:
-            await safe_reply(
-                interaction, "Please wait a few seconds and try again!", ephemeral=True
-            )
-            return
-        self.is_handling_vote = True
-
-        if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
-            await interaction.response.send_message("Must be in queue!", ephemeral=True)
-            self.is_handling_vote = False
-            return
-        if str(interaction.user.id) in self.voters:
-            await interaction.response.send_message("Already voted!", ephemeral=True)
-            self.is_handling_vote = False
-            return
-        self.map_pool_votes["All"] += 1
-        self.voters.add(str(interaction.user.id))
-        self.all_maps_button.label = f"All Maps ({self.map_pool_votes['All']})"
-        await interaction.message.edit(view=self)
-        await interaction.response.send_message("Voted All Maps!", ephemeral=True)
-        await self._check_vote()
+        # Add the interaction to the interaction queue and wait for processing
+        loop = asyncio.get_event_loop()
+        fut = loop.create_future()
+        self.interaction_request_queue.append((interaction, "All", fut))
+        await fut  # Wait until this request is processed
 
     async def send_view(self):
         self._message = await self.ctx.send("Vote for the map pool:", view=self)

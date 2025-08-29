@@ -21,7 +21,10 @@ class ModeVoteView(discord.ui.View):
         self.add_item(self.balanced_button)
         self.add_item(self.captains_button)
 
-        self.is_handling_vote = False
+        self.interaction_request_queue = []  # List of (interaction, mode, future)
+        self.interaction_queue_task = asyncio.create_task(
+            self.process_interaction_queue()
+        )
 
         self.votes = {"Balanced": 0, "Captains": 0}
         self.voters = set()
@@ -32,37 +35,36 @@ class ModeVoteView(discord.ui.View):
         self.voting_phase_ended = False
         self.timeout = False
 
+    async def process_interaction_queue(self):
+        while True:
+            if not self.interaction_request_queue:
+                await asyncio.sleep(0.1)
+                continue
+            interaction, mode, fut = self.interaction_request_queue.pop(0)
+            try:
+                await self._handle_vote(interaction, mode)
+            finally:
+                if not fut.done():
+                    fut.set_result(None)
+
     def _disable_buttons(self):
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
 
     async def _handle_vote(self, interaction: discord.Interaction, mode: str):
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
-        if self.is_handling_vote:
-            await safe_reply(
-                interaction, "Please wait a few seconds and try again!", ephemeral=True
-            )
-            return
-        self.is_handling_vote = True
-
         if self.voting_phase_ended:
             await safe_reply(
                 interaction, "This voting phase has already ended", ephemeral=True
             )
-            self.is_handling_vote = False
             return
 
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
             await safe_reply(interaction, "Must be in queue!", ephemeral=True)
-            self.is_handling_vote = False
             return
 
         if str(interaction.user.id) in self.voters:
             await safe_reply(interaction, "Already voted!", ephemeral=True)
-            self.is_handling_vote = False
             return
 
         self.votes[mode] += 1
@@ -80,13 +82,40 @@ class ModeVoteView(discord.ui.View):
             pass
 
         await safe_reply(interaction, f"Voted {mode}!", ephemeral=True)
-        self.is_handling_vote = False
 
     async def balanced_callback(self, interaction: discord.Interaction):
-        await self._handle_vote(interaction, "Balanced")
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except Exception as e:
+                if isinstance(e, discord.errors.NotFound):
+                    # Interaction expired, do not queue
+                    return
+                else:
+                    raise
+
+        # Add the interaction to the interaction queue and wait for processing
+        loop = asyncio.get_event_loop()
+        fut = loop.create_future()
+        self.interaction_request_queue.append((interaction, "Balanced", fut))
+        await fut  # Wait until this request is processed
 
     async def captains_callback(self, interaction: discord.Interaction):
-        await self._handle_vote(interaction, "Captains")
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except Exception as e:
+                if isinstance(e, discord.errors.NotFound):
+                    # Interaction expired, do not queue
+                    return
+                else:
+                    raise
+
+        # Add the interaction to the interaction queue and wait for processing
+        loop = asyncio.get_event_loop()
+        fut = loop.create_future()
+        self.interaction_request_queue.append((interaction, "Captains", fut))
+        await fut  # Wait until this request is processed
 
     async def send_view(self):
         await self.ctx.send("Vote for mode (Balanced/Captains):", view=self)
@@ -101,6 +130,13 @@ class ModeVoteView(discord.ui.View):
             async def inner():
                 self.voting_phase_ended = True
                 self._disable_buttons()
+                if (
+                    hasattr(self, "interaction_queue_task")
+                    and self.interaction_queue_task
+                ):
+                    self.interaction_queue_task.cancel()
+                    self.interaction_queue_task = None
+                self.interaction_request_queue.clear()
                 try:
                     await self.ctx.channel.send("Voting closed.")
                 except discord.HTTPException:
@@ -139,34 +175,27 @@ class ModeVoteView(discord.ui.View):
         # Majority wins
         if self.votes["Balanced"] > 4:
             print("[DEBUG] Setting mode to Balanced (majority)")
-            self.is_handling_vote = False
             await handle_balanced()()
             await self._setup_balanced_teams()
             print(f"[DEBUG] Mode after setting: {self.bot.chosen_mode}")
             return
         elif self.votes["Captains"] > 4:
             print("[DEBUG] Setting mode to Captains (majority)")
-            self.is_handling_vote = False
             await handle_captains()()
             print(f"[DEBUG] Mode after setting: {self.bot.chosen_mode}")
             return
 
         # Timeout logic
         if self.timeout:
-            self.is_handling_vote = False
             balanced_votes = self.votes["Balanced"]
             captains_votes = self.votes["Captains"]
             if balanced_votes > captains_votes:
                 print("[DEBUG] Balanced wins on timeout")
-                await announce_and_close(
-                    f"Time's up! Balanced Teams wins with {balanced_votes} votes vs {captains_votes} votes!"
-                )()
+                await handle_balanced()()
                 await self._setup_balanced_teams()
             elif captains_votes > balanced_votes:
                 print("[DEBUG] Captains wins on timeout")
-                await announce_and_close(
-                    f"Time's up! Captains wins with {captains_votes} votes vs {balanced_votes} votes!"
-                )()
+                await handle_captains()()
             else:
                 print("[DEBUG] Tie on timeout")
                 await handle_tie(
