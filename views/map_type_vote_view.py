@@ -5,6 +5,7 @@ import discord
 from discord.ui import Button
 
 from maps_service import get_competitive_maps, get_standard_maps
+from views import safe_reply
 
 
 class MapTypeVoteView(discord.ui.View):
@@ -12,6 +13,10 @@ class MapTypeVoteView(discord.ui.View):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
+
+        self.STANDARD_MAP_LIST = get_standard_maps()
+        self.COMPETITIVE_MAP_LIST = get_competitive_maps()
+
         self.competitive_button = Button(
             label="Competitive Maps (0)", style=discord.ButtonStyle.green
         )
@@ -31,6 +36,8 @@ class MapTypeVoteView(discord.ui.View):
         self.timeout = False
         self._message = None
 
+        self.is_handling_vote = False
+
     def _disable_buttons(self):
         for child in self.children:
             if isinstance(child, discord.ui.Button):
@@ -43,23 +50,22 @@ class MapTypeVoteView(discord.ui.View):
         comp = self.map_pool_votes["Competitive"]
         allm = self.map_pool_votes["All"]
 
-        STANDARD_MAP_LIST = get_standard_maps()
-        COMPETITIVE_MAP_LIST = get_competitive_maps()
-
         # 5+ wins immediately
         if comp > 4 or allm > 4 or self.timeout:
             # decide winner
             if comp > allm:
                 await self.ctx.send("Competitive Maps chosen!")
-                chosen_maps = COMPETITIVE_MAP_LIST
+                chosen_maps = self.COMPETITIVE_MAP_LIST
             elif allm > comp:
                 await self.ctx.send("All Maps chosen!")
-                chosen_maps = STANDARD_MAP_LIST
+                chosen_maps = self.STANDARD_MAP_LIST
             else:
                 decision = "All" if random.choice([True, False]) else "Competitive"
                 await self.ctx.send(f"Tie! {decision} Maps chosen!")
                 chosen_maps = (
-                    STANDARD_MAP_LIST if decision == "All" else COMPETITIVE_MAP_LIST
+                    self.STANDARD_MAP_LIST
+                    if decision == "All"
+                    else self.COMPETITIVE_MAP_LIST
                 )
 
             self.voting_phase_ended = True
@@ -82,11 +88,23 @@ class MapTypeVoteView(discord.ui.View):
         await map_vote.send_view()
 
     async def comp_callback(self, interaction: discord.Interaction):
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        if self.is_handling_vote:
+            await safe_reply(
+                interaction, "Please wait a few seconds and try again!", ephemeral=True
+            )
+            return
+        self.is_handling_vote = True
+
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
             await interaction.response.send_message("Must be in queue!", ephemeral=True)
+            self.is_handling_vote = False
             return
         if str(interaction.user.id) in self.voters:
             await interaction.response.send_message("Already voted!", ephemeral=True)
+            self.is_handling_vote = False
             return
         self.map_pool_votes["Competitive"] += 1
         self.voters.add(str(interaction.user.id))
@@ -97,20 +115,34 @@ class MapTypeVoteView(discord.ui.View):
         await interaction.response.send_message(
             "Voted Competitive Maps!", ephemeral=True
         )
+        self.is_handling_vote = False
         await self._check_vote()
 
     async def all_callback(self, interaction: discord.Interaction):
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        if self.is_handling_vote:
+            await safe_reply(
+                interaction, "Please wait a few seconds and try again!", ephemeral=True
+            )
+            return
+        self.is_handling_vote = True
+
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
             await interaction.response.send_message("Must be in queue!", ephemeral=True)
+            self.is_handling_vote = False
             return
         if str(interaction.user.id) in self.voters:
             await interaction.response.send_message("Already voted!", ephemeral=True)
+            self.is_handling_vote = False
             return
         self.map_pool_votes["All"] += 1
         self.voters.add(str(interaction.user.id))
         self.all_maps_button.label = f"All Maps ({self.map_pool_votes['All']})"
         await interaction.message.edit(view=self)
         await interaction.response.send_message("Voted All Maps!", ephemeral=True)
+        self.is_handling_vote = False
         await self._check_vote()
 
     async def send_view(self):
