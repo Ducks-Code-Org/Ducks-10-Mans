@@ -115,9 +115,7 @@ class MapTypeVoteView(discord.ui.View):
             f"Competitive Maps ({self.map_pool_votes['Competitive']})"
         )
         await interaction.message.edit(view=self)
-        await interaction.response.send_message(
-            "Voted Competitive Maps!", ephemeral=True
-        )
+        await safe_reply(interaction, "Voted Competitive Maps!", ephemeral=True)
         await self._check_vote()
 
     async def all_callback(self, interaction: discord.Interaction):
