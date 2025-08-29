@@ -100,9 +100,11 @@ class MapTypeVoteView(discord.ui.View):
 
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
             await interaction.response.send_message("Must be in queue!", ephemeral=True)
+            self.is_handling_vote = False
             return
         if str(interaction.user.id) in self.voters:
             await interaction.response.send_message("Already voted!", ephemeral=True)
+            self.is_handling_vote = False
             return
         self.map_pool_votes["Competitive"] += 1
         self.voters.add(str(interaction.user.id))
@@ -113,6 +115,7 @@ class MapTypeVoteView(discord.ui.View):
         await interaction.response.send_message(
             "Voted Competitive Maps!", ephemeral=True
         )
+        self.is_handling_vote = False
         await self._check_vote()
 
     async def all_callback(self, interaction: discord.Interaction):
@@ -128,15 +131,18 @@ class MapTypeVoteView(discord.ui.View):
 
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
             await interaction.response.send_message("Must be in queue!", ephemeral=True)
+            self.is_handling_vote = False
             return
         if str(interaction.user.id) in self.voters:
             await interaction.response.send_message("Already voted!", ephemeral=True)
+            self.is_handling_vote = False
             return
         self.map_pool_votes["All"] += 1
         self.voters.add(str(interaction.user.id))
         self.all_maps_button.label = f"All Maps ({self.map_pool_votes['All']})"
         await interaction.message.edit(view=self)
         await interaction.response.send_message("Voted All Maps!", ephemeral=True)
+        self.is_handling_vote = False
         await self._check_vote()
 
     async def send_view(self):
