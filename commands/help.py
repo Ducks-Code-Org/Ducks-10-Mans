@@ -11,7 +11,7 @@ class HelpCommand(commands.Cog):
     async def help(self, ctx):
         help_embed = discord.Embed(
             title="Help Menu",
-            description="Duck's 10 Mans & TDM Commands:",
+            description="Duck's 10 Mans Bot Commands:",
             color=discord.Color.green(),
         )
 
@@ -19,11 +19,14 @@ class HelpCommand(commands.Cog):
         help_embed.add_field(
             name="10 Mans Commands",
             value=(
-                "**!signup** - Start a 10 mans signup session\n"
-                "**!status** - View current queue status\n"
+                "**!signup** - Start a new 10 mans signup session\n"
                 "**!report** - Report match results and update MMR\n"
-                "**!stats** - Check your MMR and match stats\n"
-                "**!linkriot** - Link Riot account using `Name#Tag`\n"
+                "**!stats** - Check a player's MMR and match statistics\n"
+                "↪ _usage: `!stats <Name#Tag>`_\n"
+                "**!linkriot** - Link your Riot account.\n"
+                "↪ _usage: `!linkriot <Name#Tag>`_\n"
+                "**!interest** - Plan a time to play 10 mans\n"
+                "↪ _usage: `!interest <time>`_\n"
             ),
             inline=False,
         )
@@ -44,27 +47,26 @@ class HelpCommand(commands.Cog):
             name="Leaderboard Commands",
             value=(
                 "**!leaderboard** - View MMR leaderboard\n"
-                "**!leaderboard_KD** - View K/D leaderboard\n"
-                "**!leaderboard_wins** - View wins leaderboard\n"
-                "**!leaderboard_ACS** - View ACS leaderboard\n"
+                # "**!leaderboard_KD** - View K/D leaderboard\n"
+                # "**!leaderboard_wins** - View wins leaderboard\n"
+                # "**!leaderboard_ACS** - View ACS leaderboard\n"
             ),
             inline=False,
         )
 
-        # Admin Commands
-        help_embed.add_field(
-            name="Admin Commands",
-            value=(
-                "**!setcaptain1** - Set Captain 1 using `Name#Tag`\n"
-                "**!setcaptain2** - Set Captain 2 using `Name#Tag`\n"
-                "**!cancel** - Cancel current 10 mans signup\n"
-                "**!canceltdm** - Cancel current TDM signup\n"
-                "**!toggledev** - Toggle Developer Mode\n"
-            ),
-            inline=False,
-        )
-
-        # Footer
-        help_embed.set_footer(text="Use commands with the ! prefix")
+        # Only show Admin Commands if user has administrator permissions
+        if ctx.author.guild_permissions.administrator:
+            help_embed.add_field(
+                name="Admin Commands",
+                value=(
+                    # "**!setcaptain1** - Set Captain 1 using `Name#Tag`\n"
+                    # "**!setcaptain2** - Set Captain 2 using `Name#Tag`\n"
+                    "**!cancel** - Cancel current 10 mans signup\n"
+                    "**!canceltdm** - Cancel current TDM signup\n"
+                    "**!toggledev** - Toggle Developer Mode\n"
+                    "**!newseason** - Resets stats and starts a new season\n"
+                ),
+                inline=False,
+            )
 
         await ctx.send(embed=help_embed)
