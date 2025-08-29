@@ -59,7 +59,6 @@ class MapVoteView(discord.ui.View):
                         b.label = f"{chosen} ({self.map_votes[chosen]})"
                 await interaction.message.edit(view=self)
                 await safe_reply(interaction, f"Voted {chosen}.", ephemeral=True)
-                self.is_handling_vote = False
                 await self._check_vote()
 
             btn.callback = map_callback
@@ -105,6 +104,7 @@ class MapVoteView(discord.ui.View):
         self.bot.selected_map = winning_map
 
         await self.ctx.send(f"Selected map: **{winning_map}**")
+        self.is_handling_vote = False
 
         if self.bot.chosen_mode == "Balanced":
             await self.finalize()
@@ -144,6 +144,8 @@ class MapVoteView(discord.ui.View):
             except discord.HTTPException:
                 pass
             await self._finalize_and_advance(winning_map)
+        else:
+            self.is_handling_vote = False
 
     async def send_view(self):
         if not self.bot.chosen_mode:
@@ -199,5 +201,7 @@ class MapVoteView(discord.ui.View):
 
         await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match, then `!report` to finalize results.")
+
         self.bot.match_ongoing = True
         self.bot.match_not_reported = True
+        await self.bot.match_channel.edit(name=f"{self.bot.match_name}《LIVE》")

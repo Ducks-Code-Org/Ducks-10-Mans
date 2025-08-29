@@ -70,6 +70,7 @@ class MapTypeVoteView(discord.ui.View):
 
             self.voting_phase_ended = True
             self._disable_buttons()
+            self.is_handling_vote = False
             # try to reflect disabled buttons
             try:
                 if self._message:
@@ -79,6 +80,8 @@ class MapTypeVoteView(discord.ui.View):
                 pass
 
             await self._go_to_map_vote(chosen_maps)
+        else:
+            self.is_handling_vote = False
 
     async def _go_to_map_vote(self, chosen_maps):
         from views.map_vote_view import MapVoteView
@@ -115,7 +118,6 @@ class MapTypeVoteView(discord.ui.View):
         await interaction.response.send_message(
             "Voted Competitive Maps!", ephemeral=True
         )
-        self.is_handling_vote = False
         await self._check_vote()
 
     async def all_callback(self, interaction: discord.Interaction):
@@ -142,7 +144,6 @@ class MapTypeVoteView(discord.ui.View):
         self.all_maps_button.label = f"All Maps ({self.map_pool_votes['All']})"
         await interaction.message.edit(view=self)
         await interaction.response.send_message("Voted All Maps!", ephemeral=True)
-        self.is_handling_vote = False
         await self._check_vote()
 
     async def send_view(self):
