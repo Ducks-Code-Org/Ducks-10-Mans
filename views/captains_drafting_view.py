@@ -468,12 +468,23 @@ class CaptainsDraftingView(discord.ui.View):
             self.captain_pick_message = await self.ctx.send(content=message, view=self)
 
         if not self.draft_finished:
+            # If only one player left, auto-assign and finalize
+            if len(self.remaining_players) == 1:
+                player_dict = self.remaining_players[0]
+                if str(current_captain_id) == str(self.bot.captain1["id"]):
+                    self.bot.team1.append(player_dict)
+                else:
+                    self.bot.team2.append(player_dict)
+                self.pick_count += 1
+                self.remaining_players.clear()
+                await self.finalize_draft()
+                return
             try:
                 await self.bot.wait_for(
                     "interaction",
                     check=lambda i: i.data.get("component_type") == 3
                     and str(i.user.id) == str(current_captain_id),
-                    timeout=60,
+                    timeout=120,
                 )
             except asyncio.TimeoutError:
                 if not self.draft_finished:
