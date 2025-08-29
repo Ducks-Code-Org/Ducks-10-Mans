@@ -254,7 +254,7 @@ class SignupView(discord.ui.View):
         try:
             while self.bot.signup_active:
                 new_channel_name = f"{self.bot.match_name}《{len(self.bot.queue)}∕10》"
-                retry_after = 30  # default delay
+                retry_after = 361  # default delay 2 min
 
                 if self.bot.match_channel.name != new_channel_name:
                     try:
