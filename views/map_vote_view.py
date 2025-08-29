@@ -20,7 +20,39 @@ class MapVoteView(discord.ui.View):
         self.chosen_maps = []
         self.winning_map = ""
         self.voters = set()
-        self.is_handling_vote = False
+        self.interaction_request_queue = []  # List of (interaction, map, future)
+        self.interaction_queue_task = asyncio.create_task(
+            self.process_interaction_queue()
+        )
+
+    async def process_interaction_queue(self):
+        while True:
+            if not self.interaction_request_queue:
+                await asyncio.sleep(0.1)
+                continue
+            interaction, map, fut = self.interaction_request_queue.pop(0)
+            try:
+                await self._handle_vote(interaction, map)
+            finally:
+                if not fut.done():
+                    fut.set_result(None)
+
+    async def _handle_vote(self, interaction: discord.Interaction, map):
+        if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
+            await safe_reply(interaction, "Must be in queue!", ephemeral=True)
+            return
+        if str(interaction.user.id) in self.voters:
+            await safe_reply(interaction, "Already voted!", ephemeral=True)
+            return
+
+        self.map_votes[map] += 1
+        self.voters.add(str(interaction.user.id))
+        for b in self.map_buttons:
+            if b.label.startswith(map):
+                b.label = f"{map} ({self.map_votes[map]})"
+        await interaction.message.edit(view=self)
+        await safe_reply(interaction, f"Voted {map}.", ephemeral=True)
+        await self._check_vote()
 
     async def setup(self):
         random_maps = random.sample(self.map_choices, 3)
@@ -29,37 +61,22 @@ class MapVoteView(discord.ui.View):
         for map in random_maps:
             btn = Button(label=f"{map} (0)", style=discord.ButtonStyle.secondary)
 
-            async def map_callback(interaction: discord.Interaction, chosen=map):
+            async def map_callback(interaction: discord.Interaction, map=map):
                 if not interaction.response.is_done():
-                    await interaction.response.defer(ephemeral=True)
+                    try:
+                        await interaction.response.defer(ephemeral=True)
+                    except Exception as e:
+                        if isinstance(e, discord.errors.NotFound):
+                            # Interaction expired, do not queue
+                            return
+                        else:
+                            raise
 
-                if self.is_handling_vote:
-                    await safe_reply(
-                        interaction,
-                        "Please wait a few seconds and try again!",
-                        ephemeral=True,
-                    )
-                    return
-                self.is_handling_vote = True
-
-                if str(interaction.user.id) not in [
-                    str(p["id"]) for p in self.bot.queue
-                ]:
-                    await safe_reply(interaction, "Must be in queue!", ephemeral=True)
-                    self.is_handling_vote = False
-                    return
-                if str(interaction.user.id) in self.voters:
-                    await safe_reply(interaction, "Already voted!", ephemeral=True)
-                    self.is_handling_vote = False
-                    return
-                self.map_votes[chosen] += 1
-                self.voters.add(str(interaction.user.id))
-                for b in self.map_buttons:
-                    if b.label.startswith(chosen):
-                        b.label = f"{chosen} ({self.map_votes[chosen]})"
-                await interaction.message.edit(view=self)
-                await safe_reply(interaction, f"Voted {chosen}.", ephemeral=True)
-                await self._check_vote()
+                    # Add the interaction to the interaction queue and wait for processing
+                    loop = asyncio.get_event_loop()
+                    fut = loop.create_future()
+                    self.interaction_request_queue.append((interaction, map, fut))
+                    await fut  # Wait until this request is processed
 
             btn.callback = map_callback
             self.map_buttons.append(btn)
@@ -100,11 +117,15 @@ class MapVoteView(discord.ui.View):
         await self._finalize_and_advance(winning_map)
 
     async def _finalize_and_advance(self, winning_map: str):
+        if hasattr(self, "interaction_queue_task") and self.interaction_queue_task:
+            self.interaction_queue_task.cancel()
+            self.interaction_queue_task = None
+        self.interaction_request_queue.clear()
+
         self.winning_map = winning_map
         self.bot.selected_map = winning_map
 
         await self.ctx.send(f"Selected map: **{winning_map}**")
-        self.is_handling_vote = False
 
         if self.bot.chosen_mode == "Balanced":
             await self.finalize()
@@ -144,8 +165,6 @@ class MapVoteView(discord.ui.View):
             except discord.HTTPException:
                 pass
             await self._finalize_and_advance(winning_map)
-        else:
-            self.is_handling_vote = False
 
     async def send_view(self):
         if not self.bot.chosen_mode:
