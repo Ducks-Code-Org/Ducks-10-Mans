@@ -455,7 +455,18 @@ class ReportCommand(BotCommands):
                 if user_data:
                     riot_name = user_data.get("name", "Unknown").lower()
                     riot_tag = user_data.get("tag", "Unknown").lower()
-                    await ctx.send(f"{riot_name}#{riot_tag} is now supersonic radiant!")
+                    # Try to send to 'announcements' channel if it exists
+                    announcement_channel = None
+                    if ctx.guild:
+                        for channel in ctx.guild.text_channels:
+                            if channel.name.lower() == "announcements":
+                                announcement_channel = channel
+                                break
+                    message = f"{riot_name}#{riot_tag} is now supersonic radiant!"
+                    if announcement_channel:
+                        await announcement_channel.send(message)
+                    else:
+                        await ctx.send(message)
 
         def _add_months(dt, months):
             year = dt.year + (dt.month - 1 + months) // 12
