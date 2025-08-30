@@ -196,6 +196,7 @@ class AdminCommands(BotCommands):
         self.bot.signup_active = False
 
         await ctx.send("Canceled Signup")
+        print("Cancelling signup...")
 
         try:
             await self.bot.match_channel.delete()
