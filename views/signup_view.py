@@ -218,16 +218,15 @@ class SignupView(discord.ui.View):
         self.bot.signup_active = False
         self.ctx.channel = self.bot.match_channel
 
-        if self.bot.current_signup_message:
-            try:
-                await self.bot.current_signup_message.delete()
-            except discord.NotFound:
-                pass
-        self.bot.current_signup_message = None
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+        await self.bot.current_signup_message.edit(view=self)
 
         self.bot.chosen_mode = None
         mode_vote = ModeVoteView(self.ctx, self.bot)
         await mode_vote.send_view()
+        self.stop()
 
     async def refresh_signup_message(self):
         try:
