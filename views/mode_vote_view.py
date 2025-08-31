@@ -118,12 +118,14 @@ class ModeVoteView(discord.ui.View):
 
         # Check for a majority winner
         if balanced_votes > 5:
+            self.voting_phase_ended = True
             await self.ctx.send("Balanced wins by majority!")
             self.bot.chosen_mode = "Balanced"
             self.setup_balanced_teams()
             await self.close_vote()
             return
         elif captains_votes > 5:
+            self.voting_phase_ended = True
             await self.ctx.send("Captains wins by majority!")
             self.bot.chosen_mode = "Captains"
             await self.close_vote()
@@ -131,6 +133,7 @@ class ModeVoteView(discord.ui.View):
 
         # Check for a winner by timeout
         if self.timeout:
+            self.voting_phase_ended = True
             if balanced_votes > captains_votes:
                 await self.ctx.send("Balanced wins by timeout!")
                 self.bot.chosen_mode = "Balanced"
@@ -156,7 +159,6 @@ class ModeVoteView(discord.ui.View):
             print(
                 f"Mode vote ended by majority. Setting bot mode to: {self.bot.chosen_mode}"
             )
-        self.voting_phase_ended = True
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True

@@ -121,10 +121,10 @@ class MapVoteView(discord.ui.View):
         await self.check_for_winner()
 
     async def check_for_winner(self):
-
         # Check for majority winner
         highest_number_of_votes = max(self.map_votes.values())
         if highest_number_of_votes > 5:
+            self.voting_phase_ended = True
             # Find the winning map
             winning_map: str = next(
                 (
@@ -142,6 +142,7 @@ class MapVoteView(discord.ui.View):
 
         # Check for timeout winner
         if self.timeout:
+            self.voting_phase_ended = True
             # Collect all maps that have the highest number of votes (handles ties)
             winners = []
             for map_name, vote_count in self.map_votes.items():
@@ -162,7 +163,6 @@ class MapVoteView(discord.ui.View):
     async def close_vote(self, winning_map: str):
         self.winning_map = winning_map
         self.bot.selected_map = winning_map
-        self.voting_phase_ended = True
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
