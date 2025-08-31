@@ -4,28 +4,29 @@ on:
     types: [opened, edited, synchronize]
 
 jobs:
-  prepend-checklist:
+  update-and-enforce:
     runs-on: ubuntu-latest
     if: github.base_ref == 'main'
     steps:
-      - name: Prepend checklist to PR body
-        uses: devindford/pull-request-body-updater-github-action@v1.1.3
+      - name: Check and update PR body
+        uses: actions/github-script@v7
         with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          body-template: |
-            ## Checklist
-            - [ ] A version of the bot running this code has had at least one match reported successfully.
-          body-update-action: prefix
+          script: |
+            const pr = context.payload.pull_request;
+            const body = pr.body || '';
+            const checklist = `## Checklist - [ ] A version of the bot running this code has had at least one match reported successfully.`;
 
-  enforce-checked:
-    runs-on: ubuntu-latest
-    if: github.base_ref == 'main'
-    needs: prepend-checklist
-    steps:
-      - name: Validate checklist checked
-        run: |
-          body="${{ github.event.pull_request.body }}"
-          if ! grep -q '\- \[x\] A version of the bot running this code' <<< "$body"; then
-            echo "You must check the checklist before merging." >&2
-            exit 1
-          fi
+            let newBody = body;
+            if (!body.includes("A version of the bot running this code")) {
+              newBody = `${checklist}\n\n${body}`;
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                body: newBody,
+              });
+            }
+
+            if (!newBody.includes("- [x] A version of the bot running this code")) {
+              core.setFailed("Checklist must be checked before merging.");
+            }
