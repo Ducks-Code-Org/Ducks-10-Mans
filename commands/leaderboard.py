@@ -1,21 +1,19 @@
 "Commands related to displaying leaderboards."
 
-import asyncio
 from discord.ext import commands
+
 from commands import BotCommands
-from database import users, mmr_collection
+from database import mmr_collection
 from views.leaderboard_view import (
     LeaderboardView,
 )
-import wcwidth
-from table2ascii import table2ascii as t2a, PresetStyle
 
 
 async def setup(bot):
-    await bot.add_cog(LeaderboardCommands(bot))
+    await bot.add_cog(LeaderboardCommand(bot))
 
 
-class LeaderboardCommands(BotCommands):
+class LeaderboardCommand(BotCommands):
     @commands.command()
     async def leaderboard(self, ctx, sort_by: str = "mmr"):
         valid_sort_map = {
