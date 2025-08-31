@@ -200,11 +200,6 @@ class SignupView(discord.ui.View):
             "The queue is now full, proceeding to the voting stage."
         )
 
-        # Stop Tasks
-        self.cancel_refresh_signup_task()
-        self.cancel_channel_rename_task()
-        self.cancel_signup_queue_task()
-
         # Disable Buttons
         for child in self.children:
             if isinstance(child, discord.ui.Button):
@@ -227,6 +222,9 @@ class SignupView(discord.ui.View):
         mode_vote = ModeVoteView(self.ctx, self.bot)
         await mode_vote.send_view()
         self.stop()
+        self.cancel_refresh_signup_task()
+        self.cancel_channel_rename_task()
+        self.cancel_signup_queue_task()
 
     async def refresh_signup_message(self):
         try:
