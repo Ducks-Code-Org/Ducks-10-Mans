@@ -1,4 +1,4 @@
-name: Enforce Main PR Checklist
+name: Enforce Testing on PRs Against main
 on:
   pull_request:
     types: [opened, edited, synchronize]
