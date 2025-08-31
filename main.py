@@ -5,15 +5,6 @@ import discord
 from bot import CustomBot
 from globals import BOT_TOKEN
 
-try:
-    from bs4 import BeautifulSoup
-except ImportError:
-    import subprocess
-    import sys
-
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "beautifulsoup4"])
-    from bs4 import BeautifulSoup
-
 # Set up bot
 intents = discord.Intents.default()
 intents.message_content = True
