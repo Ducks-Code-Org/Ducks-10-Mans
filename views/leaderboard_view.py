@@ -1,13 +1,11 @@
 """This view allows users to see a stats leaderboard of all the users currently in the database."""
 
 import math
-from turtledemo.penrose import start
 
 import discord
 from discord.ui import View, Button
 from table2ascii import table2ascii as t2a, PresetStyle
 import wcwidth
-from discord.ui import Select
 
 from database import users, mmr_collection, tdm_mmr_collection
 
@@ -47,7 +45,7 @@ def truncate_by_display_width(original_string, max_width=15, ellipsis=True):
     return truncated + end_str
 
 
-class LeaderboardView(discord.ui.View):
+class LeaderboardView(View):
     def __init__(
         self,
         ctx,
