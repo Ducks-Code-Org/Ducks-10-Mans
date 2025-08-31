@@ -33,6 +33,7 @@ class MapVoteView(discord.ui.View):
         self.voters = set()
         self.view_message = None
         self.voting_phase_ended = False
+        self.vote_lock = asyncio.Lock()
 
         print("Starting new map vote...")
 
@@ -121,44 +122,47 @@ class MapVoteView(discord.ui.View):
         await self.check_for_winner()
 
     async def check_for_winner(self):
-        # Check for majority winner
-        highest_number_of_votes = max(self.map_votes.values())
-        if highest_number_of_votes > 5:
-            self.voting_phase_ended = True
-            # Find the winning map
-            winning_map: str = next(
-                (
-                    map_name
-                    for map_name, num_votes in self.map_votes.items()
-                    if num_votes == highest_number_of_votes
-                ),
-                None,
-            )
-            message = f"{winning_map} wins by majority!"
-            await self.ctx.send(message)
-            print(message)
-            await self.close_vote(winning_map)
-            return
+        async with self.vote_lock:
+            if self.voting_phase_ended:
+                return
+            # Check for majority winner
+            highest_number_of_votes = max(self.map_votes.values())
+            if highest_number_of_votes > 5:
+                self.voting_phase_ended = True
+                # Find the winning map
+                winning_map: str = next(
+                    (
+                        map_name
+                        for map_name, num_votes in self.map_votes.items()
+                        if num_votes == highest_number_of_votes
+                    ),
+                    None,
+                )
+                message = f"{winning_map} wins by majority!"
+                await self.ctx.send(message)
+                print(message)
+                await self.close_vote(winning_map)
+                return
 
-        # Check for timeout winner
-        if self.timeout:
-            self.voting_phase_ended = True
-            # Collect all maps that have the highest number of votes (handles ties)
-            winners = []
-            for map_name, vote_count in self.map_votes.items():
-                if vote_count == highest_number_of_votes:
-                    winners.append(map_name)
-            winning_map = random.choice(winners)
-            if len(winners) > 1:
-                message = f"Tie! Randomly selected: **{winning_map}**"
-                await self.ctx.send(message)
-                print(message)
-            else:
-                message = f"{winning_map} wins by timeout!"
-                await self.ctx.send(message)
-                print(message)
-            await self.close_vote(winning_map)
-            return
+            # Check for timeout winner
+            if self.timeout:
+                self.voting_phase_ended = True
+                # Collect all maps that have the highest number of votes (handles ties)
+                winners = []
+                for map_name, vote_count in self.map_votes.items():
+                    if vote_count == highest_number_of_votes:
+                        winners.append(map_name)
+                winning_map = random.choice(winners)
+                if len(winners) > 1:
+                    message = f"Tie! Randomly selected: **{winning_map}**"
+                    await self.ctx.send(message)
+                    print(message)
+                else:
+                    message = f"{winning_map} wins by timeout!"
+                    await self.ctx.send(message)
+                    print(message)
+                await self.close_vote(winning_map)
+                return
 
     async def close_vote(self, winning_map: str):
         self.winning_map = winning_map
