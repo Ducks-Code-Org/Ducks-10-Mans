@@ -524,6 +524,8 @@ class CustomBot(commands.Bot):
                         await role.delete()
                     except discord.HTTPException:
                         pass
+        if not old_roles:
+            print("No old roles found.")
 
     async def purge_old_match_channels(self):
         print("Checking for old match channels to delete...")
@@ -545,6 +547,8 @@ class CustomBot(commands.Bot):
                         await channel.delete()
                     except discord.HTTPException:
                         pass
+        if not old_channels:
+            print("No old channels found.")
 
     async def on_ready(self):
         print(f"Bot connected as {self.user}.")
