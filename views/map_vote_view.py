@@ -14,30 +14,90 @@ class MapVoteView(discord.ui.View):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
+
+        # Setup Task Runners
+        self.interaction_request_queue = (
+            asyncio.Queue()
+        )  # Interaction Queue of (interaction, map, future)
+        self.interaction_queue_task = asyncio.create_task(
+            self.process_interaction_queue()
+        )
+        self.timeout_timer_task = asyncio.create_task(self.timeout_timer())
+
+        # Setup State
         self.map_choices = map_choices
         self.map_buttons = []
         self.map_votes = {}
         self.chosen_maps = []
         self.winning_map = ""
         self.voters = set()
-        self.interaction_request_queue = []  # List of (interaction, map, future)
-        self.interaction_queue_task = asyncio.create_task(
-            self.process_interaction_queue()
-        )
+        self.view_message = None
+        self.voting_phase_ended = False
+
+        print("Starting new map vote...")
+
+    async def setup(self):
+        # Select 3 random maps from the given pool
+        self.chosen_maps = random.sample(self.map_choices, 3)
+        self.map_votes = {map: 0 for map in self.chosen_maps}
+        for map in self.chosen_maps:
+            # Dynamically setup buttons and callbacks for each map
+            async def vote_callback(interaction: discord.Interaction, map=map):
+                # Defer the interaction if not already done, to allow time for processing
+                if not interaction.response.is_done():
+                    try:
+                        await interaction.response.defer(ephemeral=True)
+                    except discord.errors.NotFound:
+                        # Interaction expired, do not queue
+                        return
+
+                # Add the interaction to the interaction queue and wait for processing
+                loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
+                fut: asyncio.Future[None] = loop.create_future()
+                await self.interaction_request_queue.put((interaction, map, fut))
+                await fut  # Wait until this request is processed
+
+            button = Button(label=f"{map} (0)", style=discord.ButtonStyle.secondary)
+            button.callback = vote_callback
+            self.map_buttons.append(button)
+
+    async def send_view(self):
+        if not self.bot.chosen_mode:
+            print("No mode selected at start of map vote.")
+            await self.ctx.send(
+                "Error: Game mode not selected. Please start a new queue."
+            )
+            return
+
+        for button in self.map_buttons:
+            self.add_item(button)
+
+        self.view_message = await self.ctx.send("Vote for the map to play:", view=self)
 
     async def process_interaction_queue(self):
         while True:
-            if not self.interaction_request_queue:
-                await asyncio.sleep(0.1)
-                continue
-            interaction, map, fut = self.interaction_request_queue.pop(0)
+            # Wait for the next interaction request (blocks until available)
+            interaction, map, fut = await self.interaction_request_queue.get()
             try:
-                await self._handle_vote(interaction, map)
+                # Process the interaction for this interaction
+                await self.handle_map_vote(interaction, map)
             finally:
+                # Ensure the waiting coroutine is notified, even if an error occurs
                 if not fut.done():
                     fut.set_result(None)
 
-    async def _handle_vote(self, interaction: discord.Interaction, map):
+    def cancel_interaction_queue_task(self):
+        if self.interaction_queue_task:
+            self.interaction_queue_task.cancel()
+            self.interaction_queue_task = None
+
+    async def handle_map_vote(self, interaction: discord.Interaction, map):
+        # Ensure vote is valid
+        if self.voting_phase_ended:
+            await safe_reply(
+                interaction, "This voting phase has already ended", ephemeral=True
+            )
+            return
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
             await safe_reply(interaction, "Must be in queue!", ephemeral=True)
             return
@@ -45,90 +105,72 @@ class MapVoteView(discord.ui.View):
             await safe_reply(interaction, "Already voted!", ephemeral=True)
             return
 
+        # Update the vote count
         self.map_votes[map] += 1
         self.voters.add(str(interaction.user.id))
-        for b in self.map_buttons:
-            if b.label.startswith(map):
-                b.label = f"{map} ({self.map_votes[map]})"
+
+        # Update button labels
+        for button in self.map_buttons:
+            if button.label.startswith(map):
+                button.label = f"{map} ({self.map_votes[map]})"
         await interaction.message.edit(view=self)
+
+        # Reply and check for vote finish
+        print(f"Recorded new vote. Current state: {self.map_votes}")
         await safe_reply(interaction, f"Voted {map}.", ephemeral=True)
-        await self._check_vote()
+        await self.check_for_winner()
 
-    async def setup(self):
-        random_maps = random.sample(self.map_choices, 3)
-        self.chosen_maps = random_maps
-        self.map_votes = {m: 0 for m in random_maps}
-        for map in random_maps:
-            btn = Button(label=f"{map} (0)", style=discord.ButtonStyle.secondary)
+    async def check_for_winner(self):
 
-            async def map_callback(interaction: discord.Interaction, map=map):
-                if not interaction.response.is_done():
-                    try:
-                        await interaction.response.defer(ephemeral=True)
-                    except Exception as e:
-                        if isinstance(e, discord.errors.NotFound):
-                            # Interaction expired, do not queue
-                            return
-                        else:
-                            raise
+        # Check for majority winner
+        highest_number_of_votes = max(self.map_votes.values())
+        if highest_number_of_votes > 5:
+            # Find the winning map
+            winning_map: str = next(
+                (
+                    map_name
+                    for map_name, num_votes in self.map_votes.items()
+                    if num_votes == highest_number_of_votes
+                ),
+                None,
+            )
+            message = f"{winning_map} wins by majority!"
+            await self.ctx.send(message)
+            print(message)
+            await self.close_vote(winning_map)
+            return
 
-                    # Add the interaction to the interaction queue and wait for processing
-                    loop = asyncio.get_event_loop()
-                    fut = loop.create_future()
-                    self.interaction_request_queue.append((interaction, map, fut))
-                    await fut  # Wait until this request is processed
+        # Check for timeout winner
+        if self.timeout:
+            # Collect all maps that have the highest number of votes (handles ties)
+            winners = []
+            for map_name, vote_count in self.map_votes.items():
+                if vote_count == highest_number_of_votes:
+                    winners.append(map_name)
+            winning_map = random.choice(winners)
+            if len(winners) > 1:
+                message = f"Tie! Randomly selected: **{winning_map}**"
+                await self.ctx.send(message)
+                print(message)
+            else:
+                message = f"{winning_map} wins by timeout!"
+                await self.ctx.send(message)
+                print(message)
+            await self.close_vote(winning_map)
+            return
 
-            btn.callback = map_callback
-            self.map_buttons.append(btn)
-
-    def _disable_buttons(self):
+    async def close_vote(self, winning_map: str):
+        self.winning_map = winning_map
+        self.bot.selected_map = winning_map
+        self.voting_phase_ended = True
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
+        await self.view_message.edit(view=self)
 
-    async def _start_timer(self):
-        await asyncio.sleep(25)
-        # If majority already handled, do nothing
-        max_votes = max(self.map_votes.values()) if self.map_votes else 0
-        if max_votes > 4:
-            return
-
-        if not self.map_votes:
-            winning_map = random.choice(self.chosen_maps)
-            await self.ctx.send(
-                f"No votes received! Randomly selected map: **{winning_map}**"
-            )
-        else:
-            max_votes = max(self.map_votes.values())
-            winners = [m for m, v in self.map_votes.items() if v == max_votes]
-            if len(winners) > 1:
-                winning_map = random.choice(winners)
-                await self.ctx.send(f"Tie! Randomly selected: **{winning_map}**")
-            else:
-                winning_map = winners[0]
-
-        self._disable_buttons()
-        try:
-            if hasattr(self, "_message") and self._message:
-                await self._message.edit(view=self)
-        except discord.HTTPException:
-            pass
-
-        await self._finalize_and_advance(winning_map)
-
-    async def _finalize_and_advance(self, winning_map: str):
-        if hasattr(self, "interaction_queue_task") and self.interaction_queue_task:
-            self.interaction_queue_task.cancel()
-            self.interaction_queue_task = None
-        self.interaction_request_queue.clear()
-
-        self.winning_map = winning_map
-        self.bot.selected_map = winning_map
-
-        await self.ctx.send(f"Selected map: **{winning_map}**")
-
+        # Finalize match setup
         if self.bot.chosen_mode == "Balanced":
-            await self.finalize()
+            await self.finalize_match_setup()
         elif self.bot.chosen_mode == "Captains":
             # Ensure captains exist
             if not self.bot.captain1 or not self.bot.captain2:
@@ -149,39 +191,11 @@ class MapVoteView(discord.ui.View):
         else:
             await self.ctx.send("Error: No game mode selected!")
 
-    async def _check_vote(self):
-        # majority check (5+)
-        if not self.map_votes:
-            return
+        self.stop()
+        self.cancel_interaction_queue_task()
+        self.cancel_timeout_timer()
 
-        max_votes = max(self.map_votes.values())
-        if max_votes > 4:
-            winners = [m for m, v in self.map_votes.items() if v == max_votes]
-            winning_map = random.choice(winners)
-            self._disable_buttons()
-            try:
-                if hasattr(self, "_message") and self._message:
-                    await self._message.edit(view=self)
-            except discord.HTTPException:
-                pass
-            await self._finalize_and_advance(winning_map)
-
-    async def send_view(self):
-        if not self.bot.chosen_mode:
-            print("[DEBUG] No mode selected at start of map vote")
-            await self.ctx.send(
-                "Error: Game mode not selected. Please start a new queue."
-            )
-            return
-
-        for b in self.map_buttons:
-            self.add_item(b)
-
-        self._message = await self.ctx.send("Vote for the map to play:", view=self)
-
-        asyncio.create_task(self._start_timer())
-
-    async def finalize(self):
+    async def finalize_match_setup(self):
         # Finalize teams after map chosen
         teams_embed = discord.Embed(
             title=f"Teams on {self.winning_map}",
@@ -224,3 +238,14 @@ class MapVoteView(discord.ui.View):
         self.bot.match_ongoing = True
         self.bot.match_not_reported = True
         await self.bot.match_channel.edit(name=f"{self.bot.match_name}《in-game》")
+
+    async def timeout_timer(self):
+        await asyncio.sleep(25)
+        if not self.voting_phase_ended:
+            self.timeout = True
+            await self.check_for_winner()
+
+    def cancel_timeout_timer(self):
+        if self.timeout_timer_task:
+            self.timeout_timer_task.cancel()
+            self.timeout_timer_task = None

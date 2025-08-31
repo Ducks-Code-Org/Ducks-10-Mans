@@ -52,7 +52,6 @@ class MapTypeVoteView(discord.ui.View):
         self.view_message = await self.ctx.send("Vote for the map pool:", view=self)
 
     async def vote_callback(self, interaction: discord.Interaction, mode: str):
-        print("Test")
         # Defer the interaction if not already done, to allow time for processing
         if not interaction.response.is_done():
             try:
@@ -123,12 +122,12 @@ class MapTypeVoteView(discord.ui.View):
         all_votes = self.map_pool_votes["All"]
 
         # Check for majority winner
-        if competitive_votes > 1:
+        if competitive_votes > 5:
             await self.ctx.send("Competitive Maps wins by majority!")
             chosen_map_type = "Competitive"
             await self.close_vote(chosen_map_type)
             return
-        elif all_votes > 1:
+        elif all_votes > 5:
             await self.ctx.send("All Maps wins by majority!")
             chosen_map_type = "All"
             await self.close_vote(chosen_map_type)
