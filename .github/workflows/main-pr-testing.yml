@@ -1,0 +1,43 @@
+name: Enforce Testing on PRs Against main
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  ensure-checklist:
+    runs-on: ubuntu-latest
+    if: github.base_ref == 'main'
+    steps:
+      - name: Ensure checklist exists
+        id: check
+        run: |
+          body="${{ github.event.pull_request.body }}"
+          if ! grep -q "A version of the bot running this code" <<< "$body"; then
+            echo "needs_update=true" >> $GITHUB_ENV
+          else
+            echo "needs_update=false" >> $GITHUB_ENV
+          fi
+
+      - name: Prepend checklist if missing
+        if: env.needs_update == 'true'
+        uses: peter-evans/update-pull-request@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            ## Checklist
+            - [ ] A version of the bot running this code has had at least one match reported successfully.
+
+            ${{ github.event.pull_request.body }}
+
+  enforce-checked:
+    runs-on: ubuntu-latest
+    if: github.base_ref == 'main'
+    needs: ensure-checklist
+    steps:
+      - name: Fail if checkbox is not checked
+        run: |
+          body="${{ github.event.pull_request.body }}"
+          if ! grep -q "\- \[x\] A version of the bot running this code" <<< "$body"; then
+            echo "❌ Checklist must be checked before merging." >&2
+            exit 1
+          fi
