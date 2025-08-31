@@ -123,11 +123,13 @@ class MapTypeVoteView(discord.ui.View):
 
         # Check for majority winner
         if competitive_votes > 5:
+            self.voting_phase_ended = True
             await self.ctx.send("Competitive Maps wins by majority!")
             chosen_map_type = "Competitive"
             await self.close_vote(chosen_map_type)
             return
         elif all_votes > 5:
+            self.voting_phase_ended = True
             await self.ctx.send("All Maps wins by majority!")
             chosen_map_type = "All"
             await self.close_vote(chosen_map_type)
@@ -135,6 +137,7 @@ class MapTypeVoteView(discord.ui.View):
 
         # Check for timeout winner
         if self.timeout:
+            self.voting_phase_ended = True
             if competitive_votes > all_votes:
                 await self.ctx.send("Competitive Maps wins by timeout!")
                 chosen_map_type = "Competitive"
@@ -155,7 +158,6 @@ class MapTypeVoteView(discord.ui.View):
             print("Map type vote ended by timeout.")
         else:
             print("Map type vote ended by majority.")
-        self.voting_phase_ended = True
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
