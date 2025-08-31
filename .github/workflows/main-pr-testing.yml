@@ -1,4 +1,4 @@
-name: Enforce Testing on PRs Against main
+name: Enforce Main PR Checklist
 on:
   pull_request:
     types: [opened, edited, synchronize]
@@ -12,9 +12,6 @@ jobs:
         id: check
         run: |
           body="${{ github.event.pull_request.body }}"
-          checklist="## Checklist\n- [ ] A version of the bot running this code has had at least one match reported successfully."
-
-          # Check if checklist already exists
           if ! grep -q "A version of the bot running this code" <<< "$body"; then
             echo "needs_update=true" >> $GITHUB_ENV
           else
@@ -23,10 +20,9 @@ jobs:
 
       - name: Prepend checklist if missing
         if: env.needs_update == 'true'
-        uses: peter-evans/create-or-update-pull-request@v5
+        uses: peter-evans/update-pull-request@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          pull-request-number: ${{ github.event.pull_request.number }}
           body: |
             ## Checklist
             - [ ] A version of the bot running this code has had at least one match reported successfully.
