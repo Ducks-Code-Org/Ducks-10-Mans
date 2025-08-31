@@ -45,6 +45,7 @@ class MapTypeVoteView(discord.ui.View):
         self.voting_phase_ended = False
         self.timeout = False
         self.view_message = None
+        self.vote_lock = asyncio.Lock()
 
         print("Starting new map type vote...")
 
@@ -118,40 +119,44 @@ class MapTypeVoteView(discord.ui.View):
         await self.check_for_winner()
 
     async def check_for_winner(self):
-        competitive_votes = self.map_pool_votes["Competitive"]
-        all_votes = self.map_pool_votes["All"]
+        async with self.vote_lock:
+            if self.voting_phase_ended:
+                return
 
-        # Check for majority winner
-        if competitive_votes > 5:
-            self.voting_phase_ended = True
-            await self.ctx.send("Competitive Maps wins by majority!")
-            chosen_map_type = "Competitive"
-            await self.close_vote(chosen_map_type)
-            return
-        elif all_votes > 5:
-            self.voting_phase_ended = True
-            await self.ctx.send("All Maps wins by majority!")
-            chosen_map_type = "All"
-            await self.close_vote(chosen_map_type)
-            return
+            competitive_votes = self.map_pool_votes["Competitive"]
+            all_votes = self.map_pool_votes["All"]
 
-        # Check for timeout winner
-        if self.timeout:
-            self.voting_phase_ended = True
-            if competitive_votes > all_votes:
-                await self.ctx.send("Competitive Maps wins by timeout!")
+            # Check for majority winner
+            if competitive_votes > 5:
+                self.voting_phase_ended = True
+                await self.ctx.send("Competitive Maps wins by majority!")
                 chosen_map_type = "Competitive"
                 await self.close_vote(chosen_map_type)
-            elif all_votes > competitive_votes:
-                await self.ctx.send("All Maps wins by timeout!")
+                return
+            elif all_votes > 5:
+                self.voting_phase_ended = True
+                await self.ctx.send("All Maps wins by majority!")
                 chosen_map_type = "All"
                 await self.close_vote(chosen_map_type)
-            else:
-                decision = "Competitive" if random.choice([True, False]) else "All"
-                await self.ctx.send(f"Tie! {decision} wins by coin flip!")
-                chosen_map_type = decision
-                await self.close_vote(chosen_map_type)
-            return
+                return
+
+            # Check for timeout winner
+            if self.timeout:
+                self.voting_phase_ended = True
+                if competitive_votes > all_votes:
+                    await self.ctx.send("Competitive Maps wins by timeout!")
+                    chosen_map_type = "Competitive"
+                    await self.close_vote(chosen_map_type)
+                elif all_votes > competitive_votes:
+                    await self.ctx.send("All Maps wins by timeout!")
+                    chosen_map_type = "All"
+                    await self.close_vote(chosen_map_type)
+                else:
+                    decision = "Competitive" if random.choice([True, False]) else "All"
+                    await self.ctx.send(f"Tie! {decision} wins by coin flip!")
+                    chosen_map_type = decision
+                    await self.close_vote(chosen_map_type)
+                return
 
     async def close_vote(self, chosen_map_type):
         if self.timeout:
