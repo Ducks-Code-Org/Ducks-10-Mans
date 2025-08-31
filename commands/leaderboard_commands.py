@@ -23,7 +23,7 @@ class LeaderboardCommands(BotCommands):
             "acs": "average_combat_score",
             "kd": "kill_death_ratio",
             "wins": "wins",
-            "losses": "losses"
+            "losses": "losses",
         }
 
         sort_by = sort_by.lower()
@@ -39,10 +39,18 @@ class LeaderboardCommands(BotCommands):
         sorted_data.sort(key=lambda x: x.get(sort_by_internal, 0), reverse=True)
 
         self.leaderboard_view = LeaderboardView(
-            ctx, self.bot, sorted_data, sort_by_internal, players_per_page=10, timeout=None, mode="normal"
+            ctx,
+            self.bot,
+            sorted_data,
+            sort_by_internal,
+            players_per_page=10,
+            timeout=None,
+            mode="normal",
         )
 
         self.leaderboard_message = await ctx.send(
-            content=self.leaderboard_view.make_content(sorted_data, "normal", self.leaderboard_view.total_pages), view=self.leaderboard_view
+            content=self.leaderboard_view.make_content(
+                sorted_data, "normal", self.leaderboard_view.total_pages
+            ),
+            view=self.leaderboard_view,
         )
-

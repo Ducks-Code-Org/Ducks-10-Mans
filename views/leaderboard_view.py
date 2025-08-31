@@ -49,7 +49,14 @@ def truncate_by_display_width(original_string, max_width=15, ellipsis=True):
 
 class LeaderboardView(discord.ui.View):
     def __init__(
-        self, ctx, bot, sorted_data, sort_by, players_per_page=10, timeout=None, mode="normal"
+        self,
+        ctx,
+        bot,
+        sorted_data,
+        sort_by,
+        players_per_page=10,
+        timeout=None,
+        mode="normal",
     ):
         super().__init__(timeout=timeout)
         self.ctx = ctx
@@ -98,7 +105,6 @@ class LeaderboardView(discord.ui.View):
         self.add_item(self.next_button)
         self.add_item(self.toggle_mode_button)
 
-
         print(
             f"[LB] mode={self.mode} items={len(self.sorted_data)} per_page={self.players_per_page} pages={self.total_pages}"
         )
@@ -110,7 +116,7 @@ class LeaderboardView(discord.ui.View):
             "kill_death_ratio": "K/D",
             "wins": "Wins",
             "losses": "Losses",
-            "tdm_mmr": "MMR"
+            "tdm_mmr": "MMR",
         }
 
         if mode == "tdm":
@@ -157,7 +163,15 @@ class LeaderboardView(discord.ui.View):
                 kd_ratio = player_data.get("kill_death_ratio", 0)
 
                 leaderboard_data.append(
-                    [idx + start_index, name, mmr, wins, losses, f"{avg_cs:.2f}", f"{kd_ratio:.2f}"]
+                    [
+                        idx + start_index,
+                        name,
+                        mmr,
+                        wins,
+                        losses,
+                        f"{avg_cs:.2f}",
+                        f"{kd_ratio:.2f}",
+                    ]
                 )
 
         table_output = t2a(
@@ -167,10 +181,12 @@ class LeaderboardView(discord.ui.View):
             style=PresetStyle.thick_compact,
         )
 
-        title = "TDM Leaderboard" if mode == "tdm" else f"10 Mans {sort_by_to_title[self.sort_by]} Leaderboard"
-        content = (
-            f"## {title} (Page {self.current_page+1}/{page_count}) ##\n```\n{table_output}\n```"
+        title = (
+            "TDM Leaderboard"
+            if mode == "tdm"
+            else f"10 Mans {sort_by_to_title[self.sort_by]} Leaderboard"
         )
+        content = f"## {title} (Page {self.current_page+1}/{page_count}) ##\n```\n{table_output}\n```"
 
         return content
 
@@ -202,14 +218,20 @@ class LeaderboardView(discord.ui.View):
         self.current_page = new_view.current_page
 
         # Update message
-        await interaction.response.edit_message(content=self.make_content(sorted_data, new_mode, new_view.total_pages), view=new_view)
+        await interaction.response.edit_message(
+            content=self.make_content(sorted_data, new_mode, new_view.total_pages),
+            view=new_view,
+        )
 
     async def update_message(self, interaction: discord.Interaction):
         # Update button states
         self.previous_button.disabled = self.current_page == 0
         self.next_button.disabled = self.current_page >= self.total_pages - 1
 
-        await interaction.response.edit_message(content=self.make_content(self.sorted_data, self.mode, self.total_pages), view=self)
+        await interaction.response.edit_message(
+            content=self.make_content(self.sorted_data, self.mode, self.total_pages),
+            view=self,
+        )
 
     async def on_previous(self, interaction: discord.Interaction):
         if self.current_page > 0:
