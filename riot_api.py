@@ -85,7 +85,6 @@ async def get_account_by_puuid(
 
 # requests
 def verify_riot_account(name: str, tag: str) -> Tuple[bool, str]:
-
     name = (name or "").strip()
     tag = (tag or "").strip()
 
@@ -113,4 +112,7 @@ def verify_riot_account(name: str, tag: str) -> Tuple[bool, str]:
         )
 
     # fallback
-    return (False, f"Riot API error ({r.status_code}). Try again later.")
+    return (
+        False,
+        f"Riot API error ({r.status_code}). Try again in a few seconds or relink your account with `!linkriot`.",
+    )
