@@ -46,10 +46,8 @@ class HelpCommand(commands.Cog):
         help_embed.add_field(
             name="Leaderboard Commands",
             value=(
-                "**!leaderboard** - View MMR leaderboard\n"
-                # "**!leaderboard_KD** - View K/D leaderboard\n"
-                # "**!leaderboard_wins** - View wins leaderboard\n"
-                # "**!leaderboard_ACS** - View ACS leaderboard\n"
+                "**!leaderboard <type>** - View the leaderboard\n"
+                "↪ _Available types: `mmr` (default), `wins`, `losses`, `kd`, `acs`_\n"
             ),
             inline=False,
         )
