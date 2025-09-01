@@ -38,7 +38,6 @@ class SignupCommand(BotCommands):
 
         # Clear any existing signup view and state
         if self.bot.signup_view is not None:
-            self.bot.signup_view.cancel_signup_refresh()
             self.bot.signup_view = None
 
         # Reset all match related states
