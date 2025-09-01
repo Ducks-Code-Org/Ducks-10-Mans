@@ -27,6 +27,8 @@ class HelpCommand(commands.Cog):
                 "↪ _usage: `!linkriot <Name#Tag>`_\n"
                 "**!interest** - Plan a time to play 10 mans\n"
                 "↪ _usage: `!interest <time>`_\n"
+                "**!leaderboard <type>** - View the leaderboard\n"
+                "↪ _Available types: `mmr` (default), `wins`, `losses`, `kd`, `acs`_\n"
             ),
             inline=False,
         )
@@ -38,18 +40,6 @@ class HelpCommand(commands.Cog):
                 "**!tdm** - Start a 3v3 TDM signup session\n"
                 "**!tdmreport** - Report TDM match results\n"
                 "**!tdmstats** - View TDM-specific stats\n"
-            ),
-            inline=False,
-        )
-
-        # Leaderboard Commands
-        help_embed.add_field(
-            name="Leaderboard Commands",
-            value=(
-                "**!leaderboard** - View MMR leaderboard\n"
-                # "**!leaderboard_KD** - View K/D leaderboard\n"
-                # "**!leaderboard_wins** - View wins leaderboard\n"
-                # "**!leaderboard_ACS** - View ACS leaderboard\n"
             ),
             inline=False,
         )
