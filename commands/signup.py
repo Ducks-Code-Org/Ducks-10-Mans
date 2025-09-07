@@ -1,6 +1,7 @@
 "Starts the signup process for a new match."
 
 import random
+import asyncio
 
 import discord
 from discord.ext import commands
@@ -11,35 +12,37 @@ from identity import ensure_current_riot_identity
 
 
 async def setup(bot):
+    if not hasattr(bot, "signup_lock"):
+        bot.signup_lock = asyncio.Lock()
     await bot.add_cog(SignupCommand(bot))
 
 
 class SignupCommand(BotCommands):
     @commands.command()
     async def signup(self, ctx):
-        if not await ensure_perms(ctx):
-            return
+        async with self.bot.signup_lock:
+            if not await ensure_perms(ctx):
+                return
 
-        if self.bot.signup_active:
-            await ctx.send("A signup is already in progress.")
-            return
+            if self.bot.signup_active:
+                await ctx.send("A signup is already in progress.")
+                return
 
-        if self.bot.match_not_reported:
-            await ctx.send("Report the last match before starting another one.")
-            return
+            if self.bot.match_not_reported:
+                await ctx.send("Report the last match before starting another one.")
+                return
 
-        ok, msg, _db_user = await ensure_current_riot_identity(ctx.author.id)
-        if not ok:
-            await ctx.send(msg)
-            return
+            ok, msg, _db_user = await ensure_current_riot_identity(ctx.author.id)
+            if not ok:
+                await ctx.send(msg)
+                return
 
-        self.bot.load_mmr_data()
-        print("[DEBUG] Reloaded MMR data at start of signup")
+            self.bot.load_mmr_data()
+            print("[DEBUG] Reloaded MMR data at start of signup")
 
-        # Clear any existing signup view and state
-        if self.bot.signup_view is not None:
-            self.bot.signup_view.cancel_signup_refresh()
-            self.bot.signup_view = None
+            # Clear any existing signup view and state
+            if self.bot.signup_view is not None:
+                self.bot.signup_view = None
 
         # Reset all match related states
         self.bot.signup_active = True
