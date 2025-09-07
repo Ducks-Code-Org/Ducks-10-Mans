@@ -184,8 +184,13 @@ class LeaderboardView(View):
             if mode == "tdm"
             else f"10 Mans {sort_by_to_title[self.sort_by]} Leaderboard"
         )
-        content = f"## {title} (Page {self.current_page+1}/{page_count}) ##\n```\n{table_output}\n```"
 
+        if not leaderboard_data:
+            return (
+                f"## {title}\n_Play a match for leaderboard statistics to appear here._"
+            )
+
+        content = f"## {title} (Page {self.current_page+1}/{page_count}) ##\n```\n{table_output}\n```"
         return content
 
     async def on_toggle_mode(self, interaction: discord.Interaction):
