@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 
 from commands import BotCommands
-from database import mmr_collection, users
+from database import mmr_collection
 from views.signup_view import SignupView
 from views.mode_vote_view import ModeVoteView
 from views.captains_drafting_view import CaptainsDraftingView
@@ -85,73 +85,6 @@ class AdminCommands(BotCommands):
 
         mode_vote = ModeVoteView(ctx, self.bot)
         await mode_vote.send_view()
-
-    @commands.command()
-    @commands.has_role("blood")
-    async def setcaptain1(self, ctx, *, riot_name_tag):
-        try:
-            riot_name, riot_tag = riot_name_tag.rsplit("#", 1)
-        except ValueError:
-            await ctx.send("Please provide the Riot ID in the format: `Name#Tag`")
-            return
-
-        # Find the player in the queue with matching Riot name and tag
-        player_in_queue = None
-        for player in self.bot.queue:
-            user_data = users.find_one({"discord_id": str(player["id"])})
-            if user_data:
-                user_riot_name = user_data.get("name", "").lower()
-                user_riot_tag = user_data.get("tag", "").lower()
-                if (
-                    user_riot_name == riot_name.lower()
-                    and user_riot_tag == riot_tag.lower()
-                ):
-                    player_in_queue = player
-                    break
-        if not player_in_queue:
-            await ctx.send(f"{riot_name}#{riot_tag} is not in the queue.")
-            return
-
-        if self.bot.captain2 and player_in_queue["id"] == self.bot.captain2["id"]:
-            await ctx.send(f"{riot_name}#{riot_tag} is already selected as Captain 2.")
-            return
-
-        self.bot.captain1 = player_in_queue
-        await ctx.send(f"Captain 1 set to {riot_name}#{riot_tag}")
-
-    # Set captain2
-    @commands.command()
-    @commands.has_role("blood")
-    async def setcaptain2(self, ctx, *, riot_name_tag):
-        try:
-            riot_name, riot_tag = riot_name_tag.rsplit("#", 1)
-        except ValueError:
-            await ctx.send("Please provide the Riot ID in the format: `Name#Tag`")
-            return
-
-        # Find the player in the queue with matching Riot name and tag
-        player_in_queue = None
-        for player in self.bot.queue:
-            user_data = users.find_one({"discord_id": str(player["id"])})
-            if user_data:
-                user_riot_name = user_data.get("name", "").lower()
-                user_riot_tag = user_data.get("tag", "").lower()
-                if (
-                    user_riot_name == riot_name.lower()
-                    and user_riot_tag == riot_tag.lower()
-                ):
-                    player_in_queue = player
-                    break
-        if not player_in_queue:
-            await ctx.send(f"{riot_name}#{riot_tag} is not in the queue.")
-            return
-
-        if self.bot.captain1 and player_in_queue["id"] == self.bot.captain1["id"]:
-            await ctx.send(f"{riot_name}#{riot_tag} is already selected as Captain 1.")
-            return
-
-        self.bot.captain2 = player_in_queue
-        await ctx.send(f"Captain 2 set to {riot_name}#{riot_tag}")
 
     # Set the bot to development mode
     @commands.command()
