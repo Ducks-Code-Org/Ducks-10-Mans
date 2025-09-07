@@ -76,7 +76,7 @@ class SignupCommand(BotCommands):
             self.bot.signup_view = SignupView(ctx, self.bot)
 
             self.bot.current_signup_message = await self.bot.match_channel.send(
-                "Click a button to manage your queue status!", view=self.bot.signup_view
+                embed=self.bot.signup_view.get_signup_embed(), view=self.bot.signup_view
             )
 
             await ctx.send(f"Queue started! Signup: <#{self.bot.match_channel.id}>")

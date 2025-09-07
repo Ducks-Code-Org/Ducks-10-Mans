@@ -90,27 +90,4 @@ class LinkRiotCommand(BotCommands):
             {"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False
         )
 
-        if self.bot.signup_active and any(
-            p["id"] == discord_id for p in self.bot.queue
-        ):
-            if self.bot.current_signup_message:
-                riot_names = []
-                for player in self.bot.queue:
-                    player_data = users.find_one({"discord_id": player["id"]})
-                    riot_names.append(
-                        f"{player_data.get('name')}#{player_data.get('tag')}"
-                        if player_data
-                        else "Unknown"
-                    )
-                try:
-                    await self.bot.current_signup_message.edit(
-                        content="Click a button to manage your queue status!\n"
-                        + f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}"
-                    )
-                except discord.NotFound:
-                    pass
-            await ctx.send(
-                f"Successfully linked {full_name} to your Discord account and updated your active queue entry."
-            )
-        else:
-            await ctx.send(f"Successfully linked {full_name} to your Discord account.")
+        await ctx.send(f"Successfully linked {full_name} to your Discord account.")
