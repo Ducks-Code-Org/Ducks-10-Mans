@@ -40,7 +40,7 @@ class SignupCommand(BotCommands):
             self.bot.load_mmr_data()
             print("[DEBUG] Reloaded MMR data at start of signup")
 
-            # Clear any existing signup view and state
+            # Clear any existing signup view
             if self.bot.signup_view is not None:
                 self.bot.signup_view = None
 

@@ -37,3 +37,8 @@ This guide will cover everything you need to do to set up the codebase for local
   - This is needed to set the proper environment variables to run the bot, and will have to be run once each session
 - Run ther command `py main.py` to start the bot
 - You can now make changes, and restart the bot to see what they do!
+
+## Getting Production Data
+
+Some development may require useful data to exist within your MongoDB cluster. While we don't currenlty support syncing data from production, you can insert this snapshot (taken 8/30/25) from production of [user](https://drive.google.com/file/d/1oYMcGSHwASfMFnrlqSdTmBlTp6id5Ltq/view?usp=sharing) and [mmr_data](https://drive.google.com/file/d/1H2z6rzdCvfCfiff5Kj6_0WyeEBTJN70-/view?usp=sharing) into your development cluster.
+- There are plenty of guides online on how to do this if you have trouble.
