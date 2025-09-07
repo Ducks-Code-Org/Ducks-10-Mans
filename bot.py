@@ -1,6 +1,7 @@
 """Hold various general functions of the bot."""
 
 from datetime import datetime, timezone
+from calendar import monthrange
 
 import discord
 from discord.ext import commands
@@ -76,7 +77,6 @@ class CustomBot(commands.Bot):
         while m > 12:
             y += 1
             m -= 12
-        from calendar import monthrange
 
         d = min(start_utc.day, monthrange(y, m)[1])
         return datetime(
@@ -503,6 +503,7 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.signup")
         await self.load_extension("commands.stats")
         await self.load_extension("commands.tdm_commands")
+        await self.load_extension("commands.bug")
         print("Bot is ready and cogs are loaded.")
 
     async def purge_old_match_roles(self):
