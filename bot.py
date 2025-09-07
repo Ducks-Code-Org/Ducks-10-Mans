@@ -580,7 +580,7 @@ class CustomBot(commands.Bot):
                         await leaderboard_channel.send(content=error)
                     else:
                         await leaderboard_channel.send(
-                            content=content, view=leaderboard_view
+                            content=content, view=leaderboard_view, silent=True
                         )
                 except Exception as e:
                     print(f"Failed to send leaderboard: {e}")
