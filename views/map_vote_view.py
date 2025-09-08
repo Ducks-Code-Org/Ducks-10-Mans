@@ -176,17 +176,16 @@ class MapVoteView(discord.ui.View):
         if self.bot.chosen_mode == "Balanced":
             await self.finalize_match_setup()
         elif self.bot.chosen_mode == "Captains":
-            # Ensure captains exist
+            # Set Captains
             if not self.bot.captain1 or not self.bot.captain2:
-                sorted_players = sorted(
-                    self.bot.queue,
-                    key=lambda p: self.bot.player_mmr.get(str(p["id"]), {}).get(
-                        "mmr", 1000
-                    ),
-                    reverse=True,
-                )
-                self.bot.captain1 = sorted_players[0]
-                self.bot.captain2 = sorted_players[1]
+                if not self.assign_captains():
+                    await self.ctx.send(
+                        "Error: Not enough players to assign captains. Please start a new queue."
+                    )
+                    self.stop()
+                    self.cancel_interaction_queue_task()
+                    self.cancel_timeout_timer()
+                    return
 
             choice_view = SecondCaptainChoiceView(self.ctx, self.bot)
             await self.ctx.send(
@@ -198,6 +197,45 @@ class MapVoteView(discord.ui.View):
         self.stop()
         self.cancel_interaction_queue_task()
         self.cancel_timeout_timer()
+
+    def assign_captains(self) -> bool:
+        # Assign 2 captains randomly from the top 5 MMR players, with a decreasing bias for lower MMR
+        sorted_players = sorted(
+            self.bot.queue,
+            key=lambda p: self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", 1000),
+            reverse=True,
+        )
+
+        if len(sorted_players) < 2:
+            print(
+                "Not enough players in the queue to assign captains. Stopping queue..."
+            )
+            return False
+        if len(sorted_players) < 5:
+            print("Warning: Less than 5 players detected in queue. Continuing...")
+            self.bot.captain1 = sorted_players[0]
+            self.bot.captain2 = sorted_players[1]
+            return True
+
+        top_five_players = sorted_players[:5]
+        # Weights: [5, 4, 3, 2, 1] for top 5 players. Highest MMR gets highest weight (5), lowest gets lowest (1).
+        # This means the top MMR player is 5x more likely to be chosen than the 5th.
+        weights = [5 - i for i in range(5)]
+        captain1, captain2 = random.choices(top_five_players, weights=weights, k=2)
+        if captain1 == captain2:
+            # If duplicate, pick second captain from remaining
+            remaining_players = [p for p in top_five_players if p != captain1]
+            remaining_weights = [
+                weights[i] for i, p in enumerate(top_five_players) if p != captain1
+            ]
+            captain2 = (
+                random.choices(remaining_players, weights=remaining_weights, k=1)[0]
+                if remaining_players
+                else captain1
+            )
+        self.bot.captain1 = captain1
+        self.bot.captain2 = captain2
+        return True
 
     async def finalize_match_setup(self):
         # Finalize teams after map chosen
