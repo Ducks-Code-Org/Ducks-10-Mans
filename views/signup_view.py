@@ -82,16 +82,13 @@ class SignupView(discord.ui.View):
         # Edit the queue message and button label to reflect the new queue
         self.sign_up_button.label = f"Sign Up ({len(self.bot.queue)}/10)"
         await interaction.message.edit(
-            content=(
-                "Click a button to manage your queue status!\n"
-                f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}"
-            ),
+            embed=self.get_signup_embed(),
             view=self,
         )
 
         # Notify the user that they have left the queue
         await interaction.followup.send(
-            f"{interaction.user.name} left the queue. ({len(self.bot.queue)}/10)",
+            f"{interaction.user.name} left the queue.",
             ephemeral=True,
         )
 
@@ -181,13 +178,11 @@ class SignupView(discord.ui.View):
         # Update the message and the signup button
         self.sign_up_button.label = f"Sign Up ({len(self.bot.queue)}/10)"
         await interaction.message.edit(
-            content="Click a button to manage your queue status!"
-            + "\n"
-            + f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}",
+            embed=self.get_signup_embed(),
             view=self,
         )
         await interaction.followup.send(
-            f"{interaction.user.name} added to the queue! ({len(self.bot.queue)}/10)",
+            f"{interaction.user.name} added to the queue!",
             ephemeral=True,
         )
 
@@ -235,24 +230,21 @@ class SignupView(discord.ui.View):
                 if self.bot.current_signup_message:
                     try:
                         await self.bot.current_signup_message.edit(
-                            content=(
-                                "Click a button to manage your queue status!\n"
-                                f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}"
-                            ),
+                            embed=self.get_signup_embed(),
                             view=self,
                         )
                     except discord.NotFound:
                         # Message deleted, recreate it
-                        self.bot.current_signup_message = await self.bot.match_channel.send(
-                            "Click a button to manage your queue status!\n"
-                            f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}",
-                            view=self,
-                            silent=True,
+                        self.bot.current_signup_message = (
+                            await self.bot.match_channel.send(
+                                embed=self.get_signup_embed(),
+                                view=self,
+                                silent=True,
+                            )
                         )
                 else:
                     self.bot.current_signup_message = await self.bot.match_channel.send(
-                        "Click a button to manage your queue status!\n"
-                        f"Current queue ({len(self.bot.queue)}/10): {', '.join(riot_names)}",
+                        embed=self.get_signup_embed(),
                         view=self,
                         silent=True,
                     )
@@ -260,6 +252,37 @@ class SignupView(discord.ui.View):
                 await asyncio.sleep(60)
         except asyncio.CancelledError:
             pass
+
+    def get_signup_embed(self) -> discord.Embed:
+        # Construct a signup embed, listing players, in order of signup as <discord_name>(<Riot_id>)
+
+        def get_user_data(player) -> tuple[str, str, str]:
+            user_data = users.find_one({"discord_id": str(player["id"])})
+            member = self.ctx.guild.get_member(int(player["id"]))
+            display_name = member.display_name if member else "Unknown"
+            riot_name = user_data.get("name", "Unknown") if user_data else "Unknown"
+            riot_tag = user_data.get("tag", "Unknown") if user_data else "Unknown"
+
+            return display_name, riot_name, riot_tag
+
+        player_embed_lines = []
+        for player in self.bot.queue:
+            display_name, riot_name, riot_tag = get_user_data(player)
+            player_embed_lines.append(f"{display_name} (`{riot_name}#{riot_tag}`)")
+
+        embed = discord.Embed(
+            title="Signup Queue",
+            description="Click a button to manage your queue status!",
+            color=discord.Color.yellow(),
+        )
+        if len(self.bot.queue):
+            embed.add_field(
+                name="Players:",
+                value="\n".join(player_embed_lines),
+                inline=False,
+            )
+        embed.set_footer(text=f"Total: {len(self.bot.queue)}/10")
+        return embed
 
     def cancel_refresh_signup_task(self):
         if self.refresh_signup_task:

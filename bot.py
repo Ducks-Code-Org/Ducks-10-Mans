@@ -1,11 +1,13 @@
 """Hold various general functions of the bot."""
 
 from datetime import datetime, timezone
+from calendar import monthrange
 
 import discord
 from discord.ext import commands
 
 from views.signup_view import SignupView
+from commands.leaderboard import LeaderboardCommand
 from database import mmr_collection, users, tdm_mmr_collection, seasons
 from globals import TIME_ZONE_CST
 
@@ -75,7 +77,6 @@ class CustomBot(commands.Bot):
         while m > 12:
             y += 1
             m -= 12
-        from calendar import monthrange
 
         d = min(start_utc.day, monthrange(y, m)[1])
         return datetime(
@@ -496,12 +497,13 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.admin_commands")
         await self.load_extension("commands.help")
         await self.load_extension("commands.interest")
-        await self.load_extension("commands.leaderboard_commands")
+        await self.load_extension("commands.leaderboard")
         await self.load_extension("commands.linkriot")
         await self.load_extension("commands.report")
         await self.load_extension("commands.signup")
         await self.load_extension("commands.stats")
         await self.load_extension("commands.tdm_commands")
+        await self.load_extension("commands.bug")
         print("Bot is ready and cogs are loaded.")
 
     async def purge_old_match_roles(self):
@@ -550,7 +552,42 @@ class CustomBot(commands.Bot):
         if not old_channels:
             print("No old channels found.")
 
+    async def send_new_leaderboard(self):
+        # If there is a channel named #leaderboard in any guild, send a new leaderboard
+        # Leaderboard matches the response from the `!leaderboard` command
+        print("Sending new leaderboard to all #leaderboard channels...")
+
+        for guild in self.guilds:
+            leaderboard_channel = discord.utils.get(
+                guild.text_channels, name="leaderboard"
+            )
+            if leaderboard_channel:
+                try:
+                    # Delete old messages containing 'leaderboard' in the channel
+                    async for message in leaderboard_channel.history(limit=100):
+                        if (
+                            message.author == self.user
+                            and "leaderboard" in message.content.lower()
+                        ) or "!leaderboard" in message.content.lower():
+                            try:
+                                await message.delete()
+                            except Exception:
+                                pass
+
+                    leaderboard_view, content, error = (
+                        LeaderboardCommand.generate_leaderboard(self, None, "mmr")
+                    )
+                    if error:
+                        await leaderboard_channel.send(content=error)
+                    else:
+                        await leaderboard_channel.send(
+                            content=content, view=leaderboard_view, silent=True
+                        )
+                except Exception as e:
+                    print(f"Failed to send leaderboard: {e}")
+
     async def on_ready(self):
         print(f"Bot connected as {self.user}.")
         await self.purge_old_match_roles()
         await self.purge_old_match_channels()
+        await self.send_new_leaderboard()
