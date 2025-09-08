@@ -235,6 +235,7 @@ class MapVoteView(discord.ui.View):
             )
         self.bot.captain1 = captain1
         self.bot.captain2 = captain2
+        return True
 
     async def finalize_match_setup(self):
         # Finalize teams after map chosen
