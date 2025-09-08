@@ -23,6 +23,9 @@ async def setup(bot):
 class ReportCommand(BotCommands):
     @commands.command()
     async def report(self, ctx):
+        # ADD THIS IMMEDIATE RESPONSE - This is the fix for issue #119
+        await ctx.send("🔄 Processing match report... Please wait while I fetch the match data.")
+        
         # linkage check
         current_user = users.find_one({"discord_id": str(ctx.author.id)})
         if not current_user:
