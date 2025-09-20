@@ -20,6 +20,96 @@ async def setup(bot):
     await bot.add_cog(ReportCommand(bot))
 
 
+async def cleanup_match_resources(bot):
+    await bot.wait_until_ready()
+    try:
+        if hasattr(bot, "match_channel") and bot.match_channel:
+            try:
+                await bot.match_channel.delete()
+            except discord.NotFound:
+                print("[DEBUG] Match channel already deleted")
+            except discord.Forbidden:
+                print("[DEBUG] Missing permissions to delete match channel")
+            finally:
+                bot.match_channel = None
+
+        if hasattr(bot, "match_role") and bot.match_role:
+
+            try:
+                for member in bot.match_role.members:
+                    await member.remove_roles(bot.match_role)
+            except discord.HTTPException:
+                print("[DEBUG] Error removing roles from members")
+
+            # delete the role
+            try:
+                await bot.match_role.delete()
+            except discord.NotFound:
+                print("[DEBUG] Match role already deleted")
+            except discord.Forbidden:
+                print("[DEBUG] Missing permissions to delete match role")
+            finally:
+                bot.match_role = None
+
+        bot.match_not_reported = False
+        bot.match_ongoing = False
+        bot.queue.clear()
+
+        if bot.current_signup_message:
+            try:
+                await bot.current_signup_message.delete()
+            except discord.NotFound:
+                pass
+            finally:
+                bot.current_signup_message = None
+
+    except Exception as e:
+        print(f"[DEBUG] Error during cleanup: {str(e)}")
+        try:
+            if hasattr(bot, "match_channel") and bot.match_channel:
+                try:
+                    await bot.match_channel.delete()
+                except discord.NotFound:
+                    print("[DEBUG] Match channel already deleted")
+                except discord.Forbidden:
+                    print("[DEBUG] Missing permissions to delete match channel")
+                finally:
+                    bot.match_channel = None
+
+            if hasattr(bot, "match_role") and bot.match_role:
+
+                try:
+                    for member in bot.match_role.members:
+                        await member.remove_roles(bot.match_role)
+                except discord.HTTPException:
+                    print("[DEBUG] Error removing roles from members")
+
+                # delete the role
+                try:
+                    await bot.match_role.delete()
+                except discord.NotFound:
+                    print("[DEBUG] Match role already deleted")
+                except discord.Forbidden:
+                    print("[DEBUG] Missing permissions to delete match role")
+                finally:
+                    bot.match_role = None
+
+            bot.match_not_reported = False
+            bot.match_ongoing = False
+            bot.queue.clear()
+
+            if bot.current_signup_message:
+                try:
+                    await bot.current_signup_message.delete()
+                except discord.NotFound:
+                    pass
+                finally:
+                    bot.current_signup_message = None
+
+        except Exception as e:
+            print(f"[DEBUG] Error during cleanup: {str(e)}")
+
+
 class ReportCommand(BotCommands):
     @commands.command()
     async def report(self, ctx):
@@ -501,96 +591,7 @@ class ReportCommand(BotCommands):
         await asyncio.sleep(5)
         self.bot.match_not_reported = False
         self.bot.match_ongoing = False
-        await self.cleanup_match_resources()
-
-    async def cleanup_match_resources(self):
-        await self.bot.wait_until_ready()
-        try:
-            if hasattr(self.bot, "match_channel") and self.bot.match_channel:
-                try:
-                    await self.bot.match_channel.delete()
-                except discord.NotFound:
-                    print("[DEBUG] Match channel already deleted")
-                except discord.Forbidden:
-                    print("[DEBUG] Missing permissions to delete match channel")
-                finally:
-                    self.bot.match_channel = None
-
-            if hasattr(self.bot, "match_role") and self.bot.match_role:
-
-                try:
-                    for member in self.bot.match_role.members:
-                        await member.remove_roles(self.bot.match_role)
-                except discord.HTTPException:
-                    print("[DEBUG] Error removing roles from members")
-
-                # delete the role
-                try:
-                    await self.bot.match_role.delete()
-                except discord.NotFound:
-                    print("[DEBUG] Match role already deleted")
-                except discord.Forbidden:
-                    print("[DEBUG] Missing permissions to delete match role")
-                finally:
-                    self.bot.match_role = None
-
-            self.bot.match_not_reported = False
-            self.bot.match_ongoing = False
-            self.bot.queue.clear()
-
-            if self.bot.current_signup_message:
-                try:
-                    await self.bot.current_signup_message.delete()
-                except discord.NotFound:
-                    pass
-                finally:
-                    self.bot.current_signup_message = None
-
-        except Exception as e:
-            print(f"[DEBUG] Error during cleanup: {str(e)}")
-            try:
-                if hasattr(self.bot, "match_channel") and self.bot.match_channel:
-                    try:
-                        await self.bot.match_channel.delete()
-                    except discord.NotFound:
-                        print("[DEBUG] Match channel already deleted")
-                    except discord.Forbidden:
-                        print("[DEBUG] Missing permissions to delete match channel")
-                    finally:
-                        self.bot.match_channel = None
-
-                if hasattr(self.bot, "match_role") and self.bot.match_role:
-
-                    try:
-                        for member in self.bot.match_role.members:
-                            await member.remove_roles(self.bot.match_role)
-                    except discord.HTTPException:
-                        print("[DEBUG] Error removing roles from members")
-
-                    # delete the role
-                    try:
-                        await self.bot.match_role.delete()
-                    except discord.NotFound:
-                        print("[DEBUG] Match role already deleted")
-                    except discord.Forbidden:
-                        print("[DEBUG] Missing permissions to delete match role")
-                    finally:
-                        self.bot.match_role = None
-
-                self.bot.match_not_reported = False
-                self.bot.match_ongoing = False
-                self.bot.queue.clear()
-
-                if self.bot.current_signup_message:
-                    try:
-                        await self.bot.current_signup_message.delete()
-                    except discord.NotFound:
-                        pass
-                    finally:
-                        self.bot.current_signup_message = None
-
-            except Exception as e:
-                print(f"[DEBUG] Error during cleanup: {str(e)}")
+        await cleanup_match_resources(self.bot)
 
 
 def rounds_to_int(value):
