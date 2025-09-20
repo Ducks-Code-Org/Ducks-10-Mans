@@ -4,6 +4,7 @@ import discord
 from discord.ext import commands
 
 from commands import BotCommands
+from commands.report import cleanup_match_resources
 from database import mmr_collection
 from views.signup_view import SignupView
 from views.mode_vote_view import ModeVoteView
@@ -112,30 +113,40 @@ class AdminCommands(BotCommands):
             except discord.HTTPException:
                 pass
 
-    # Stop the signup process
+    # Stop the signup process or cancel an active match
     @commands.command()
     @commands.has_role("Owner")
     async def cancel(self, ctx):
-        if not self.bot.signup_active:
-            await ctx.send("No signup is active to cancel")
-            return
+        if self.bot.signup_active:
+            if self.bot.signup_view:
+                self.bot.signup_view.cleanup()
+                self.bot.signup_view = None
 
-        if self.bot.signup_view:
-            self.bot.signup_view.cleanup()
-            self.bot.signup_view = None
+            self.bot.queue = []
+            self.bot.current_signup_message = None
+            self.bot.signup_active = False
 
-        self.bot.queue = []
-        self.bot.current_signup_message = None
-        self.bot.signup_active = False
+            await ctx.send(
+                "Canceled active signup. Feel free to start a new one with `!signup`."
+            )
+            print("Cancelling signup...")
 
-        await ctx.send("Canceled Signup")
-        print("Cancelling signup...")
-
-        try:
-            await self.bot.match_channel.delete()
-            await self.bot.match_role.delete()
-        except discord.NotFound:
-            pass
+            try:
+                await self.bot.match_channel.delete()
+                await self.bot.match_role.delete()
+            except discord.NotFound:
+                pass
+        elif self.bot.match_ongoing and self.bot.selected_map:
+            # Logic to cancel the current match and clear info from memory
+            self.bot.match_not_reported = False
+            self.bot.match_ongoing = False
+            await cleanup_match_resources(self.bot)
+            await ctx.send(
+                "Cancelled active match. Feel free to start a new one with `!signup`."
+            )
+            print("Cancelling active match...")
+        else:
+            await ctx.send("No active signup or match to cancel.")
 
     @commands.command()
     @commands.has_role("Owner")
