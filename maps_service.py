@@ -28,8 +28,24 @@ def get_standard_maps() -> list[str]:
                 standard_header = h3
                 break
     if not standard_header:
-        print("Standard maps table not found.")
-        return []
+        print(
+            "Warning: Standard maps table not found. Using a potentially outdated map list."
+        )
+        # Fall back to a hard-coded list that may be outdated
+        return [
+            "Abyss",
+            "Ascent",
+            "Bind",
+            "Breeze",
+            "Corrode",
+            "Fracture",
+            "Haven",
+            "Icebox",
+            "Lotus",
+            "Pearl",
+            "Split",
+            "Sunset",
+        ]
     # The table is after the header
     table = standard_header.find_next("table")
     maps = []
@@ -69,8 +85,10 @@ def get_competitive_maps() -> list[str]:
         print(ids)
         return ids
     else:
-        print("Current rotation table not found.")
-        return []
+        print(
+            "Warning: Current rotation table not found. Useing a potentially outdated map list."
+        )
+        return ["Abyss", "Ascent", "Bind", "Corrode", "Haven", "Lotus", "Sunset"]
 
 
 def get_tdm_maps() -> list[str]:
