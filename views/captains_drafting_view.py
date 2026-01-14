@@ -149,6 +149,9 @@ class CaptainsDraftingView(discord.ui.View):
         self.pick_count = 0
         self.draft_finished = False
 
+        self.draft_time_remaining = 120
+        self.draft_timer_task = None
+
         self.remaining_players_message = None
         self.drafting_message = None
         self.captain_pick_message = None
@@ -213,6 +216,10 @@ class CaptainsDraftingView(discord.ui.View):
         if self.draft_finished:
             return
         self.draft_finished = True
+
+        if self.draft_timer_task:
+            self.draft_timer_task.cancel()
+            self.draft_timer_task = None
 
         try:
             self.player_select.disabled = True
@@ -340,6 +347,11 @@ class CaptainsDraftingView(discord.ui.View):
         except ValueError:
             pass
 
+        self.draft_time_remaining = 120
+        if self.draft_timer_task:
+            self.draft_timer_task.cancel()
+            self.draft_timer_task = None
+
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
@@ -350,6 +362,37 @@ class CaptainsDraftingView(discord.ui.View):
             await self.finalize_draft()
             return
         await self.send_current_draft_view()
+
+    def start_draft_timer(self):
+        if self.draft_timer_task:
+            self.draft_timer_task.cancel()
+        self.draft_timer_task = asyncio.create_task(self.draft_timeout_timer())
+
+    async def draft_timeout_timer(self):
+        for _ in range(120):
+            await asyncio.sleep(1)
+            if self.draft_finished:
+                return
+            self.draft_time_remaining -= 1
+            if self.captain_pick_message:
+                current_captain_id = self.pick_order[self.pick_count]["id"]
+                ud = users.find_one({"discord_id": str(current_captain_id)})
+                if ud:
+                    curr_captain_name = (
+                        f"{ud.get('name','Unknown')}#{ud.get('tag','Unknown')}"
+                    )
+                else:
+                    c = (
+                        self.bot.captain1
+                        if self.bot.captain1["id"] == current_captain_id
+                        else self.bot.captain2
+                    )
+                    curr_captain_name = c["name"]
+                message = f"**{curr_captain_name}**, pick a player: ({self.draft_time_remaining}s)"
+                try:
+                    await self.captain_pick_message.edit(content=message, view=self)
+                except discord.NotFound:
+                    pass
 
     async def send_current_draft_view(self):
         if self.draft_finished:
@@ -443,7 +486,9 @@ class CaptainsDraftingView(discord.ui.View):
             )
             curr_captain_name = c["name"]
 
-        message = f"**{curr_captain_name}**, pick a player:"
+        message = (
+            f"**{curr_captain_name}**, pick a player: ({self.draft_time_remaining}s)"
+        )
 
         if (
             self.captain_pick_message
@@ -468,6 +513,8 @@ class CaptainsDraftingView(discord.ui.View):
             )
             self.drafting_message = await self.ctx.send(embed=drafting_embed)
             self.captain_pick_message = await self.ctx.send(content=message, view=self)
+
+        self.start_draft_timer()
 
         if not self.draft_finished:
             # If only one player left, auto-assign and finalize
@@ -527,3 +574,7 @@ class CaptainsDraftingView(discord.ui.View):
                         self.stop()
                     except Exception:
                         pass
+
+                    if self.draft_timer_task:
+                        self.draft_timer_task.cancel()
+                        self.draft_timer_task = None
