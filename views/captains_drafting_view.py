@@ -95,8 +95,8 @@ class SecondCaptainChoiceView(discord.ui.View):
             await asyncio.sleep(1)
             self.decision_time_remaining -= 1
             if self.view_message:
-                self.view_message = await self.ctx.send(
-                    f"<@{self.bot.captain2['id']}>, choose draft type: ({self.decision_time_remaining}s)",
+                await self.view_message.edit(
+                    content=f"<@{self.bot.captain2['id']}>, choose draft type: ({self.decision_time_remaining}s)",
                     view=self,
                 )
         # Cancel Signup

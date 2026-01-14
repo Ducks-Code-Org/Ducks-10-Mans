@@ -191,7 +191,7 @@ class MapVoteView(discord.ui.View):
                     return
 
             choice_view = SecondCaptainChoiceView(self.ctx, self.bot)
-            choice_view.send_view()
+            await choice_view.send_view()
         else:
             await self.ctx.send("Error: No game mode selected!")
 
@@ -290,7 +290,7 @@ class MapVoteView(discord.ui.View):
             self.vote_time_remaining -= 1
             if self.view_message:
                 await self.view_message.edit(
-                    content=f"Vote for the map to play ({self.vote_time_remaining}s):",
+                    content=f"Vote for the map to play: ({self.vote_time_remaining}s)",
                     view=self,
                 )
         if not self.voting_phase_ended:
