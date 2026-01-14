@@ -595,6 +595,11 @@ class ReportCommand(BotCommands):
         self.bot.match_ongoing = False
         await cleanup_match_resources(self.bot)
 
+        # Increment Current Season Match Count
+        seasons.update_one(
+            {"_id": "current"}, {"$inc": {"matches_played": 1}}, upsert=True
+        )
+
 
 def rounds_to_int(value):
     if isinstance(value, dict):
