@@ -189,13 +189,9 @@ class MapVoteView(discord.ui.View):
                     self.cancel_interaction_queue_task()
                     self.cancel_timeout_timer()
                     return
-            await self.ctx.send(
-                f"Captains Chosen: <@{self.bot.captain1['id']}> and <@{self.bot.captain2['id']}>"
-            )
+
             choice_view = SecondCaptainChoiceView(self.ctx, self.bot)
-            await self.ctx.send(
-                f"<@{self.bot.captain2['id']}>, choose draft type:", view=choice_view
-            )
+            choice_view.send_view()
         else:
             await self.ctx.send("Error: No game mode selected!")
 
