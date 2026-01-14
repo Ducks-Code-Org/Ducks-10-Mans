@@ -20,7 +20,7 @@ class AdminCommands(BotCommands):
     @commands.has_permissions(administrator=True)
     async def new_season(self, ctx, *, no_reset: str = None):
         """
-        Creates a new season that ends exactly 2 calendar months from now (UTC).
+        Creates a new season, saving seasons stats, and assigning SSR rank.
         By default, resets everyone’s MMR + stats. If you pass 'noreset', it will keep stats.
         Usage: !newseason    (resets)
             !newseason noreset
@@ -29,18 +29,25 @@ class AdminCommands(BotCommands):
         if no_reset and no_reset.lower() in {"noreset", "keep", "false", "0"}:
             reset = False
 
-        doc = self.bot.create_new_season(reset_player_stats=reset)
+        # Determine winner info
+        winner_doc = mmr_collection.find_one(
+            {"matches_played": {"$gt": 0}}, sort=[("mmr", -1)]
+        )
 
-        start_cst = doc["started_at_cst"]
-        end_cst = doc["ends_at_cst"]
+        doc = self.bot.create_new_season(reset_player_stats=reset, winner=winner_doc)
 
-        start_str = start_cst.strftime("%Y-%m-%d %I:%M %p %Z")
-        end_str = end_cst.strftime("%Y-%m-%d %I:%M %p %Z")
+        # Assign SSR Rank to winner
+        ssr_role = await ctx.guild.create_role(
+            name=f"Season {doc['season_number'] - 1}", hoist=True
+        )
+        await ctx.guild.edit_role_positions(positions={ssr_role: 5})
+        await ssr_role.edit(color="#1cd3d8")
+        winner_member = ctx.guild.get_member(winner_doc["player_id"])
+        await winner_member.add_roles(ssr_role)
 
         await ctx.send(
-            f"**Season {doc['season_number']}** created.\n"
-            f"Starts (Central): `{start_str}`\n"
-            f"Ends (Central):   `{end_str}`\n"
+            f"**Season {doc['season_number']}** started.\n"
+            f"<@{winner_doc['player_id']}> has been awarded the **Season {doc['season_number'] - 1} SSR** role!\n"
             f"{'All player MMR + stats were reset.' if reset else 'Player stats were preserved (no reset).'}"
         )
 
