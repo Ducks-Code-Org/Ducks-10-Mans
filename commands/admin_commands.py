@@ -82,7 +82,7 @@ class AdminCommands(BotCommands):
             f"Simulated full queue: {', '.join([player['name'] for player in queue])}"
         )
 
-        await ctx.send("The queue is now full, proceeding to the voting stage.")
+        await ctx.send("The queue is now full! Proceeding with match setup...")
 
         mode_vote = ModeVoteView(ctx, self.bot)
         await mode_vote.send_view()

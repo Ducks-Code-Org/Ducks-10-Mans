@@ -34,6 +34,7 @@ class MapVoteView(discord.ui.View):
         self.view_message = None
         self.voting_phase_ended = False
         self.vote_lock = asyncio.Lock()
+        self.vote_time_remaining = 25
 
         print("Starting new map vote...")
 
@@ -73,7 +74,9 @@ class MapVoteView(discord.ui.View):
         for button in self.map_buttons:
             self.add_item(button)
 
-        self.view_message = await self.ctx.send("Vote for the map to play:", view=self)
+        self.view_message = await self.ctx.send(
+            f"Vote for the map to play: ({self.vote_time_remaining}s)", view=self
+        )
 
     async def process_interaction_queue(self):
         while True:
@@ -170,7 +173,7 @@ class MapVoteView(discord.ui.View):
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
-        await self.view_message.edit(view=self)
+        await self.view_message.edit(content="Vote for the map to play:", view=self)
 
         # Finalize match setup
         if self.bot.chosen_mode == "Balanced":
@@ -186,7 +189,9 @@ class MapVoteView(discord.ui.View):
                     self.cancel_interaction_queue_task()
                     self.cancel_timeout_timer()
                     return
-
+            await self.ctx.send(
+                f"Captains Chosen: <@{self.bot.captain1['id']}> and <@{self.bot.captain2['id']}>"
+            )
             choice_view = SecondCaptainChoiceView(self.ctx, self.bot)
             await self.ctx.send(
                 f"<@{self.bot.captain2['id']}>, choose draft type:", view=choice_view
@@ -282,7 +287,16 @@ class MapVoteView(discord.ui.View):
         await self.bot.match_channel.edit(name=f"{self.bot.match_name}《in-game》")
 
     async def timeout_timer(self):
-        await asyncio.sleep(25)
+        for _ in range(25):
+            await asyncio.sleep(1)
+            if self.voting_phase_ended:
+                return
+            self.vote_time_remaining -= 1
+            if self.view_message:
+                await self.view_message.edit(
+                    content=f"Vote for the map to play ({self.vote_time_remaining}s):",
+                    view=self,
+                )
         if not self.voting_phase_ended:
             self.timeout = True
             await self.check_for_winner()
