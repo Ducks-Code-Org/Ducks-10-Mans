@@ -41,15 +41,26 @@ class AdminCommands(BotCommands):
             name=f"Season {doc['season_number'] - 1}", hoist=True
         )
         await ctx.guild.edit_role_positions(positions={ssr_role: 5})
-        await ssr_role.edit(color="#1cd3d8")
-        winner_member = ctx.guild.get_member(winner_doc["player_id"])
+        await ssr_role.edit(color=discord.Color.teal())
+        winner_member = ctx.guild.get_member(int(winner_doc["player_id"]))
         await winner_member.add_roles(ssr_role)
 
-        await ctx.send(
-            f"**Season {doc['season_number']}** started.\n"
+        # Try to send to 'announcements' channel if it exists
+        announcement_channel = None
+        if ctx.guild:
+            for channel in ctx.guild.text_channels:
+                if channel.name.lower() == "announcements":
+                    announcement_channel = channel
+                    break
+        message = (
+            f"**<@1311935865626431529> Season {doc['season_number']}** started.\n"
             f"<@{winner_doc['player_id']}> has been awarded the **Season {doc['season_number'] - 1} SSR** role!\n"
             f"{'All player MMR + stats were reset.' if reset else 'Player stats were preserved (no reset).'}"
         )
+        if announcement_channel:
+            await announcement_channel.send(message)
+        else:
+            await ctx.send(message)
 
     @commands.command()
     @commands.has_role("Owner")

@@ -213,7 +213,7 @@ class ModeVoteView(discord.ui.View):
             self.vote_time_remaining -= 1
             if self.view_message:
                 await self.view_message.edit(
-                    content=f"Vote how teams should be chosen ({self.vote_time_remaining}s):",
+                    content=f"Vote how teams should be chosen: ({self.vote_time_remaining}s)",
                     view=self,
                 )
         if not self.voting_phase_ended:

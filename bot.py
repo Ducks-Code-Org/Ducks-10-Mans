@@ -98,27 +98,22 @@ class CustomBot(commands.Bot):
         current_num = int(current.get("season_number", 0))
         next_num = current_num + 1
 
-        # Update Current Season
-        seasons.update_one(
-            {"_id": "current"},
-            {
-                "$set": {
-                    "_id": current_num,
-                    "matches_played": current.get("matches_played"),
-                    "season_number": current_num,
-                    "winner_mmr": winner.get("mmr"),
-                    "winner_name": winner.get("name"),
-                    "winner_player_id": winner.get("player_id"),
-                    "started_at": current.get("started_at"),
-                    "ended_at": datetime.now(timezone.utc),
-                },
-            },
-            upsert=True,
-        )
+        # Save Old Season
+        old_season_obj = {
+            "_id": current_num,
+            "matches_played": current.get("matches_played"),
+            "season_number": current_num,
+            "winner_mmr": winner.get("mmr"),
+            "winner_name": winner.get("name"),
+            "winner_player_id": winner.get("player_id"),
+            "started_at": current.get("started_at"),
+            "ended_at": datetime.now(timezone.utc),
+        }
+        seasons.insert_one(old_season_obj)
 
         # Create New Season
+
         new_season_obj = {
-            "_id": "current",
             "matches_played": 0,
             "season_number": next_num,
             "winner_mmr": None,
@@ -127,7 +122,12 @@ class CustomBot(commands.Bot):
             "started_at": datetime.now(timezone.utc),
             "ended_at": None,
         }
-        seasons.insert_one(new_season_obj)
+
+        seasons.update_one(
+            {"_id": "current"},
+            {"$set": new_season_obj},
+            upsert=True,
+        )
 
         if reset_player_stats:
             self._reset_all_players_for_new_season(next_num)
