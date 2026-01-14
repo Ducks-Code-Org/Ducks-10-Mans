@@ -113,6 +113,8 @@ async def cleanup_match_resources(bot):
 class ReportCommand(BotCommands):
     @commands.command()
     async def report(self, ctx):
+        await ctx.send("Attempting to report latest match...")
+
         # linkage check
         current_user = users.find_one({"discord_id": str(ctx.author.id)})
         if not current_user:
