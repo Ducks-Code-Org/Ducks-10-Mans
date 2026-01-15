@@ -38,7 +38,7 @@ class AdminCommands(BotCommands):
 
         # Assign SSR Rank to winner
         ssr_role = await ctx.guild.create_role(
-            name=f"Season {doc['season_number'] - 1}", hoist=True
+            name=f"Season {doc['season_number'] - 1} SSR", hoist=True
         )
         await ctx.guild.edit_role_positions(positions={ssr_role: 5})
         await ssr_role.edit(color=discord.Color.teal())
