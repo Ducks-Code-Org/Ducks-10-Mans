@@ -158,6 +158,7 @@ class SignupView(discord.ui.View):
         # Send message to original channel
         try:
             await self.ctx.send(f"Signup cancelled: {reason}")
+            print(f"Signup cancelled: {reason}")
         except:
             pass  # In case channel is deleted or something
 

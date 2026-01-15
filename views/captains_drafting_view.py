@@ -112,6 +112,27 @@ class SecondCaptainChoiceView(discord.ui.View):
         self.bot.chosen_mode = None
         self.bot.selected_map = None
 
+        try:
+            if getattr(self.bot, "match_channel", None):
+                await self.bot.match_channel.delete()
+        except discord.NotFound:
+            pass
+        finally:
+            self.bot.match_channel = None
+
+        try:
+            if getattr(self.bot, "match_role", None):
+                await self.bot.match_role.delete()
+        except discord.NotFound:
+            pass
+        finally:
+            self.bot.match_role = None
+
+        try:
+            self.stop()
+        except Exception:
+            pass
+
     def cancel_timeout_timer(self):
         if self.timeout_timer_task:
             self.timeout_timer_task.cancel()
