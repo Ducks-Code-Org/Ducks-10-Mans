@@ -43,12 +43,13 @@ class ModeVoteView(discord.ui.View):
         self.timeout = False
         self.view_message = None
         self.vote_lock = asyncio.Lock()
+        self.vote_time_remaining = 25
 
         print("Starting new mode vote...")
 
     async def send_view(self):
         self.view_message = await self.ctx.send(
-            "Vote how teams should be chosen:", view=self
+            f"Vote how teams should be chosen: ({self.vote_time_remaining}s)", view=self
         )
 
     async def vote_callback(self, interaction: discord.Interaction, mode: str):
@@ -169,7 +170,9 @@ class ModeVoteView(discord.ui.View):
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
-        await self.view_message.edit(view=self)
+        await self.view_message.edit(
+            content="Vote how teams should be chosen:", view=self
+        )
 
         map_type_vote = MapTypeVoteView(self.ctx, self.bot)
         await map_type_vote.send_view()
@@ -203,7 +206,16 @@ class ModeVoteView(discord.ui.View):
         self.bot.team2 = team2
 
     async def timeout_timer(self):
-        await asyncio.sleep(25)
+        for _ in range(25):
+            await asyncio.sleep(1)
+            if self.voting_phase_ended:
+                return
+            self.vote_time_remaining -= 1
+            if self.view_message:
+                await self.view_message.edit(
+                    content=f"Vote how teams should be chosen: ({self.vote_time_remaining}s)",
+                    view=self,
+                )
         if not self.voting_phase_ended:
             self.timeout = True
             await self.check_for_winner()

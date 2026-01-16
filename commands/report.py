@@ -20,9 +20,101 @@ async def setup(bot):
     await bot.add_cog(ReportCommand(bot))
 
 
+async def cleanup_match_resources(bot):
+    await bot.wait_until_ready()
+    try:
+        if hasattr(bot, "match_channel") and bot.match_channel:
+            try:
+                await bot.match_channel.delete()
+            except discord.NotFound:
+                print("[DEBUG] Match channel already deleted")
+            except discord.Forbidden:
+                print("[DEBUG] Missing permissions to delete match channel")
+            finally:
+                bot.match_channel = None
+
+        if hasattr(bot, "match_role") and bot.match_role:
+
+            try:
+                for member in bot.match_role.members:
+                    await member.remove_roles(bot.match_role)
+            except discord.HTTPException:
+                print("[DEBUG] Error removing roles from members")
+
+            # delete the role
+            try:
+                await bot.match_role.delete()
+            except discord.NotFound:
+                print("[DEBUG] Match role already deleted")
+            except discord.Forbidden:
+                print("[DEBUG] Missing permissions to delete match role")
+            finally:
+                bot.match_role = None
+
+        bot.match_not_reported = False
+        bot.match_ongoing = False
+        bot.queue.clear()
+
+        if bot.current_signup_message:
+            try:
+                await bot.current_signup_message.delete()
+            except discord.NotFound:
+                pass
+            finally:
+                bot.current_signup_message = None
+
+    except Exception as e:
+        print(f"[DEBUG] Error during cleanup: {str(e)}")
+        try:
+            if hasattr(bot, "match_channel") and bot.match_channel:
+                try:
+                    await bot.match_channel.delete()
+                except discord.NotFound:
+                    print("[DEBUG] Match channel already deleted")
+                except discord.Forbidden:
+                    print("[DEBUG] Missing permissions to delete match channel")
+                finally:
+                    bot.match_channel = None
+
+            if hasattr(bot, "match_role") and bot.match_role:
+
+                try:
+                    for member in bot.match_role.members:
+                        await member.remove_roles(bot.match_role)
+                except discord.HTTPException:
+                    print("[DEBUG] Error removing roles from members")
+
+                # delete the role
+                try:
+                    await bot.match_role.delete()
+                except discord.NotFound:
+                    print("[DEBUG] Match role already deleted")
+                except discord.Forbidden:
+                    print("[DEBUG] Missing permissions to delete match role")
+                finally:
+                    bot.match_role = None
+
+            bot.match_not_reported = False
+            bot.match_ongoing = False
+            bot.queue.clear()
+
+            if bot.current_signup_message:
+                try:
+                    await bot.current_signup_message.delete()
+                except discord.NotFound:
+                    pass
+                finally:
+                    bot.current_signup_message = None
+
+        except Exception as e:
+            print(f"[DEBUG] Error during cleanup: {str(e)}")
+
+
 class ReportCommand(BotCommands):
     @commands.command()
     async def report(self, ctx):
+        await ctx.send("Attempting to report latest match...")
+
         # linkage check
         current_user = users.find_one({"discord_id": str(ctx.author.id)})
         if not current_user:
@@ -477,120 +569,15 @@ class ReportCommand(BotCommands):
         # Record every match played in a new collection
         all_matches.insert_one(match)
 
-        now_utc = datetime.now(timezone.utc)
-        current = seasons.find_one({"_id": "current"}) or {}
-
-        started_at = convert_to_utc(current.get("started_at"))  # <-- normalize
-        reset_months = int(current.get("reset_period_months", 2))
-
-        if not started_at:
-            started_at = now_utc
-            seasons.update_one(
-                {"_id": "current"},
-                {"$set": {"started_at": started_at, "is_closed": False}},
-                upsert=True,
-            )
-
-        season_end_utc = convert_to_utc(
-            _add_months(started_at, reset_months)
-        )  # <-- normalize
-
-        if not current.get("is_closed", False) and now_utc >= season_end_utc:
-            await end_season(ctx, started_at_utc=started_at, ended_at_utc=now_utc)
+        # Increment Current Season Match Count
+        seasons.update_one(
+            {"_id": "current"}, {"$inc": {"matches_played": 1}}, upsert=True
+        )
 
         await asyncio.sleep(5)
         self.bot.match_not_reported = False
         self.bot.match_ongoing = False
-        await self.cleanup_match_resources()
-
-    async def cleanup_match_resources(self):
-        await self.bot.wait_until_ready()
-        try:
-            if hasattr(self.bot, "match_channel") and self.bot.match_channel:
-                try:
-                    await self.bot.match_channel.delete()
-                except discord.NotFound:
-                    print("[DEBUG] Match channel already deleted")
-                except discord.Forbidden:
-                    print("[DEBUG] Missing permissions to delete match channel")
-                finally:
-                    self.bot.match_channel = None
-
-            if hasattr(self.bot, "match_role") and self.bot.match_role:
-
-                try:
-                    for member in self.bot.match_role.members:
-                        await member.remove_roles(self.bot.match_role)
-                except discord.HTTPException:
-                    print("[DEBUG] Error removing roles from members")
-
-                # delete the role
-                try:
-                    await self.bot.match_role.delete()
-                except discord.NotFound:
-                    print("[DEBUG] Match role already deleted")
-                except discord.Forbidden:
-                    print("[DEBUG] Missing permissions to delete match role")
-                finally:
-                    self.bot.match_role = None
-
-            self.bot.match_not_reported = False
-            self.bot.match_ongoing = False
-            self.bot.queue.clear()
-
-            if self.bot.current_signup_message:
-                try:
-                    await self.bot.current_signup_message.delete()
-                except discord.NotFound:
-                    pass
-                finally:
-                    self.bot.current_signup_message = None
-
-        except Exception as e:
-            print(f"[DEBUG] Error during cleanup: {str(e)}")
-            try:
-                if hasattr(self.bot, "match_channel") and self.bot.match_channel:
-                    try:
-                        await self.bot.match_channel.delete()
-                    except discord.NotFound:
-                        print("[DEBUG] Match channel already deleted")
-                    except discord.Forbidden:
-                        print("[DEBUG] Missing permissions to delete match channel")
-                    finally:
-                        self.bot.match_channel = None
-
-                if hasattr(self.bot, "match_role") and self.bot.match_role:
-
-                    try:
-                        for member in self.bot.match_role.members:
-                            await member.remove_roles(self.bot.match_role)
-                    except discord.HTTPException:
-                        print("[DEBUG] Error removing roles from members")
-
-                    # delete the role
-                    try:
-                        await self.bot.match_role.delete()
-                    except discord.NotFound:
-                        print("[DEBUG] Match role already deleted")
-                    except discord.Forbidden:
-                        print("[DEBUG] Missing permissions to delete match role")
-                    finally:
-                        self.bot.match_role = None
-
-                self.bot.match_not_reported = False
-                self.bot.match_ongoing = False
-                self.bot.queue.clear()
-
-                if self.bot.current_signup_message:
-                    try:
-                        await self.bot.current_signup_message.delete()
-                    except discord.NotFound:
-                        pass
-                    finally:
-                        self.bot.current_signup_message = None
-
-            except Exception as e:
-                print(f"[DEBUG] Error during cleanup: {str(e)}")
+        await cleanup_match_resources(self.bot)
 
 
 def rounds_to_int(value):
@@ -619,86 +606,3 @@ def rounds_to_int(value):
         return int(value)
     except Exception:
         return 0
-
-
-async def end_season(ctx, started_at_utc=None, ended_at_utc=None):
-    current = seasons.find_one({"_id": "current"}) or {}
-    if current.get("is_closed"):
-        return
-
-    now_utc = datetime.now(timezone.utc)
-
-    started_at_utc = convert_to_utc(
-        started_at_utc or current.get("started_at") or now_utc
-    )
-    ended_at_utc = convert_to_utc(ended_at_utc or now_utc)
-
-    # Determine winner
-    top_doc = mmr_collection.find_one(sort=[("mmr", -1)])
-    if not top_doc:
-        winner_player_id = None
-        winner_name = "No players"
-        winner_mmr = 0
-    else:
-        winner_player_id = str(top_doc.get("player_id"))
-        winner_mmr = top_doc.get("mmr", 0)
-
-        u = users.find_one({"discord_id": winner_player_id})
-        if u:
-            winner_name = f"{u.get('name', 'Unknown')}#{u.get('tag', 'Unknown')}"
-        else:
-            winner_name = top_doc.get("name", "Unknown")
-
-    started_cst = started_at_utc.astimezone(TIME_ZONE_CST) if started_at_utc else None
-    ended_cst = ended_at_utc.astimezone(TIME_ZONE_CST)
-    started_str = (
-        started_cst.strftime("%Y-%m-%d %I:%M %p %Z") if started_cst else "unknown"
-    )
-    ended_str = ended_cst.strftime("%Y-%m-%d %I:%M %p %Z")
-
-    await ctx.send(
-        "🏁 **Season complete!**\n"
-        f"**Winner:** {winner_name}\n"
-        f"**Final MMR:** {winner_mmr}\n"
-        f"**Season window (Central):** {started_str} → {ended_str}"
-    )
-
-    seasons.update_one(
-        {"_id": "current"},
-        {
-            "$set": {
-                "is_closed": True,
-                "ended_at": ended_at_utc,
-                "winner_player_id": winner_player_id,
-                "winner_name": winner_name,
-                "winner_mmr": winner_mmr,
-            }
-        },
-        upsert=True,
-    )
-
-    # next season
-    next_season_number = int(current.get("season_number", 1)) + 1
-    reset_period_months = int(current.get("reset_period_months", 2))
-
-    seasons.update_one(
-        {"_id": "current"},
-        {
-            "$set": {
-                "season_number": next_season_number,
-                "started_at": ended_at_utc,
-                "is_closed": False,
-                "reset_period_months": reset_period_months,
-                "matches_played": 0,
-                "last_season": {
-                    "season_number": current.get("season_number", 1),
-                    "started_at": started_at_utc,
-                    "ended_at": ended_at_utc,
-                    "winner_player_id": winner_player_id,
-                    "winner_name": winner_name,
-                    "winner_mmr": winner_mmr,
-                    "matches_played": current.get("matches_played", 0),
-                },
-            }
-        },
-    )
