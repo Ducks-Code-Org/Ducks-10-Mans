@@ -25,6 +25,11 @@ class SignupView(discord.ui.View):
         self.signup_queue_task = asyncio.create_task(self.process_signup_queue())
         self.refresh_signup_task = asyncio.create_task(self.refresh_signup_message())
         self.channel_rename_task = asyncio.create_task(self.channel_rename_worker())
+        self.timeout_monitor_task = asyncio.create_task(self.monitor_queue())
+
+        # Activity tracking
+        self.last_activity_time = asyncio.get_event_loop().time()
+        self.empty_since_time = None
 
         # Setup Interaction Buttons
         self.sign_up_button = Button(
@@ -79,6 +84,9 @@ class SignupView(discord.ui.View):
         riot_names: list[str] = self.get_riot_names()
         print(f"{interaction.user.name} left the queue successfully")
 
+        # Update last activity
+        self.last_activity_time = asyncio.get_event_loop().time()
+
         # Edit the queue message and button label to reflect the new queue
         self.sign_up_button.label = f"Sign Up ({len(self.bot.queue)}/10)"
         await interaction.message.edit(
@@ -115,6 +123,71 @@ class SignupView(discord.ui.View):
         if self.signup_queue_task:
             self.signup_queue_task.cancel()
             self.signup_queue_task = None
+
+    async def monitor_queue(self):
+        try:
+            while True:
+                await asyncio.sleep(60)  # Check every minute
+                now = asyncio.get_event_loop().time()
+
+                if len(self.bot.queue) == 0:
+                    if self.empty_since_time is None:
+                        self.empty_since_time = now
+                    elif now - self.empty_since_time > 600:  # 10 minutes
+                        await self.cancel_signup(
+                            "Queue has been empty for more than 10 minutes."
+                        )
+                        break
+                else:
+                    self.empty_since_time = None
+
+                if now - self.last_activity_time > 7200:  # 120 minutes
+                    await self.cancel_signup(
+                        "Queue has been inactive for more than 120 minutes."
+                    )
+                    break
+        except asyncio.CancelledError:
+            pass
+
+    def cancel_timeout_monitor_task(self):
+        if self.timeout_monitor_task:
+            self.timeout_monitor_task.cancel()
+            self.timeout_monitor_task = None
+
+    async def cancel_signup(self, reason):
+        # Send message to original channel
+        try:
+            await self.ctx.send(f"Signup cancelled: {reason}")
+            print(f"Signup cancelled: {reason}")
+        except:
+            pass  # In case channel is deleted or something
+
+        # Clear variables
+        self.bot.signup_active = False
+        self.bot.queue = []
+        self.bot.captain1 = None
+        self.bot.captain2 = None
+        self.bot.team1 = []
+        self.bot.team2 = []
+        self.bot.chosen_mode = None
+        self.bot.selected_map = None
+
+        # Delete role and channel
+        try:
+            await self.bot.match_role.delete()
+        except:
+            pass
+        try:
+            await self.bot.match_channel.delete()
+        except:
+            pass
+
+        # Cleanup view
+        self.stop()
+        self.cancel_refresh_signup_task()
+        self.cancel_channel_rename_task()
+        self.cancel_signup_queue_task()
+        self.cancel_timeout_monitor_task()
 
     async def handle_signup(self, interaction: discord.Interaction):
         # Only allow up to 10 players in the queue
@@ -168,6 +241,9 @@ class SignupView(discord.ui.View):
         riot_names: list[str] = self.get_riot_names()
         print(f"{interaction.user.name} joined the queue successfully.")
 
+        # Update last activity
+        self.last_activity_time = asyncio.get_event_loop().time()
+
         # Add match role to the new player
         member = interaction.guild.get_member(
             interaction.user.id
@@ -220,6 +296,7 @@ class SignupView(discord.ui.View):
         self.cancel_refresh_signup_task()
         self.cancel_channel_rename_task()
         self.cancel_signup_queue_task()
+        self.cancel_timeout_monitor_task()
 
     async def refresh_signup_message(self):
         try:
@@ -326,6 +403,7 @@ class SignupView(discord.ui.View):
         self.cancel_channel_rename_task()
         self.cancel_refresh_signup_task()
         self.cancel_signup_queue_task()
+        self.cancel_timeout_monitor_task()
 
         self.ctx = None
         self.bot = None

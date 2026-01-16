@@ -4,6 +4,7 @@ import discord
 from discord.ext import commands
 
 from commands import BotCommands
+from commands.report import cleanup_match_resources
 from database import mmr_collection
 from views.signup_view import SignupView
 from views.mode_vote_view import ModeVoteView
@@ -19,7 +20,7 @@ class AdminCommands(BotCommands):
     @commands.has_permissions(administrator=True)
     async def new_season(self, ctx, *, no_reset: str = None):
         """
-        Creates a new season that ends exactly 2 calendar months from now (UTC).
+        Creates a new season, saving seasons stats, and assigning SSR rank.
         By default, resets everyone’s MMR + stats. If you pass 'noreset', it will keep stats.
         Usage: !newseason    (resets)
             !newseason noreset
@@ -28,20 +29,38 @@ class AdminCommands(BotCommands):
         if no_reset and no_reset.lower() in {"noreset", "keep", "false", "0"}:
             reset = False
 
-        doc = self.bot.create_new_season(reset_player_stats=reset)
+        # Determine winner info
+        winner_doc = mmr_collection.find_one(
+            {"matches_played": {"$gt": 0}}, sort=[("mmr", -1)]
+        )
 
-        start_cst = doc["started_at_cst"]
-        end_cst = doc["ends_at_cst"]
+        doc = self.bot.create_new_season(reset_player_stats=reset, winner=winner_doc)
 
-        start_str = start_cst.strftime("%Y-%m-%d %I:%M %p %Z")
-        end_str = end_cst.strftime("%Y-%m-%d %I:%M %p %Z")
+        # Assign SSR Rank to winner
+        ssr_role = await ctx.guild.create_role(
+            name=f"Season {doc['season_number'] - 1} SSR", hoist=True
+        )
+        await ctx.guild.edit_role_positions(positions={ssr_role: 5})
+        await ssr_role.edit(color=discord.Color.teal())
+        winner_member = ctx.guild.get_member(int(winner_doc["player_id"]))
+        await winner_member.add_roles(ssr_role)
 
-        await ctx.send(
-            f"**Season {doc['season_number']}** created.\n"
-            f"Starts (Central): `{start_str}`\n"
-            f"Ends (Central):   `{end_str}`\n"
+        # Try to send to 'announcements' channel if it exists
+        announcement_channel = None
+        if ctx.guild:
+            for channel in ctx.guild.text_channels:
+                if channel.name.lower() == "announcements":
+                    announcement_channel = channel
+                    break
+        message = (
+            f"**<@&1311935865626431529> Season {doc['season_number']}** started.\n"
+            f"<@{winner_doc['player_id']}> has been awarded the **Season {doc['season_number'] - 1} SSR** role!\n"
             f"{'All player MMR + stats were reset.' if reset else 'Player stats were preserved (no reset).'}"
         )
+        if announcement_channel:
+            await announcement_channel.send(message)
+        else:
+            await ctx.send(message)
 
     @commands.command()
     @commands.has_role("Owner")
@@ -81,7 +100,7 @@ class AdminCommands(BotCommands):
             f"Simulated full queue: {', '.join([player['name'] for player in queue])}"
         )
 
-        await ctx.send("The queue is now full, proceeding to the voting stage.")
+        await ctx.send("The queue is now full! Proceeding with match setup...")
 
         mode_vote = ModeVoteView(ctx, self.bot)
         await mode_vote.send_view()
@@ -112,30 +131,40 @@ class AdminCommands(BotCommands):
             except discord.HTTPException:
                 pass
 
-    # Stop the signup process
+    # Stop the signup process or cancel an active match
     @commands.command()
     @commands.has_role("Owner")
     async def cancel(self, ctx):
-        if not self.bot.signup_active:
-            await ctx.send("No signup is active to cancel")
-            return
+        if self.bot.signup_active:
+            if self.bot.signup_view:
+                self.bot.signup_view.cleanup()
+                self.bot.signup_view = None
 
-        if self.bot.signup_view:
-            self.bot.signup_view.cleanup()
-            self.bot.signup_view = None
+            self.bot.queue = []
+            self.bot.current_signup_message = None
+            self.bot.signup_active = False
 
-        self.bot.queue = []
-        self.bot.current_signup_message = None
-        self.bot.signup_active = False
+            await ctx.send(
+                "Canceled active signup. Feel free to start a new one with `!signup`."
+            )
+            print("Cancelling signup...")
 
-        await ctx.send("Canceled Signup")
-        print("Cancelling signup...")
-
-        try:
-            await self.bot.match_channel.delete()
-            await self.bot.match_role.delete()
-        except discord.NotFound:
-            pass
+            try:
+                await self.bot.match_channel.delete()
+                await self.bot.match_role.delete()
+            except discord.NotFound:
+                pass
+        elif self.bot.match_ongoing and self.bot.selected_map:
+            # Logic to cancel the current match and clear info from memory
+            self.bot.match_not_reported = False
+            self.bot.match_ongoing = False
+            await cleanup_match_resources(self.bot)
+            await ctx.send(
+                "Cancelled active match. Feel free to start a new one with `!signup`."
+            )
+            print("Cancelling active match...")
+        else:
+            await ctx.send("No active signup or match to cancel.")
 
     @commands.command()
     @commands.has_role("Owner")
