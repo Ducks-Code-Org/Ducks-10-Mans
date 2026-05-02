@@ -11,7 +11,7 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "beautifulsoup4"])
     from bs4 import BeautifulSoup
 
-URL = "https://valorant.fandom.com/wiki/Maps"
+URL = "https://blitz.gg/valorant/stats/maps"
 
 
 def get_standard_maps() -> list[str]:
@@ -31,82 +31,87 @@ def get_standard_maps() -> list[str]:
     ]
 
     print("Fetching all standard maps...")
-    try:
-        response = requests.get(URL, timeout=10)
-        soup = BeautifulSoup(response.text, "html.parser")
 
-        # Find the table with the "Standard" header
-        standard_header = soup.find("h3", id="Standard")
-        if not standard_header:
-            # Fallback: find by text
-            for h3 in soup.find_all("h3"):
-                if "Standard" in h3.get_text():
-                    standard_header = h3
-                    break
-        if not standard_header:
+    try:
+        response = requests.get(URL + "?queue=unrated", timeout=10)
+        soup = BeautifulSoup(response.text, "html.parser")
+        # Find all table rows
+        rows = soup.find_all("tr")
+        maps = []
+        for row in rows:
+            cols = row.find_all("td")
+            if len(cols) > 1:
+                # The map name is in the second column, and is repeated (e.g., 'Lotus Lotus')
+                map_cell = cols[1].get_text(strip=True)
+                # Split by space and take the first word if repeated
+                if map_cell:
+                    name_parts = map_cell.split()
+                    if len(name_parts) == 2 and name_parts[0] == name_parts[1]:
+                        map_name = name_parts[0]
+                    else:
+                        map_name = map_cell
+                    if map_name not in maps:
+                        maps.append(map_name)
+        if not maps:
             print(
-                "Warning: Standard maps table not found. Using a potentially outdated map list."
+                "Warning: No standard maps found. Using a potentially outdated map list."
             )
             return potentially_outdated_standard_map_list
-        # The table is after the header
-        table = standard_header.find_next("table")
-        maps = []
-        for row in table.find_all("tr")[1:]:  # skip header row
-            first_td = row.find("td")
-            if first_td:
-                # Find all <a> tags in the first <td>
-                a_tags = first_td.find_all("a", title=True)
-                if a_tags:
-                    # The last <a> is the one with the map name
-                    map_name = a_tags[-1].get_text(strip=True)
-                    if map_name:
-                        maps.append(map_name)
         print("Standard maps found:")
         print(maps)
         return maps
-    except requests.RequestException:
-        print("Warning: Requests network error. Using a potentially outdated map list.")
+    except Exception as e:
+        print(
+            f"Warning: Requests network error or timeout ({e}). Using a potentially outdated map list."
+        )
         return potentially_outdated_standard_map_list
 
 
 def get_competitive_maps() -> list[str]:
     potentially_outdated_competitive_map_list: list = [
-        "Abyss",
+        "Fracture",
+        "Lotus",
         "Ascent",
-        "Bind",
-        "Corrode",
+        "Split",
         "Haven",
         "Lotus",
-        "Sunset",
+        "Breeze",
     ]
 
     print("Fetching standard competitive maps...")
+
     try:
         response = requests.get(URL, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
-
-        # Look for any <th> containing 'Current rotation'
-        for th in soup.find_all("th"):
-            if (
-                th.get_text(strip=True).lower().startswith("current rotation")
-                or "current rotation" in th.get_text(strip=True).lower()
-            ):
-                table = th.find_parent("table")
-                break
-
-        if table:
-            divs = table.find_all("div", class_="gallery-image-wrapper")
-            ids = [div.get("id") for div in divs if div.get("id")]
-            print("Competitive maps found:")
-            print(ids)
-            return ids
-        else:
+        # Find all table rows
+        rows = soup.find_all("tr")
+        maps = []
+        for row in rows:
+            cols = row.find_all("td")
+            if len(cols) > 1:
+                # The map name is in the second column, and is repeated (e.g., 'Lotus Lotus')
+                map_cell = cols[1].get_text(strip=True)
+                # Split by space and take the first word if repeated
+                if map_cell:
+                    name_parts = map_cell.split()
+                    if len(name_parts) == 2 and name_parts[0] == name_parts[1]:
+                        map_name = name_parts[0]
+                    else:
+                        map_name = map_cell
+                    if map_name not in maps:
+                        maps.append(map_name)
+        if not maps:
             print(
-                "Warning: Current rotation table not found. Useing a potentially outdated map list."
+                "Warning: No competitive maps found. Using a potentially outdated map list."
             )
             return potentially_outdated_competitive_map_list
-    except requests.RequestException:
-        print("Warning: Requests network error. Using a potentially outdated map list.")
+        print("Competitive maps found:")
+        print(maps)
+        return maps
+    except Exception as e:
+        print(
+            f"Warning: Requests network error or timeout ({e}). Using a potentially outdated map list."
+        )
         return potentially_outdated_competitive_map_list
 
 
@@ -120,36 +125,37 @@ def get_tdm_maps() -> list[str]:
     ]
 
     print("Fetching all Team Deathmatch maps...")
-    try:
-        response = requests.get(URL, timeout=10)
-        soup = BeautifulSoup(response.text, "html.parser")
 
-        # Find the "Team Deathmatch" header
-        tdm_header = soup.find("h3", id="Team Deathmatch")
-        if not tdm_header:
-            # Fallback: find by text
-            for h3 in soup.find_all("h3"):
-                if "Team Deathmatch" in h3.get_text():
-                    tdm_header = h3
-                    break
-        if not tdm_header:
-            print("Team Deathmatch maps table not found.")
-            return potentially_outdated_tdm_map_list
-        # The table is after the header
-        table = tdm_header.find_next("table")
+    try:
+        response = requests.get(URL + "?queue=hurm", timeout=10)
+        soup = BeautifulSoup(response.text, "html.parser")
+        # Find all table rows
+        rows = soup.find_all("tr")
         maps = []
-        for row in table.find_all("tr")[1:]:  # skip header row
-            first_td = row.find("td")
-            if first_td:
-                # The map name is the text after the <br> tag
-                br = first_td.find("br")
-                if br and br.next_sibling:
-                    map_name = br.next_sibling.strip()
-                    if map_name:
+        for row in rows:
+            cols = row.find_all("td")
+            if len(cols) > 1:
+                # The map name is in the second column, and is repeated (e.g., 'Lotus Lotus')
+                map_cell = cols[1].get_text(strip=True)
+                # Split by space and take the first word if repeated
+                if map_cell:
+                    name_parts = map_cell.split()
+                    if len(name_parts) == 2 and name_parts[0] == name_parts[1]:
+                        map_name = name_parts[0]
+                    else:
+                        map_name = map_cell
+                    if map_name not in maps:
                         maps.append(map_name)
+        if not maps:
+            print(
+                "Warning: No Team Deathmatch maps found. Using a potentially outdated map list."
+            )
+            return potentially_outdated_tdm_map_list
         print("Team Deathmatch maps found:")
         print(maps)
         return maps
-    except requests.RequestException:
-        print("Warning: Requests network error. Using a potentially outdated map list.")
+    except Exception as e:
+        print(
+            f"Warning: Requests network error or timeout ({e}). Using a potentially outdated map list."
+        )
         return potentially_outdated_tdm_map_list
