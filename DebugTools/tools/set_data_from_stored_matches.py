@@ -1,6 +1,6 @@
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-from globals import SEASON_2_START_DATE
+from globals import SEASON_2_START_DATE, URI_KEY
 from DebugTools.helpers.match_helper_functions import get_matches_from_season
 from DebugTools.helpers.change_helper_functions import (
     get_matchlist_changes_that_will_be_made,
@@ -8,8 +8,8 @@ from DebugTools.helpers.change_helper_functions import (
 )
 
 # MongoDB Connection
-uri = "mongodb+srv://x4skinniestduck:8QZOdjPrrgJkRGPX@rapid.12llf.mongodb.net/?retryWrites=true&w=majority&appName=Rapid"
-client = MongoClient(uri, server_api=ServerApi("1"))
+uri = URI_KEY
+client = MongoClient(uri, tlsAllowInvalidCertificates=True, server_api=ServerApi("1"))
 
 # Initialize MongoDB Collections
 db = client["valorant"]
