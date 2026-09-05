@@ -116,3 +116,28 @@ def verify_riot_account(name: str, tag: str) -> Tuple[bool, str]:
         False,
         f"Riot API error ({r.status_code}). Try again in a few seconds or relink your account with `!linkriot`.",
     )
+
+
+def riot_account_exists(name: str, tag: str) -> bool | None:
+    """Check whether a Riot account exists.
+
+    Returns True (exists), False (confirmed missing via 404), or None when
+    the result is inconclusive (network/auth errors — never treat as invalid).
+    """
+    name = (name or "").strip()
+    tag = (tag or "").strip()
+    if not name or not tag:
+        return False
+
+    url = f"{HENRIK_BASE}/v2/account/{quote(name, safe='')}/{quote(tag, safe='')}"
+
+    try:
+        r = requests.get(url, headers=_headers(), timeout=10)
+    except requests.RequestException:
+        return None
+
+    if r.status_code == 200:
+        return True
+    if r.status_code == 404:
+        return False
+    return None

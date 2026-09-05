@@ -7,8 +7,38 @@ import discord
 from discord.ext import commands
 
 from commands import BotCommands
+from database import mmr_collection, tdm_mmr_collection, users
+from riot_api import riot_account_exists
 from views.signup_view import SignupView
 from identity import ensure_current_riot_identity
+
+
+def purge_invalid_riot_ids() -> list[str]:
+    """Remove linked Riot accounts that no longer exist on Riot's side.
+
+    Returns the display names of the removed players. Inconclusive checks
+    (network/API errors) are skipped so flaky API responses never purge data.
+    """
+    removed = []
+    for doc in list(users.find()):
+        name = (doc.get("name") or "").strip()
+        tag = (doc.get("tag") or "").strip()
+        if not name or not tag:
+            # Incomplete link: nothing to verify against the API
+            continue
+
+        exists = riot_account_exists(name, tag)
+        if exists is not False:
+            continue
+
+        discord_id = str(doc.get("discord_id"))
+        users.delete_one({"_id": doc["_id"]})
+        mmr_collection.delete_one({"player_id": discord_id})
+        tdm_mmr_collection.delete_one({"player_id": discord_id})
+        print(f"[purge] Removed invalid Riot ID {name}#{tag} ({discord_id})")
+        removed.append(f"{name}#{tag}")
+
+    return removed
 
 
 async def setup(bot):
@@ -36,6 +66,15 @@ class SignupCommand(BotCommands):
             if not ok:
                 await ctx.send(msg)
                 return
+
+            # Clean out Riot IDs that no longer exist before starting the queue
+            removed = purge_invalid_riot_ids()
+            if removed:
+                await ctx.send(
+                    "Removed "
+                    + ", ".join(f"`{r}`" for r in removed)
+                    + " from the database (Riot account no longer exists)."
+                )
 
             self.bot.load_mmr_data()
             print("[DEBUG] Reloaded MMR data at start of signup")
