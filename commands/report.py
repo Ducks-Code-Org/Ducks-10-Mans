@@ -417,6 +417,29 @@ class ReportCommand(BotCommands):
         self.bot.player_mmr = {str(k): v for k, v in self.bot.player_mmr.items()}
         pre_update_mmr = copy.deepcopy(self.bot.player_mmr)
 
+        # Snapshot each player's leaderboard rank before this match is applied
+        pre_played_ids = {
+            pid
+            for pid, stats in pre_update_mmr.items()
+            if stats.get("matches_played", 0) > 0
+            or (stats.get("wins", 0) + stats.get("losses", 0)) > 0
+        }
+        pre_update_ranks = {
+            pid: rank
+            for rank, (pid, _) in enumerate(
+                sorted(
+                    (
+                        (pid, stats)
+                        for pid, stats in pre_update_mmr.items()
+                        if pid in pre_played_ids
+                    ),
+                    key=lambda x: x[1]["mmr"],
+                    reverse=True,
+                ),
+                start=1,
+            )
+        }
+
         valid_mmr_entries = [
             (pid, stats)
             for pid, stats in pre_update_mmr.items()
@@ -557,6 +580,43 @@ class ReportCommand(BotCommands):
 
             mmr_collection.update_one(
                 {"player_id": discord_id}, {"$set": complete_stats}, upsert=True
+            )
+
+        # Record each player's previous leaderboard rank so the
+        # leaderboard can display rank gain/loss since the last match
+        played_ids = {
+            pid
+            for pid, stats in self.bot.player_mmr.items()
+            if stats.get("matches_played", 0) > 0
+            or (stats.get("wins", 0) + stats.get("losses", 0)) > 0
+        }
+        new_ranks = {
+            pid: rank
+            for rank, (pid, _) in enumerate(
+                sorted(
+                    (
+                        (pid, stats)
+                        for pid, stats in self.bot.player_mmr.items()
+                        if pid in played_ids
+                    ),
+                    key=lambda x: x[1].get("mmr", 1000),
+                    reverse=True,
+                ),
+                start=1,
+            )
+        }
+        for discord_id in self.bot.player_mmr:
+            previous_rank = pre_update_ranks.get(discord_id)
+            new_rank = new_ranks.get(discord_id)
+            mmr_collection.update_one(
+                {"player_id": discord_id},
+                {
+                    "$set": {
+                        "previous_rank": previous_rank,
+                        "current_rank": new_rank,
+                    }
+                },
+                upsert=True,
             )
 
         print("[DEBUG] All stats saved to database")
