@@ -5,6 +5,7 @@ import discord
 from discord.ui import Button
 
 from database import users
+from tracker_links import tracker_link
 from views.captains_drafting_view import SecondCaptainChoiceView
 from views import safe_reply
 
@@ -251,9 +252,9 @@ class MapVoteView(discord.ui.View):
             ud = users.find_one({"discord_id": str(p["id"])})
             mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", 1000)
             if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
-                attackers.append(f"{rn}#{rt} (MMR:{mmr})")
+                attackers.append(
+                    f"{tracker_link(ud.get('name', 'Unknown'), ud.get('tag', 'Unknown'))} (MMR:{mmr})"
+                )
             else:
                 attackers.append(f"{p['name']} (MMR:{mmr})")
 
@@ -262,9 +263,9 @@ class MapVoteView(discord.ui.View):
             ud = users.find_one({"discord_id": str(p["id"])})
             mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", 1000)
             if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
-                defenders.append(f"{rn}#{rt} (MMR:{mmr})")
+                defenders.append(
+                    f"{tracker_link(ud.get('name', 'Unknown'), ud.get('tag', 'Unknown'))} (MMR:{mmr})"
+                )
             else:
                 defenders.append(f"{p['name']} (MMR:{mmr})")
 
