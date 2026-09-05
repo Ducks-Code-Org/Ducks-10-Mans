@@ -112,6 +112,38 @@ async def cleanup_match_resources(bot):
             print(f"[DEBUG] Error during cleanup: {str(e)}")
 
 
+async def grant_season_roles(bot, ctx, players) -> None:
+    """Give every player a 'Season-#' role for the current season."""
+    if not ctx.guild:
+        return
+
+    season_doc = seasons.find_one({"_id": "current"})
+    season_number = int((season_doc or {}).get("season_number", 0))
+    role_name = f"Season {season_number}"
+
+    season_role = discord.utils.get(ctx.guild.roles, name=role_name)
+    if season_role is None:
+        season_role = await ctx.guild.create_role(name=role_name)
+
+    granted = []
+    for p in players:
+        member = ctx.guild.get_member(int(p["id"]))
+        if member is None:
+            try:
+                member = await ctx.guild.fetch_member(int(p["id"]))
+            except (discord.NotFound, discord.HTTPException):
+                continue
+        if season_role not in member.roles:
+            try:
+                await member.add_roles(season_role)
+                granted.append(str(p["id"]))
+            except discord.HTTPException:
+                continue
+
+    if granted:
+        print(f"[season] Granted '{role_name}' role to {len(granted)} player(s)")
+
+
 class ReportCommand(BotCommands):
     @commands.command()
     async def report(self, ctx):
@@ -602,6 +634,12 @@ class ReportCommand(BotCommands):
         seasons.update_one(
             {"_id": "current"}, {"$inc": {"matches_played": 1}}, upsert=True
         )
+
+        # Grant the Season-# role to everyone who played this season's match
+        try:
+            await grant_season_roles(self.bot, ctx, winning_team + losing_team)
+        except Exception as e:
+            print(f"[DEBUG] Failed to grant season roles: {e}")
 
         await asyncio.sleep(5)
         self.bot.match_not_reported = False
