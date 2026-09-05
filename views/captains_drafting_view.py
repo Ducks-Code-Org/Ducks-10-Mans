@@ -424,6 +424,9 @@ class CaptainsDraftingView(discord.ui.View):
                 except discord.NotFound:
                     pass
 
+    def _player_mmr(self, player) -> int:
+        return self.bot.player_mmr.get(str(player["id"]), {}).get("mmr", 1000)
+
     async def send_current_draft_view(self):
         if self.draft_finished:
             return
@@ -441,6 +444,7 @@ class CaptainsDraftingView(discord.ui.View):
                 label = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
             else:
                 label = player["name"]
+            label = f"{label} (MMR: {self._player_mmr(player)})"
             options.append(discord.SelectOption(label=label, value=str(player["id"])))
         self.player_select.options = options
 
@@ -462,11 +466,18 @@ class CaptainsDraftingView(discord.ui.View):
 
         remaining_players_text: str = ""
         if remaining_players_data:
-            for name, tracker_link in remaining_players_data.items():
-                if tracker_link:
-                    remaining_players_text += f"[{name}]({tracker_link})\n"
+            for player in self.remaining_players:
+                user_data = users.find_one({"discord_id": str(player["id"])})
+                mmr = self._player_mmr(player)
+                if user_data:
+                    user_name = quote(f"{user_data.get('name','Unknown')}")
+                    user_tag = quote(f"{user_data.get('tag','Unknown')}")
+                    name = f"{user_name}#{user_tag}"
+                    remaining_players_text += (
+                        f"[{name}]({remaining_players_data[name]}) (MMR: {mmr})\n"
+                    )
                 else:
-                    remaining_players_text += f"{name}\n"
+                    remaining_players_text += f"{player['name']} (MMR: {mmr})\n"
             # Remove trailing newline
             remaining_players_text = remaining_players_text.rstrip("\n")
         else:
@@ -483,10 +494,13 @@ class CaptainsDraftingView(discord.ui.View):
             out = []
             for p in team:
                 ud = users.find_one({"discord_id": str(p["id"])})
+                mmr = self._player_mmr(p)
                 if ud:
-                    out.append(f"{ud.get('name','Unknown')}#{ud.get('tag','Unknown')}")
+                    out.append(
+                        f"{ud.get('name','Unknown')}#{ud.get('tag','Unknown')} (MMR: {mmr})"
+                    )
                 else:
-                    out.append(p["name"])
+                    out.append(f"{p['name']} (MMR: {mmr})")
             return "\n".join(out) if out else "No players yet"
 
         drafting_embed = discord.Embed(
