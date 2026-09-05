@@ -122,7 +122,7 @@ class ModeVoteView(discord.ui.View):
             balanced_votes: int = self.votes["Balanced"]
             captains_votes: int = self.votes["Captains"]
 
-            # Check for a majority winner
+            # Check for majority winner
             if balanced_votes > 5:
                 self.voting_phase_ended = True
                 await self.ctx.send("Balanced wins by majority!")
@@ -135,6 +135,29 @@ class ModeVoteView(discord.ui.View):
                 await self.ctx.send("Captains wins by majority!")
                 self.bot.chosen_mode = "Captains"
                 await self.close_vote()
+                return
+
+            # Skip the remaining wait time when everyone in the queue has voted
+            if self.bot.queue and len(self.voters) >= len(self.bot.queue):
+                self.voting_phase_ended = True
+                if balanced_votes > captains_votes:
+                    await self.ctx.send("Balanced wins!")
+                    self.bot.chosen_mode = "Balanced"
+                    self.setup_balanced_teams()
+                    await self.close_vote()
+                elif captains_votes > balanced_votes:
+                    await self.ctx.send("Captains wins!")
+                    self.bot.chosen_mode = "Captains"
+                    await self.close_vote()
+                else:
+                    decision = (
+                        "Balanced" if random.choice([True, False]) else "Captains"
+                    )
+                    await self.ctx.send(
+                        f"Everyone voted! Tie! {decision} wins by coin flip!"
+                    )
+                    self.bot.chosen_mode = decision
+                    await self.close_vote()
                 return
 
             # Check for a winner by timeout

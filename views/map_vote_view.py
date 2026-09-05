@@ -147,6 +147,28 @@ class MapVoteView(discord.ui.View):
                 await self.close_vote(winning_map)
                 return
 
+            # Skip the remaining wait time when everyone in the queue has voted
+            if self.bot.queue and len(self.voters) >= len(self.bot.queue):
+                self.voting_phase_ended = True
+                # Collect all maps that have the highest number of votes (handles ties)
+                winners = []
+                for map_name, vote_count in self.map_votes.items():
+                    if vote_count == highest_number_of_votes:
+                        winners.append(map_name)
+                winning_map = random.choice(winners)
+                if len(winners) > 1:
+                    message = (
+                        f"Everyone voted! Tie! Randomly selected: **{winning_map}**"
+                    )
+                    await self.ctx.send(message)
+                    print(message)
+                else:
+                    message = f"{winning_map} wins!"
+                    await self.ctx.send(message)
+                    print(message)
+                await self.close_vote(winning_map)
+                return
+
             # Check for timeout winner
             if self.timeout:
                 self.voting_phase_ended = True
