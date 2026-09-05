@@ -163,6 +163,22 @@ class AdminCommands(BotCommands):
                 "Cancelled active match. Feel free to start a new one with `!signup`."
             )
             print("Cancelling active match...")
+        elif self.bot.match_channel:
+            # Cancel a match that is still in the setup phase (votes/drafting)
+            self.bot.match_not_reported = False
+            self.bot.match_ongoing = False
+            self.bot.queue.clear()
+            self.bot.team1 = []
+            self.bot.team2 = []
+            self.bot.captain1 = None
+            self.bot.captain2 = None
+            self.bot.chosen_mode = None
+            self.bot.selected_map = None
+            await cleanup_match_resources(self.bot)
+            await ctx.send(
+                "Cancelled match setup. Feel free to start a new one with `!signup`."
+            )
+            print("Cancelling match setup...")
         else:
             await ctx.send("No active signup or match to cancel.")
 
