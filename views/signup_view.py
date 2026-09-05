@@ -289,6 +289,10 @@ class SignupView(discord.ui.View):
                 child.disabled = True
         await self.bot.current_signup_message.edit(view=self)
 
+        # Wait for everyone to join a voice channel before starting setup
+        if not await self.wait_for_voice_presence(interaction):
+            return
+
         self.bot.chosen_mode = None
         mode_vote = ModeVoteView(self.ctx, self.bot)
         await mode_vote.send_view()
@@ -297,6 +301,54 @@ class SignupView(discord.ui.View):
         self.cancel_channel_rename_task()
         self.cancel_signup_queue_task()
         self.cancel_timeout_monitor_task()
+
+    def missing_voice_players(self) -> list[dict]:
+        """Queue members who are not currently connected to a voice channel."""
+        missing = []
+        for p in self.bot.queue:
+            member = self.ctx.guild.get_member(int(p["id"]))
+            if member is None or member.voice is None or member.voice.channel is None:
+                missing.append(p)
+        return missing
+
+    async def wait_for_voice_presence(
+        self, interaction: discord.Interaction, timeout_minutes: int = 10
+    ) -> bool:
+        """Wait until every queue member is connected to a voice channel.
+
+        Returns True to proceed with match setup, False if the wait was
+        cancelled/timed out (state already cleaned up).
+        """
+        missing = self.missing_voice_players()
+        if not missing:
+            return True
+
+        await interaction.channel.send(
+            "Waiting for everyone to join the lobby voice channel before starting "
+            "the match setup: " + " ".join(f"<@{p['id']}>" for p in missing)
+        )
+
+        deadline = asyncio.get_event_loop().time() + timeout_minutes * 60
+        while True:
+            await asyncio.sleep(15)
+            if self.bot.signup_active or self.bot.match_channel is None:
+                # Queue was cancelled while waiting
+                return False
+            missing = self.missing_voice_players()
+            if not missing:
+                await interaction.channel.send(
+                    "Everyone is in the lobby! Starting the match setup..."
+                )
+                return True
+            if asyncio.get_event_loop().time() >= deadline:
+                await interaction.channel.send(
+                    "Not everyone joined the lobby voice channel in time. "
+                    "Match setup cancelled — feel free to start a new one with `!signup`."
+                )
+                await self.cancel_signup(
+                    "Players did not join the lobby voice channel in time."
+                )
+                return False
 
     async def refresh_signup_message(self):
         try:
