@@ -2,18 +2,39 @@
 
 from database import users, mmr_collection
 
+PERFORMANCE_WEIGHT = 0.2
+PERFORMANCE_MIN = 0.8
+PERFORMANCE_MAX = 1.2
+
+
+def _performance_modifier(kd: float) -> float:
+    """Scale the MMR swing by the player's K/D in the match (same tuning as TDM).
+
+    A 2.0 K/D gives 1.2x, a 0.5 K/D gives 0.9x, neutral at 1.0 K/D.
+    """
+    modifier = 1.0 + (float(kd) - 1.0) * PERFORMANCE_WEIGHT
+    return max(PERFORMANCE_MIN, min(PERFORMANCE_MAX, modifier))
+
 
 def _calc_mmr_delta(
-    *, won: bool, team_sum_mmr: float, opp_sum_mmr: float, acs: float, round_diff: int
+    *,
+    won: bool,
+    team_sum_mmr: float,
+    opp_sum_mmr: float,
+    acs: float,
+    round_diff: int,
+    kd: float = 1.0,
 ) -> int:
     team_sum_mmr = float(team_sum_mmr or 0)
     opp_sum_mmr = float(opp_sum_mmr or 0)
     if team_sum_mmr <= 0 or opp_sum_mmr <= 0:
         return 0
 
+    perf = _performance_modifier(kd)
+
     if won:
         ratio = opp_sum_mmr / team_sum_mmr
-        base = (ratio * 16) + (((ratio * acs) // 100) - 2)
+        base = (ratio * 16 * perf) + (((ratio * acs) // 100) - 2)
         # RDBonus (win)
         if round_diff < 4:
             rd = 0
@@ -27,7 +48,7 @@ def _calc_mmr_delta(
             rd = 4 * ratio
     else:
         ratio = team_sum_mmr / opp_sum_mmr
-        base = (ratio * -16) + (((ratio * acs) // 100) - 2)
+        base = (ratio * -16 / perf) + (((ratio * acs) // 100) - 2)
         # RDBonus (loss)
         if round_diff < 4:
             rd = 0
@@ -119,6 +140,7 @@ def update_stats(
         ):
 
             acs_this_match = (score / total_rounds) if total_rounds > 0 else 0.0
+            kd_this_match = kills / deaths if deaths > 0 else float(kills)
             old_mmr = int(player_data.get("mmr", 1000))
             delta = _calc_mmr_delta(
                 won=bool(team_won),
@@ -126,6 +148,7 @@ def update_stats(
                 opp_sum_mmr=float(opp_sum_mmr),
                 acs=float(acs_this_match),
                 round_diff=int(round_diff),
+                kd=kd_this_match,
             )
             new_mmr = old_mmr + delta
             player_mmr[discord_id]["mmr"] = new_mmr
@@ -198,6 +221,7 @@ def update_stats(
             acs_this_match = (
                 (score / total_rounds_played) if total_rounds_played > 0 else 0.0
             )
+            kd_this_match = kills / deaths if deaths > 0 else float(kills)
             old_mmr = 1000
             delta = _calc_mmr_delta(
                 won=bool(team_won),
@@ -205,6 +229,7 @@ def update_stats(
                 opp_sum_mmr=float(opp_sum_mmr),
                 acs=float(acs_this_match),
                 round_diff=int(round_diff),
+                kd=kd_this_match,
             )
             player_mmr[discord_id]["mmr"] = old_mmr + delta
             if team_won:

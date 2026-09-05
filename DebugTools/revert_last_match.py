@@ -116,17 +116,34 @@ def get_client() -> MongoClient:
 # MMR delta logic (mirrors stats_helper._calc_mmr_delta exactly)
 # ---------------------------------------------------------------------------
 
+PERFORMANCE_WEIGHT = 0.2
+PERFORMANCE_MIN = 0.8
+PERFORMANCE_MAX = 1.2
+
+
+def _performance_modifier(kd: float) -> float:
+    modifier = 1.0 + (float(kd) - 1.0) * PERFORMANCE_WEIGHT
+    return max(PERFORMANCE_MIN, min(PERFORMANCE_MAX, modifier))
+
 
 def calc_mmr_delta(
-    *, won: bool, team_sum: float, opp_sum: float, acs: float, round_diff: int
+    *,
+    won: bool,
+    team_sum: float,
+    opp_sum: float,
+    acs: float,
+    round_diff: int,
+    kd: float = 1.0,
 ) -> int:
     team_sum = float(team_sum)
     opp_sum = float(opp_sum)
     if team_sum <= 0 or opp_sum <= 0:
         return 0
+
+    perf = _performance_modifier(kd)
     if won:
         ratio = opp_sum / team_sum
-        base = (ratio * 16) + (((ratio * acs) // 100) - 2)
+        base = (ratio * 16 * perf) + (((ratio * acs) // 100) - 2)
         rd = 0
         if round_diff >= 4:
             mult = (
@@ -137,7 +154,7 @@ def calc_mmr_delta(
             rd = mult * ratio
     else:
         ratio = team_sum / opp_sum
-        base = (ratio * -16) + (((ratio * acs) // 100) - 2)
+        base = (ratio * -16 / perf) + (((ratio * acs) // 100) - 2)
         rd = 0
         if round_diff >= 4:
             mult = (
@@ -183,13 +200,13 @@ def _sw_from_dw(sl: float, dw: int, acs: float, rd: int) -> float | None:
 
 
 def solve_pre_match_mmr(
-    winners: list[tuple[str, int, float]],
-    losers: list[tuple[str, int, float]],
+    winners: list[tuple[str, int, float, float]],
+    losers: list[tuple[str, int, float, float]],
     round_diff: int,
 ) -> tuple[dict[str, int], float, float] | None:
     """Recover each player's exact pre-match MMR.
 
-    `winners`/`losers` are lists of (discord_id, current_mmr, acs).
+    `winners`/`losers` are lists of (discord_id, current_mmr, acs, kd).
     Returns ({did: pre_mmr}, sum_winners_pre, sum_losers_pre) or None.
 
     Approach: brute-force over the small space of integer pre-match MMR
@@ -209,19 +226,19 @@ def solve_pre_match_mmr(
     # For ratio up to 3, that's up to ~44. Use 60 as a generous envelope.
     MAX_DELTA = 60
     w_bounds = [
-        (did, cur, acs, max(0, cur - MAX_DELTA), cur + MAX_DELTA)
-        for did, cur, acs in winners
+        (did, cur, acs, kd, max(0, cur - MAX_DELTA), cur + MAX_DELTA)
+        for did, cur, acs, kd in winners
     ]
     l_bounds = [
-        (did, cur, acs, max(0, cur - MAX_DELTA), cur + MAX_DELTA)
-        for did, cur, acs in losers
+        (did, cur, acs, kd, max(0, cur - MAX_DELTA), cur + MAX_DELTA)
+        for did, cur, acs, kd in losers
     ]
 
     # Team sum bounds
-    s_win_min = sum(l for _, _, _, l, _ in w_bounds)
-    s_win_max = sum(h for _, _, _, _, h in w_bounds)
-    s_los_min = sum(l for _, _, _, l, _ in l_bounds)
-    s_los_max = sum(h for _, _, _, _, h in l_bounds)
+    s_win_min = sum(l for _, _, _, _, l, _ in w_bounds)
+    s_win_max = sum(h for _, _, _, _, _, h in w_bounds)
+    s_los_min = sum(l for _, _, _, _, l, _ in l_bounds)
+    s_los_max = sum(h for _, _, _, _, _, h in l_bounds)
 
     best = None
     best_score = float("inf")
@@ -240,13 +257,14 @@ def solve_pre_match_mmr(
             # Compute each player's delta
             deltas = {}
             ok = True
-            for did, cur, acs, lo_b, hi_b in w_bounds:
+            for did, cur, acs, kd, lo_b, hi_b in w_bounds:
                 d = calc_mmr_delta(
                     won=True,
                     team_sum=s_win,
                     opp_sum=s_los,
                     acs=acs,
                     round_diff=round_diff,
+                    kd=kd,
                 )
                 pre = cur - d
                 if not (lo_b <= pre <= hi_b):
@@ -255,13 +273,14 @@ def solve_pre_match_mmr(
                 deltas[did] = pre
             if not ok:
                 continue
-            for did, cur, acs, lo_b, hi_b in l_bounds:
+            for did, cur, acs, kd, lo_b, hi_b in l_bounds:
                 d = calc_mmr_delta(
                     won=False,
                     team_sum=s_los,
                     opp_sum=s_win,
                     acs=acs,
                     round_diff=round_diff,
+                    kd=kd,
                 )
                 pre = cur - d
                 if not (lo_b <= pre <= hi_b):
@@ -272,32 +291,34 @@ def solve_pre_match_mmr(
                 continue
 
             # Check self-consistency: the sums must match exactly
-            sum_w = sum(deltas[did] for did, _, _, _, _ in w_bounds)
-            sum_l = sum(deltas[did] for did, _, _, _, _ in l_bounds)
+            sum_w = sum(deltas[did] for did, _, _, _, _, _ in w_bounds)
+            sum_l = sum(deltas[did] for did, _, _, _, _, _ in l_bounds)
             err = abs(sum_w - s_win) + abs(sum_l - s_los)
             if err == 0:
                 # Verify every player still maps to the exact integer we computed
                 # (eliminates float-precision edge cases from the solver)
                 exact = True
-                for did, cur, acs, lo_b, hi_b in w_bounds:
+                for did, cur, acs, kd, lo_b, hi_b in w_bounds:
                     d = calc_mmr_delta(
                         won=True,
                         team_sum=s_win,
                         opp_sum=s_los,
                         acs=acs,
                         round_diff=round_diff,
+                        kd=kd,
                     )
                     if cur - d != deltas[did]:
                         exact = False
                         break
                 if exact:
-                    for did, cur, acs, lo_b, hi_b in l_bounds:
+                    for did, cur, acs, kd, lo_b, hi_b in l_bounds:
                         d = calc_mmr_delta(
                             won=False,
                             team_sum=s_los,
                             opp_sum=s_win,
                             acs=acs,
                             round_diff=round_diff,
+                            kd=kd,
                         )
                         if cur - d != deltas[did]:
                             exact = False
@@ -528,8 +549,8 @@ def revert(client, *, dry_run: bool) -> None:
             )
 
     # --- Recover pre-match MMRs ----------------------------------------------
-    winners: list[tuple[str, int, float]] = []
-    losers: list[tuple[str, int, float]] = []
+    winners: list[tuple[str, int, float, float]] = []
+    losers: list[tuple[str, int, float, float]] = []
 
     for p in players:
         name = (p.get("name") or "").strip().lower()
@@ -541,12 +562,15 @@ def revert(client, *, dry_run: bool) -> None:
         stats = p.get("stats", {}) or {}
         score = float(stats.get("score", 0))
         acs = (score / total_rounds) if total_rounds > 0 else 0.0
+        kills = float(stats.get("kills", 0))
+        deaths = float(stats.get("deaths", 0))
+        kd = kills / deaths if deaths > 0 else kills
         cur_mmr = int(doc.get("mmr", 1000))
         tid = (p.get("team_id") or "").strip().title()
         if tid == winning_tid:
-            winners.append((did, cur_mmr, acs))
+            winners.append((did, cur_mmr, acs, kd))
         else:
-            losers.append((did, cur_mmr, acs))
+            losers.append((did, cur_mmr, acs, kd))
 
     if not winners or not losers:
         sys.exit(
