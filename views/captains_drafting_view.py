@@ -1,4 +1,5 @@
 import asyncio
+import random
 from typing import Dict
 
 import discord
@@ -99,39 +100,22 @@ class SecondCaptainChoiceView(discord.ui.View):
                     content=f"<@{self.bot.captain2['id']}>, choose draft type: ({self.decision_time_remaining}s)",
                     view=self,
                 )
-        # Cancel Signup
-        await self.ctx.send("The captain took too long. Match will be cancelled...")
-        self.bot.signup_active = False
-        self.bot.match_ongoing = False
-        self.bot.match_not_reported = False
-        self.bot.queue.clear()
-        self.bot.team1 = []
-        self.bot.team2 = []
-        self.bot.captain1 = None
-        self.bot.captain2 = None
-        self.bot.chosen_mode = None
-        self.bot.selected_map = None
 
-        try:
-            if getattr(self.bot, "match_channel", None):
-                await self.bot.match_channel.delete()
-        except discord.NotFound:
-            pass
-        finally:
-            self.bot.match_channel = None
-
-        try:
-            if getattr(self.bot, "match_role", None):
-                await self.bot.match_role.delete()
-        except discord.NotFound:
-            pass
-        finally:
-            self.bot.match_role = None
-
-        try:
-            self.stop()
-        except Exception:
-            pass
+        # The captain didn't respond in time — choose the draft type for them
+        single_pick = random.choice([True, False])
+        mode_name = "Single Pick" if single_pick else "Double Pick"
+        await self.ctx.send(
+            f"<@{self.bot.captain2['id']}> took too long to choose. "
+            f"Auto-selected **{mode_name}** and starting the draft..."
+        )
+        for child in self.children:
+            child.disabled = True
+        if self.view_message:
+            try:
+                await self.view_message.edit(view=self)
+            except discord.NotFound:
+                pass
+        await self.start_draft(single_pick=single_pick)
 
     def cancel_timeout_timer(self):
         if self.timeout_timer_task:
@@ -178,6 +162,7 @@ class CaptainsDraftingView(discord.ui.View):
 
         self.pick_count = 0
         self.draft_finished = False
+        self.auto_picking = False
 
         self.draft_time_remaining = 120
         self.draft_timer_task = None
@@ -339,9 +324,14 @@ class CaptainsDraftingView(discord.ui.View):
         await self.finalize_draft()
 
     async def select_callback(self, interaction: discord.Interaction):
-        if self.draft_finished:
+        if self.draft_finished or self.auto_picking:
             await interaction.response.send_message(
-                "Draft is already complete!", ephemeral=True
+                (
+                    "Draft is already complete!"
+                    if self.draft_finished
+                    else "Hold on, picking is being processed..."
+                ),
+                ephemeral=True,
             )
             return
 
@@ -393,6 +383,64 @@ class CaptainsDraftingView(discord.ui.View):
             return
         await self.send_current_draft_view()
 
+    def _auto_pick_player(self) -> dict:
+        """Choose a player for the current captain automatically.
+
+        Balanced approach: pick the remaining player whose MMR best evens out
+        the teams, falling back to a random choice when MMR data is missing.
+        """
+        current_captain_id = self.pick_order[self.pick_count]["id"]
+        my_team = (
+            self.bot.team1
+            if str(current_captain_id) == str(self.bot.captain1["id"])
+            else self.bot.team2
+        )
+        other_team = self.bot.team2 if my_team is self.bot.team1 else self.bot.team1
+
+        def mmr_of(p):
+            return self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", 1000)
+
+        my_total = sum(mmr_of(p) for p in my_team)
+        other_total = sum(mmr_of(p) for p in other_team)
+        best = min(
+            self.remaining_players,
+            key=lambda p: abs(other_total - (my_total + mmr_of(p))),
+        )
+        return best
+
+    async def _auto_assign_current_pick(self):
+        """Make the current captain's pick for them (they didn't respond in time)."""
+        if self.draft_finished or self.auto_picking:
+            return
+        self.auto_picking = True
+        try:
+            current_captain_id = str(self.pick_order[self.pick_count]["id"])
+            player_dict = self._auto_pick_player()
+            c = (
+                self.bot.captain1
+                if current_captain_id == str(self.bot.captain1["id"])
+                else self.bot.captain2
+            )
+
+            if current_captain_id == str(self.bot.captain1["id"]):
+                self.bot.team1.append(player_dict)
+            else:
+                self.bot.team2.append(player_dict)
+            self.pick_count += 1
+            try:
+                self.remaining_players.remove(player_dict)
+            except ValueError:
+                pass
+
+            await self.ctx.send(
+                f"{c['name']} took too long to pick. Auto-picked "
+                f"**{player_dict.get('name', 'Unknown')}**."
+            )
+        finally:
+            self.auto_picking = False
+
+        await self.draft_next_player()
+
     def start_draft_timer(self):
         if self.draft_timer_task:
             self.draft_timer_task.cancel()
@@ -423,6 +471,16 @@ class CaptainsDraftingView(discord.ui.View):
                     await self.captain_pick_message.edit(content=message, view=self)
                 except discord.NotFound:
                     pass
+
+        # The captain didn't respond in time — make the pick for them
+        if not self.draft_finished:
+            self.cancel_draft_timer()
+            await self._auto_assign_current_pick()
+
+    def cancel_draft_timer(self):
+        if self.draft_timer_task:
+            self.draft_timer_task.cancel()
+            self.draft_timer_task = None
 
     async def send_current_draft_view(self):
         if self.draft_finished:
@@ -566,45 +624,7 @@ class CaptainsDraftingView(discord.ui.View):
                     timeout=120,
                 )
             except asyncio.TimeoutError:
+                # The captain didn't respond in time — pick for them instead
+                # of cancelling the whole match
                 if not self.draft_finished:
-                    await self.ctx.send(
-                        f"{curr_captain_name} took too long. Match will be cancelled..."
-                    )
-                    await asyncio.sleep(2)
-
-                    # Reset state
-                    self.bot.signup_active = False
-                    self.bot.match_ongoing = False
-                    self.bot.match_not_reported = False
-                    self.bot.queue.clear()
-                    self.bot.team1 = []
-                    self.bot.team2 = []
-                    self.bot.captain1 = None
-                    self.bot.captain2 = None
-                    self.bot.chosen_mode = None
-                    self.bot.selected_map = None
-
-                    try:
-                        if getattr(self.bot, "match_channel", None):
-                            await self.bot.match_channel.delete()
-                    except discord.NotFound:
-                        pass
-                    finally:
-                        self.bot.match_channel = None
-
-                    try:
-                        if getattr(self.bot, "match_role", None):
-                            await self.bot.match_role.delete()
-                    except discord.NotFound:
-                        pass
-                    finally:
-                        self.bot.match_role = None
-
-                    try:
-                        self.stop()
-                    except Exception:
-                        pass
-
-                    if self.draft_timer_task:
-                        self.draft_timer_task.cancel()
-                        self.draft_timer_task = None
+                    await self._auto_assign_current_pick()
