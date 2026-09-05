@@ -12,6 +12,7 @@ from globals import API_KEY
 
 
 from database import users, tdm_matches, tdm_mmr_collection
+from tracker_links import tracker_link
 
 
 async def setup(bot):
@@ -124,8 +125,12 @@ class TDMCommands(BotCommands):
                 for player in self.tdm_queue:
                     user_data = users.find_one({"discord_id": player["id"]})
                     if user_data:
-                        riot_name = f"{user_data.get('name')}#{user_data.get('tag')}"
-                        riot_names.append(riot_name)
+                        riot_names.append(
+                            tracker_link(
+                                user_data.get("name", "Unknown"),
+                                user_data.get("tag", "Unknown"),
+                            )
+                        )
                     else:
                         riot_names.append("Unknown")
 
@@ -199,8 +204,12 @@ class TDMCommands(BotCommands):
                 for player in self.tdm_queue:
                     user_data = users.find_one({"discord_id": player["id"]})
                     if user_data:
-                        riot_name = f"{user_data.get('name')}#{user_data.get('tag')}"
-                        riot_names.append(riot_name)
+                        riot_names.append(
+                            tracker_link(
+                                user_data.get("name", "Unknown"),
+                                user_data.get("tag", "Unknown"),
+                            )
+                        )
                     else:
                         riot_names.append("Unknown")
 
@@ -324,9 +333,10 @@ class TDMCommands(BotCommands):
             for player in team:
                 user_data = users.find_one({"discord_id": player["id"]})
                 if user_data:
-                    name = f"{user_data.get('name')}#{user_data.get('tag')}"
                     mmr = self.bot.player_mmr[player["id"]].get("tdm_mmr", 1000)
-                    team_text.append(f"{name} (MMR: {mmr})")
+                    team_text.append(
+                        f"{tracker_link(user_data.get('name', 'Unknown'), user_data.get('tag', 'Unknown'))} (MMR: {mmr})"
+                    )
 
             embed.add_field(
                 name=f"Team {team_num} (Avg MMR: {team_mmr:.0f})",
@@ -688,6 +698,11 @@ class TDMCommands(BotCommands):
             embed = discord.Embed(
                 title=f"{player_name}'s TDM Stats", color=discord.Color.blue()
             )
+            if user_data:
+                embed.description = tracker_link(
+                    user_data.get("name", "Unknown"),
+                    user_data.get("tag", "Unknown"),
+                )
 
             # Main stats
             embed.add_field(
