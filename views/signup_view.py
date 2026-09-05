@@ -7,6 +7,8 @@ from discord.ui import Button
 
 from database import users
 from riot_api import verify_riot_account
+from recent_queue import remember_recent_queue
+from tracker_links import tracker_link
 from views import safe_reply
 from views.mode_vote_view import ModeVoteView
 
@@ -161,6 +163,10 @@ class SignupView(discord.ui.View):
             print(f"Signup cancelled: {reason}")
         except:
             pass  # In case channel is deleted or something
+
+        # Remember who was in the queue for !pingrecent
+        if self.bot.queue:
+            remember_recent_queue(self.bot.queue)
 
         # Clear variables
         self.bot.signup_active = False
