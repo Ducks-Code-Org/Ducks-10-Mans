@@ -6,6 +6,7 @@ from discord.ui import Select
 from urllib.parse import quote
 
 from database import users
+from recent_queue import remember_recent_queue
 
 
 class SecondCaptainChoiceView(discord.ui.View):
@@ -104,6 +105,8 @@ class SecondCaptainChoiceView(discord.ui.View):
         self.bot.signup_active = False
         self.bot.match_ongoing = False
         self.bot.match_not_reported = False
+        if self.bot.queue:
+            remember_recent_queue(self.bot.queue)
         self.bot.queue.clear()
         self.bot.team1 = []
         self.bot.team2 = []
@@ -576,6 +579,8 @@ class CaptainsDraftingView(discord.ui.View):
                     self.bot.signup_active = False
                     self.bot.match_ongoing = False
                     self.bot.match_not_reported = False
+                    if self.bot.queue:
+                        remember_recent_queue(self.bot.queue)
                     self.bot.queue.clear()
                     self.bot.team1 = []
                     self.bot.team2 = []

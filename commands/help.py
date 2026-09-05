@@ -52,6 +52,7 @@ class HelpCommand(commands.Cog):
                     # "**!setcaptain1** - Set Captain 1 using `Name#Tag`\n"
                     # "**!setcaptain2** - Set Captain 2 using `Name#Tag`\n"
                     "**!cancel** - Cancel current 10 mans signup\n"
+                    "**!pingrecent** - Ping players from the most recent cancelled queue\n"
                     "**!canceltdm** - Cancel current TDM signup\n"
                     "**!toggledev** - Toggle Developer Mode\n"
                     "**!newseason** - Resets stats and starts a new season\n"
