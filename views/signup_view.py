@@ -2,11 +2,12 @@
 
 import asyncio
 
+import aiohttp
 import discord
 from discord.ui import Button
 
 from database import users
-from riot_api import verify_riot_account
+from riot_api import verify_riot_account_async
 from recent_queue import remember_recent_queue
 from tracker_links import tracker_link
 from views import safe_reply
@@ -241,10 +242,14 @@ class SignupView(discord.ui.View):
             )
             return
 
-        # Verify the user's Riot account
+        # Verify the user's Riot account (async + rate-limited; 429s never
+        # block the signup)
         user_name: str = (db_user.get("name") or "").lower().strip()
         user_tag: str = (db_user.get("tag") or "").lower().strip()
-        is_successful, reason = verify_riot_account(user_name, user_tag)
+        async with aiohttp.ClientSession() as session:
+            is_successful, reason = await verify_riot_account_async(
+                session, user_name, user_tag
+            )
         if not is_successful:
             await safe_reply(
                 interaction,
