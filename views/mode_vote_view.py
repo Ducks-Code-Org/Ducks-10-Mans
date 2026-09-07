@@ -83,6 +83,10 @@ class ModeVoteView(discord.ui.View):
             self.interaction_queue_task.cancel()
             self.interaction_queue_task = None
 
+    def is_setup_cancelled(self) -> bool:
+        """Whether match setup was cancelled externally (e.g. !cancel)."""
+        return self.bot.match_channel is None and not self.bot.match_ongoing
+
     async def handle_mode_vote(self, interaction: discord.Interaction, mode: str):
         # Ensure vote is valid
         if self.voting_phase_ended:
@@ -114,6 +118,13 @@ class ModeVoteView(discord.ui.View):
         await self.check_for_winner()
 
     async def check_for_winner(self):
+        if self.is_setup_cancelled():
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
+
         async with self.vote_lock:
             if self.voting_phase_ended:
                 return
@@ -158,6 +169,14 @@ class ModeVoteView(discord.ui.View):
                 return
 
     async def close_vote(self):
+        if self.is_setup_cancelled():
+            print("Mode vote skipping close because match setup was cancelled.")
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
+
         if self.timeout:
             print(
                 f"Mode vote ended by timeout. Setting bot mode to: {self.bot.chosen_mode}"
@@ -204,6 +223,11 @@ class ModeVoteView(discord.ui.View):
 
     async def timeout_timer(self):
         await asyncio.sleep(25)
+        if self.is_setup_cancelled():
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            return
         if not self.voting_phase_ended:
             self.timeout = True
             await self.check_for_winner()

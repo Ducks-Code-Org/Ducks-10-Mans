@@ -117,29 +117,41 @@ class AdminCommands(BotCommands):
     @commands.command()
     @commands.has_role("Owner")
     async def cancel(self, ctx):
+        # Handle an active signup (setup phase before teams are finalized)
         if self.bot.signup_active:
             if self.bot.signup_view:
                 self.bot.signup_view.cleanup()
                 self.bot.signup_view = None
 
-            self.bot.queue = []
-            self.bot.current_signup_message = None
+            # Clear setup state first so lingering vote/draft views see the
+            # cancellation and bail out instead of resurrecting match setup.
             self.bot.signup_active = False
+            self.bot.match_not_reported = False
+            self.bot.match_ongoing = False
+            self.bot.chosen_mode = None
+            self.bot.selected_map = None
+            self.bot.captain1 = None
+            self.bot.captain2 = None
+            self.bot.team1 = []
+            self.bot.team2 = []
+            self.bot.queue.clear()
 
             await ctx.send(
                 "Canceled active signup. Feel free to start a new one with `!signup`."
             )
             print("Cancelling signup...")
 
-            try:
-                await self.bot.match_channel.delete()
-                await self.bot.match_role.delete()
-            except discord.NotFound:
-                pass
-        elif self.bot.match_ongoing and self.bot.selected_map:
-            # Logic to cancel the current match and clear info from memory
+            await cleanup_match_resources(self.bot)
+        # Handle a match that is already in progress
+        elif self.bot.match_ongoing or self.bot.selected_map:
             self.bot.match_not_reported = False
             self.bot.match_ongoing = False
+            self.bot.chosen_mode = None
+            self.bot.selected_map = None
+            self.bot.captain1 = None
+            self.bot.captain2 = None
+            self.bot.team1 = []
+            self.bot.team2 = []
             await cleanup_match_resources(self.bot)
             await ctx.send(
                 "Cancelled active match. Feel free to start a new one with `!signup`."
