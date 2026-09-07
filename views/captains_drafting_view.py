@@ -1,4 +1,5 @@
 import asyncio
+import math
 from typing import Dict
 
 import discord
@@ -8,6 +9,9 @@ from urllib.parse import quote
 from database import users
 from recent_queue import remember_recent_queue
 
+DECISION_TIMEOUT_SECONDS = 120
+PICK_TIMEOUT_SECONDS = 120
+
 
 class SecondCaptainChoiceView(discord.ui.View):
     def __init__(self, ctx, bot):
@@ -15,7 +19,7 @@ class SecondCaptainChoiceView(discord.ui.View):
         self.ctx = ctx
         self.bot = bot
         self.view_message = None
-        self.decision_time_remaining = 120
+        self.decision_time_remaining = DECISION_TIMEOUT_SECONDS
         self.timeout_timer_task = asyncio.create_task(self.timeout_timer())
 
         # Buttons
@@ -92,14 +96,34 @@ class SecondCaptainChoiceView(discord.ui.View):
             child.disabled = True
 
     async def timeout_timer(self):
-        for _ in range(120):
-            await asyncio.sleep(1)
-            self.decision_time_remaining -= 1
-            if self.view_message:
+        loop = asyncio.get_event_loop()
+        start_time = loop.time()
+        last_shown = DECISION_TIMEOUT_SECONDS
+        while True:
+            remaining = DECISION_TIMEOUT_SECONDS - (loop.time() - start_time)
+            if remaining <= 0:
+                break
+            display_time = math.ceil(remaining)
+            if display_time != last_shown:
+                last_shown = display_time
+                self.decision_time_remaining = display_time
+                if self.view_message:
+                    try:
+                        await self.view_message.edit(
+                            content=f"<@{self.bot.captain2['id']}>, choose draft type: ({self.decision_time_remaining}s)",
+                            view=self,
+                        )
+                    except discord.NotFound:
+                        pass
+            await asyncio.sleep(min(1.0, remaining))
+        if self.view_message:
+            try:
                 await self.view_message.edit(
-                    content=f"<@{self.bot.captain2['id']}>, choose draft type: ({self.decision_time_remaining}s)",
+                    content=f"<@{self.bot.captain2['id']}>, choose draft type: (0s)",
                     view=self,
                 )
+            except discord.NotFound:
+                pass
         # Cancel Signup
         await self.ctx.send("The captain took too long. Match will be cancelled...")
         self.bot.signup_active = False
@@ -182,7 +206,7 @@ class CaptainsDraftingView(discord.ui.View):
         self.pick_count = 0
         self.draft_finished = False
 
-        self.draft_time_remaining = 120
+        self.draft_time_remaining = PICK_TIMEOUT_SECONDS
         self.draft_timer_task = None
 
         self.remaining_players_message = None
@@ -380,7 +404,7 @@ class CaptainsDraftingView(discord.ui.View):
         except ValueError:
             pass
 
-        self.draft_time_remaining = 120
+        self.draft_time_remaining = PICK_TIMEOUT_SECONDS
         if self.draft_timer_task:
             self.draft_timer_task.cancel()
             self.draft_timer_task = None
@@ -401,31 +425,91 @@ class CaptainsDraftingView(discord.ui.View):
             self.draft_timer_task.cancel()
         self.draft_timer_task = asyncio.create_task(self.draft_timeout_timer())
 
+    def _current_captain_name(self) -> str:
+        current_captain_id = self.pick_order[self.pick_count]["id"]
+        ud = users.find_one({"discord_id": str(current_captain_id)})
+        if ud:
+            return f"{ud.get('name', 'Unknown')}#{ud.get('tag', 'Unknown')}"
+        c = (
+            self.bot.captain1
+            if self.bot.captain1["id"] == current_captain_id
+            else self.bot.captain2
+        )
+        return c["name"]
+
     async def draft_timeout_timer(self):
-        for _ in range(120):
-            await asyncio.sleep(1)
-            if self.draft_finished:
-                return
-            self.draft_time_remaining -= 1
-            if self.captain_pick_message:
-                current_captain_id = self.pick_order[self.pick_count]["id"]
-                ud = users.find_one({"discord_id": str(current_captain_id)})
-                if ud:
-                    curr_captain_name = (
-                        f"{ud.get('name','Unknown')}#{ud.get('tag','Unknown')}"
-                    )
-                else:
-                    c = (
-                        self.bot.captain1
-                        if self.bot.captain1["id"] == current_captain_id
-                        else self.bot.captain2
-                    )
-                    curr_captain_name = c["name"]
-                message = f"**{curr_captain_name}**, pick a player: ({self.draft_time_remaining}s)"
-                try:
-                    await self.captain_pick_message.edit(content=message, view=self)
-                except discord.NotFound:
-                    pass
+        loop = asyncio.get_event_loop()
+        start_time = loop.time()
+        last_shown = PICK_TIMEOUT_SECONDS
+        while not self.draft_finished:
+            remaining = PICK_TIMEOUT_SECONDS - (loop.time() - start_time)
+            if remaining <= 0:
+                break
+            display_time = math.ceil(remaining)
+            if display_time != last_shown:
+                last_shown = display_time
+                self.draft_time_remaining = display_time
+                curr_captain_name = self._current_captain_name()
+                if self.captain_pick_message:
+                    message = f"**{curr_captain_name}**, pick a player: ({self.draft_time_remaining}s)"
+                    try:
+                        await self.captain_pick_message.edit(content=message, view=self)
+                    except discord.NotFound:
+                        pass
+            await asyncio.sleep(min(1.0, remaining))
+        if self.draft_finished:
+            return
+        self.draft_time_remaining = 0
+        curr_captain_name = self._current_captain_name()
+        if self.captain_pick_message:
+            try:
+                await self.captain_pick_message.edit(
+                    content=f"**{curr_captain_name}**, pick a player: (0s)", view=self
+                )
+            except discord.NotFound:
+                pass
+        await self._cancel_match_on_timeout(curr_captain_name)
+
+    async def _cancel_match_on_timeout(self, captain_name: str):
+        self.draft_finished = True
+
+        await self.ctx.send(f"{captain_name} took too long. Match will be cancelled...")
+        await asyncio.sleep(2)
+
+        # Reset state
+        self.bot.signup_active = False
+        self.bot.match_ongoing = False
+        self.bot.match_not_reported = False
+        if self.bot.queue:
+            remember_recent_queue(self.bot.queue)
+        self.bot.queue.clear()
+        self.bot.team1 = []
+        self.bot.team2 = []
+        self.bot.captain1 = None
+        self.bot.captain2 = None
+        self.bot.chosen_mode = None
+        self.bot.selected_map = None
+
+        try:
+            if getattr(self.bot, "match_channel", None):
+                await self.bot.match_channel.delete()
+        except discord.NotFound:
+            pass
+        finally:
+            self.bot.match_channel = None
+
+        try:
+            if getattr(self.bot, "match_role", None):
+                await self.bot.match_role.delete()
+        except discord.NotFound:
+            pass
+        finally:
+            self.bot.match_role = None
+
+        try:
+            self.stop()
+        except Exception:
+            pass
 
     async def send_current_draft_view(self):
         if self.draft_finished:
@@ -508,16 +592,7 @@ class CaptainsDraftingView(discord.ui.View):
 
         # Prompt for current captain
         current_captain_id = self.pick_order[self.pick_count]["id"]
-        ud = users.find_one({"discord_id": str(current_captain_id)})
-        if ud:
-            curr_captain_name = f"{ud.get('name','Unknown')}#{ud.get('tag','Unknown')}"
-        else:
-            c = (
-                self.bot.captain1
-                if self.bot.captain1["id"] == current_captain_id
-                else self.bot.captain2
-            )
-            curr_captain_name = c["name"]
+        curr_captain_name = self._current_captain_name()
 
         message = (
             f"**{curr_captain_name}**, pick a player: ({self.draft_time_remaining}s)"
@@ -561,55 +636,3 @@ class CaptainsDraftingView(discord.ui.View):
                 self.remaining_players.clear()
                 await self.finalize_draft()
                 return
-            try:
-                await self.bot.wait_for(
-                    "interaction",
-                    check=lambda i: i.data.get("component_type") == 3
-                    and str(i.user.id) == str(current_captain_id),
-                    timeout=120,
-                )
-            except asyncio.TimeoutError:
-                if not self.draft_finished:
-                    await self.ctx.send(
-                        f"{curr_captain_name} took too long. Match will be cancelled..."
-                    )
-                    await asyncio.sleep(2)
-
-                    # Reset state
-                    self.bot.signup_active = False
-                    self.bot.match_ongoing = False
-                    self.bot.match_not_reported = False
-                    if self.bot.queue:
-                        remember_recent_queue(self.bot.queue)
-                    self.bot.queue.clear()
-                    self.bot.team1 = []
-                    self.bot.team2 = []
-                    self.bot.captain1 = None
-                    self.bot.captain2 = None
-                    self.bot.chosen_mode = None
-                    self.bot.selected_map = None
-
-                    try:
-                        if getattr(self.bot, "match_channel", None):
-                            await self.bot.match_channel.delete()
-                    except discord.NotFound:
-                        pass
-                    finally:
-                        self.bot.match_channel = None
-
-                    try:
-                        if getattr(self.bot, "match_role", None):
-                            await self.bot.match_role.delete()
-                    except discord.NotFound:
-                        pass
-                    finally:
-                        self.bot.match_role = None
-
-                    try:
-                        self.stop()
-                    except Exception:
-                        pass
-
-                    if self.draft_timer_task:
-                        self.draft_timer_task.cancel()
-                        self.draft_timer_task = None

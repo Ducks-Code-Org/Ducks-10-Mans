@@ -8,7 +8,6 @@ from discord.ui import Button
 from database import users
 from riot_api import verify_riot_account
 from recent_queue import remember_recent_queue
-from tracker_links import tracker_link
 from views import safe_reply
 from views.mode_vote_view import ModeVoteView
 
