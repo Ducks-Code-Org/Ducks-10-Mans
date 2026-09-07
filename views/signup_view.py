@@ -253,6 +253,18 @@ class SignupView(discord.ui.View):
             )
             return
 
+        # Verify the stored Riot ID is linked to THIS discord id in the database
+        # (someone else may have linked the same Riot ID to their account)
+        linked_user = users.find_one({"name": user_name, "tag": user_tag})
+        if not linked_user or str(linked_user.get("discord_id")) != user_id:
+            await safe_reply(
+                interaction,
+                "❌ Your Riot ID is linked to a different Discord account, or was changed "
+                "after another user linked it. Please re-link it using `!linkriot <Name#Tag>`.",
+                ephemeral=True,
+            )
+            return
+
         # Add the user the queue, and create mmr data if not present
         self.bot.queue.append({"id": user_id, "name": interaction.user.name})
         if user_id not in self.bot.player_mmr:
