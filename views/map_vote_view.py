@@ -10,13 +10,16 @@ from views import safe_reply
 
 
 class MapVoteView(discord.ui.View):
-    def __init__(self, ctx, bot, map_choices):
+    def __init__(self, ctx, bot, map_choices, setup_generation: int | None = None):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
         # Capture the current setup cycle so we can detect a later !cancel
-        # (or a new signup superseding this vote).
-        self.setup_generation = bot.setup_generation
+        # (or a new signup superseding this vote). Parent views pass their own
+        # captured generation so a cancel racing view creation is still seen.
+        self.setup_generation = (
+            bot.setup_generation if setup_generation is None else setup_generation
+        )
 
         # Setup Task Runners
         self.interaction_request_queue = (
@@ -241,7 +244,9 @@ class MapVoteView(discord.ui.View):
                     self.cancel_timeout_timer()
                     return
 
-            choice_view = SecondCaptainChoiceView(self.ctx, self.bot)
+            choice_view = SecondCaptainChoiceView(
+                self.ctx, self.bot, self.setup_generation
+            )
             await choice_view.send_view()
         else:
             await self.ctx.send("Error: No game mode selected!")

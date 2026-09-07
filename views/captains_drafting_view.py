@@ -14,13 +14,16 @@ PICK_TIMEOUT_SECONDS = 120
 
 
 class SecondCaptainChoiceView(discord.ui.View):
-    def __init__(self, ctx, bot):
+    def __init__(self, ctx, bot, setup_generation: int | None = None):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
         # Capture the current setup cycle so we can detect a later !cancel
-        # (or a new signup superseding this view).
-        self.setup_generation = bot.setup_generation
+        # (or a new signup superseding this view). Parent views pass their own
+        # captured generation so a cancel racing view creation is still seen.
+        self.setup_generation = (
+            bot.setup_generation if setup_generation is None else setup_generation
+        )
         self.view_message = None
         self.decision_time_remaining = DECISION_TIMEOUT_SECONDS
         self.timeout_timer_task = asyncio.create_task(self.timeout_timer())
@@ -121,7 +124,9 @@ class SecondCaptainChoiceView(discord.ui.View):
         mode_name = "Single Pick" if single_pick else "Double Pick"
         await self.ctx.send(f"**{mode_name}** chosen! Starting draft phase...")
 
-        drafting_view = CaptainsDraftingView(self.ctx, self.bot, single_pick)
+        drafting_view = CaptainsDraftingView(
+            self.ctx, self.bot, single_pick, self.setup_generation
+        )
 
         await drafting_view.send_current_draft_view()
 
@@ -174,7 +179,10 @@ class SecondCaptainChoiceView(discord.ui.View):
                     pass
         # Cancel Signup
         self.decision_finished = True
-        await self.ctx.send("The captain took too long. Match will be cancelled...")
+        try:
+            await self.ctx.send("The captain took too long. Match will be cancelled...")
+        except (discord.NotFound, discord.HTTPException):
+            pass
         self.bot.setup_generation += 1
         self.bot.signup_active = False
         self.bot.match_ongoing = False
@@ -201,13 +209,18 @@ class SecondCaptainChoiceView(discord.ui.View):
 
 
 class CaptainsDraftingView(discord.ui.View):
-    def __init__(self, ctx, bot, single_pick: bool):
+    def __init__(
+        self, ctx, bot, single_pick: bool, setup_generation: int | None = None
+    ):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
         # Capture the current setup cycle so we can detect a later !cancel
-        # (or a new signup superseding this draft).
-        self.setup_generation = bot.setup_generation
+        # (or a new signup superseding this draft). Parent views pass their own
+        # captured generation so a cancel racing view creation is still seen.
+        self.setup_generation = (
+            bot.setup_generation if setup_generation is None else setup_generation
+        )
 
         # Build remaining pool
         cap1_id = str(self.bot.captain1["id"])
@@ -572,7 +585,12 @@ class CaptainsDraftingView(discord.ui.View):
 
         self.draft_finished = True
 
-        await self.ctx.send(f"{captain_name} took too long. Match will be cancelled...")
+        try:
+            await self.ctx.send(
+                f"{captain_name} took too long. Match will be cancelled..."
+            )
+        except (discord.NotFound, discord.HTTPException):
+            pass
         await asyncio.sleep(2)
 
         # Invalidate this setup cycle, reset shared state, then clean up

@@ -109,7 +109,7 @@ class AdminCommands(BotCommands):
 
         await ctx.send("The queue is now full! Proceeding with match setup...")
 
-        mode_vote = ModeVoteView(ctx, self.bot)
+        mode_vote = ModeVoteView(ctx, self.bot, self.bot.setup_generation)
         await mode_vote.send_view()
 
     # Set the bot to development mode
@@ -224,5 +224,5 @@ class AdminCommands(BotCommands):
         for bot in bot_queue:
             self.bot.queue.append(bot)
         self.bot.setup_generation += 1
-        draft = CaptainsDraftingView(ctx, self.bot, True)
+        draft = CaptainsDraftingView(ctx, self.bot, True, self.bot.setup_generation)
         await draft.send_current_draft_view()
