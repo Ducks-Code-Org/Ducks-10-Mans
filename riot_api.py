@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
 
@@ -141,3 +142,34 @@ def riot_account_exists(name: str, tag: str) -> bool | None:
     if r.status_code == 404:
         return False
     return None
+
+
+async def riot_account_exists_async(
+    session: aiohttp.ClientSession,
+    name: str,
+    tag: str,
+    *,
+    timeout: int = 10,
+) -> bool | None:
+    """Async version of riot_account_exists.
+
+    Returns True (exists), False (confirmed missing via 404), or None when
+    the result is inconclusive (network/auth errors — never treat as invalid).
+    Does not block the event loop, so many checks can run in parallel.
+    """
+    name = (name or "").strip()
+    tag = (tag or "").strip()
+    if not name or not tag:
+        return False
+
+    url = f"{HENRIK_BASE}/v2/account/{quote(name, safe='')}/{quote(tag, safe='')}"
+
+    try:
+        async with session.get(url, headers=_headers(), timeout=timeout) as r:
+            if r.status == 200:
+                return True
+            if r.status == 404:
+                return False
+            return None
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        return None
