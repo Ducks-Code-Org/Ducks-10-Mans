@@ -102,8 +102,19 @@ async def _run_background_purge(bot, ctx) -> None:
                     )
                 except discord.HTTPException:
                     pass
+    except asyncio.CancelledError:
+        # A new signup or !cancel superseded this purge run; stop quietly.
+        raise
     except Exception as e:
         print(f"[purge] Background purge failed: {e}")
+
+
+def cancel_background_purge(bot) -> None:
+    """Cancel any in-flight background Riot-ID purge task."""
+    task = getattr(bot, "background_purge_task", None)
+    if task is not None and not task.done():
+        task.cancel()
+    bot.background_purge_task = None
 
 
 async def setup(bot):
@@ -127,6 +138,10 @@ class SignupCommand(BotCommands):
                 await ctx.send("Report the last match before starting another one.")
                 return
 
+            # A stale purge from a previous signup may still be hogging the
+            # rate-limit budget; drop it now that we know we're proceeding.
+            cancel_background_purge(self.bot)
+
             ok, msg, _db_user = await ensure_current_riot_identity(ctx.author.id)
             if not ok:
                 await ctx.send(msg)
@@ -142,7 +157,9 @@ class SignupCommand(BotCommands):
         # Fire off the invalid-Riot-ID purge in the background so the signup
         # isn't blocked by the (potentially slow) round of API checks. It
         # removes purged players from the queue as they're detected.
-        asyncio.create_task(_run_background_purge(self.bot, ctx))
+        self.bot.background_purge_task = asyncio.create_task(
+            _run_background_purge(self.bot, ctx)
+        )
 
         # Reset all match related states
         # Bump the setup generation so any stale views from a previous

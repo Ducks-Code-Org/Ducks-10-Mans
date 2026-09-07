@@ -19,6 +19,14 @@ HENRIK_BASE = "https://api.henrikdev.xyz/valorant"
 # whole stays under that budget no matter how many checks run in parallel.
 HENRIK_RATE_LIMIT = 30
 HENRIK_RATE_WINDOW = 60.0  # seconds
+# Slots kept free for interactive callers (signup verification, identity
+# refresh). Background work (e.g. the invalid-Riot-ID purge) may only use the
+# remaining budget, so a burst of purge requests can never starve a live
+# signup command.
+INTERACTIVE_RESERVE = 8
+# Interactive callers give up (inconclusive) instead of blocking if they
+# cannot get a rate-limit slot within this many seconds.
+INTERACTIVE_MAX_WAIT = 8.0
 
 _rate_lock: asyncio.Lock | None = None
 _rate_slots: deque[float] = deque()
@@ -33,20 +41,42 @@ def _get_rate_lock() -> asyncio.Lock:
     return _rate_lock
 
 
-async def _reserve_rate_slot() -> None:
-    """Wait until a request slot is free in the sliding window, then take it."""
+async def _reserve_rate_slot(*, priority: bool = False) -> None:
+    """Wait until a request slot is free in the sliding window, then take it.
+
+    Interactive (priority) callers may use the full window and raise
+    RiotApiInconclusive rather than wait longer than INTERACTIVE_MAX_WAIT.
+    Background callers are capped at HENRIK_RATE_LIMIT - INTERACTIVE_RESERVE
+    slots and simply wait — they never error out.
+    """
     loop = asyncio.get_running_loop()
+    deadline = loop.time() + (INTERACTIVE_MAX_WAIT if priority else float("inf"))
     while True:
         async with _get_rate_lock():
             now = loop.time()
             while _rate_slots and now - _rate_slots[0] >= HENRIK_RATE_WINDOW:
                 _rate_slots.popleft()
-            if len(_rate_slots) < HENRIK_RATE_LIMIT:
+            limit_for_caller = (
+                HENRIK_RATE_LIMIT
+                if priority
+                else HENRIK_RATE_LIMIT - INTERACTIVE_RESERVE
+            )
+            if len(_rate_slots) < limit_for_caller:
                 _rate_slots.append(now)
                 return
-            # Window is full: sleep until the oldest slot falls out of it.
+            # Window (or background budget) is full: wait until the oldest
+            # slot falls out of it.
             wait_for = HENRIK_RATE_WINDOW - (now - _rate_slots[0])
-        await asyncio.sleep(max(wait_for, 0.05) + 0.01)
+        if loop.time() >= deadline:
+            raise RiotApiInconclusive(
+                "interactive caller could not get a rate-limit slot in time"
+            )
+        if priority:
+            # Poll briefly so the deadline is honored even if the oldest slot
+            # is a long way from expiring.
+            await asyncio.sleep(min(max(wait_for, 0.01), 1.0))
+        else:
+            await asyncio.sleep(max(wait_for, 0.01) + 0.01)
 
 
 class RiotApiInconclusive(RuntimeError):
@@ -81,6 +111,7 @@ async def _henrik_get_json(
     *,
     timeout: int = 10,
     retries: int = 2,
+    priority: bool = False,
 ) -> tuple[int, Optional[Dict[str, Any]]]:
     """GET a HenrikDev endpoint through the shared 30 req/min rate limiter.
 
@@ -88,9 +119,11 @@ async def _henrik_get_json(
     the resource is confirmed missing, (0, None) on network errors, and
     (other_status, None) for unexpected API responses. Retries 429s with
     backoff and raises RiotApiInconclusive once retries are exhausted.
+    Interactive callers set priority=True so a saturated window resolves
+    quickly to RiotApiInconclusive instead of blocking them.
     """
     for attempt in range(retries + 1):
-        await _reserve_rate_slot()
+        await _reserve_rate_slot(priority=priority)
         try:
             async with session.get(url, headers=_headers(), timeout=timeout) as r:
                 if r.status == 200:
@@ -152,13 +185,14 @@ async def get_account_by_riot_id(
     *,
     timeout: int = 10,
     retries: int = 2,
+    priority: bool = False,
 ) -> Optional[Dict[str, Any]]:
     safe_name = quote((name or "").strip(), safe="")
     safe_tag = quote((tag or "").strip(), safe="")
     url = f"{HENRIK_BASE}/v1/account/{safe_name}/{safe_tag}"
 
     status, data = await _henrik_get_json(
-        session, url, timeout=timeout, retries=retries
+        session, url, timeout=timeout, retries=retries, priority=priority
     )
     if status == 404 or data is None:
         return None
@@ -171,13 +205,14 @@ async def get_account_by_puuid(
     *,
     timeout: int = 10,
     retries: int = 2,
+    priority: bool = False,
 ) -> Optional[Dict[str, Any]]:
 
     puuid = (puuid or "").strip()
     url = f"{HENRIK_BASE}/v1/by-puuid/account/{puuid}"
 
     status, data = await _henrik_get_json(
-        session, url, timeout=timeout, retries=retries
+        session, url, timeout=timeout, retries=retries, priority=priority
     )
     if status == 404 or data is None or status == 0:
         return None
@@ -233,9 +268,11 @@ async def verify_riot_account_async(
 ) -> tuple[bool, str]:
     """Async counterpart of verify_riot_account for interactive paths.
 
-    A rate limit (429) is inconclusive, never a failure: on persistent 429
-    this returns (True, ...) so the signup proceeds. Unexpected statuses are
-    also non-blocking. Network errors are likewise skipped.
+    Runs with priority=True so a saturated rate-limit window can never block
+    the signup button for more than INTERACTIVE_MAX_WAIT. A rate limit (429)
+    is inconclusive, never a failure: on persistent 429 this returns
+    (True, ...) so the signup proceeds. Unexpected statuses are also
+    non-blocking. Network errors are likewise skipped.
     """
     name = (name or "").strip()
     tag = (tag or "").strip()
@@ -245,7 +282,9 @@ async def verify_riot_account_async(
     url = f"{HENRIK_BASE}/v2/account/{quote(name, safe='')}/{quote(tag, safe='')}"
 
     try:
-        status, _data = await _henrik_get_json(session, url, timeout=timeout)
+        status, _data = await _henrik_get_json(
+            session, url, timeout=timeout, priority=True
+        )
     except RiotApiInconclusive:
         # Rate limit persisted after retries: skip verification, don't block.
         return (True, "rate limited (verification skipped)")

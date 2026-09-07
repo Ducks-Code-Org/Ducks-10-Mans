@@ -28,9 +28,9 @@ async def ensure_current_riot_identity(discord_id: int):
         acc = None
         try:
             if puuid:
-                acc = await get_account_by_puuid(session, puuid)
+                acc = await get_account_by_puuid(session, puuid, priority=True)
             if acc is None and name and tag:
-                acc = await get_account_by_riot_id(session, name, tag)
+                acc = await get_account_by_riot_id(session, name, tag, priority=True)
         except RiotApiInconclusive:
             # Rate limits / API problems are inconclusive, never failures.
             # Skip the refresh silently so signup isn't blocked or crashed.

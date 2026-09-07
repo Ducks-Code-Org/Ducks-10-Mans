@@ -5,6 +5,7 @@ from discord.ext import commands
 
 from commands import BotCommands
 from commands.report import cleanup_match_resources
+from commands.signup import cancel_background_purge
 from database import mmr_collection
 from recent_queue import get_recent_queue, remember_recent_queue
 from views.signup_view import SignupView
@@ -143,6 +144,10 @@ class AdminCommands(BotCommands):
     @commands.command()
     @commands.has_role("Owner")
     async def cancel(self, ctx):
+        # Stop any in-flight background Riot-ID purge so it stops consuming
+        # the rate-limit budget and can't delay a follow-up !signup.
+        cancel_background_purge(self.bot)
+
         # Handle an active signup (queue phase before the queue is full)
         if self.bot.signup_active:
             # Invalidate in-flight setup views first so lingering vote/draft
