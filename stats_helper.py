@@ -1,6 +1,6 @@
 """This file provides functions for updating players stats."""
 
-from database import users, mmr_collection
+from database import mmr_collection
 
 
 def _calc_mmr_delta(
@@ -51,21 +51,21 @@ def update_stats(
     player_mmr,
     player_names,
     *,
+    discord_id=None,
     team_sum_mmr=None,
     opp_sum_mmr=None,
     team_won=None,
     round_diff=None,
 ):
     """Update player stats with proper initialization and error handling"""
-    name = player_stats.get("name", "").lower()
-    tag = player_stats.get("tag", "").lower()
-
-    user_entry = users.find_one({"name": name, "tag": tag})
-    if not user_entry:
-        print(f"Player {name}#{tag} not linked to any Discord account.")
+    if discord_id is None:
+        print(
+            f"Player {player_stats.get('name', '')}#{player_stats.get('tag', '')} "
+            "could not be resolved to a Discord account."
+        )
         return
 
-    discord_id = str(user_entry.get("discord_id"))
+    discord_id = str(discord_id)
 
     # Get the stats with proper defaults
     stats = player_stats.get("stats", {})
@@ -162,6 +162,7 @@ def update_stats(
 
     else:
         # Initialize new player stats
+        riot_name = f"{player_stats.get('name', '').lower()}#{player_stats.get('tag', '').lower()}"
         total_matches = 1
         total_combat_score = score
         total_kills = kills
@@ -186,7 +187,7 @@ def update_stats(
             "average_combat_score": average_combat_score,
             "kill_death_ratio": kill_death_ratio,
         }
-        player_names[discord_id] = name
+        player_names[discord_id] = riot_name
 
         if (
             team_sum_mmr is not None
@@ -222,7 +223,7 @@ def update_stats(
                     "mmr": player_mmr[discord_id]["mmr"],
                     "wins": 0,
                     "losses": 0,
-                    "name": name,
+                    "name": riot_name,
                     "total_combat_score": total_combat_score,
                     "total_kills": total_kills,
                     "total_deaths": total_deaths,
