@@ -1,14 +1,13 @@
 import asyncio
 import math
-from typing import Dict
 
 import discord
 from discord.ui import Select
-from urllib.parse import quote
 
 from database import users
 from commands.report import cleanup_match_resources
 from recent_queue import remember_recent_queue
+from tracker_links import tracker_link
 
 DECISION_TIMEOUT_SECONDS = 120
 PICK_TIMEOUT_SECONDS = 120
@@ -280,12 +279,12 @@ class CaptainsDraftingView(discord.ui.View):
         c1_data = users.find_one({"discord_id": str(self.bot.captain1["id"])})
         c2_data = users.find_one({"discord_id": str(self.bot.captain2["id"])})
         self.captain1_name = (
-            f"{c1_data.get('name','Unknown')}#{c1_data.get('tag','Unknown')}"
+            tracker_link(c1_data.get("name", "Unknown"), c1_data.get("tag", "Unknown"))
             if c1_data
             else self.bot.captain1["name"]
         )
         self.captain2_name = (
-            f"{c2_data.get('name','Unknown')}#{c2_data.get('tag','Unknown')}"
+            tracker_link(c2_data.get("name", "Unknown"), c2_data.get("tag", "Unknown"))
             if c2_data
             else self.bot.captain2["name"]
         )
@@ -379,9 +378,9 @@ class CaptainsDraftingView(discord.ui.View):
                 .get("mmr", 1000)
             )
             if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
-                attackers.append(f"{rn}#{rt} (MMR:{mmr})")
+                attackers.append(
+                    f"{tracker_link(ud.get('name', 'Unknown'), ud.get('tag', 'Unknown'))} (MMR:{mmr})"
+                )
             else:
                 attackers.append(f"{p['name']} (MMR:{mmr})")
 
@@ -394,9 +393,9 @@ class CaptainsDraftingView(discord.ui.View):
                 .get("mmr", 1000)
             )
             if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
-                defenders.append(f"{rn}#{rt} (MMR:{mmr})")
+                defenders.append(
+                    f"{tracker_link(ud.get('name', 'Unknown'), ud.get('tag', 'Unknown'))} (MMR:{mmr})"
+                )
             else:
                 defenders.append(f"{p['name']} (MMR:{mmr})")
 
@@ -516,10 +515,12 @@ class CaptainsDraftingView(discord.ui.View):
             self.draft_timer_task.cancel()
             self.draft_timer_task = None
 
-    def _current_captain_name(self) -> str | None:
+    def _current_captain_name(self, tracker_link_name: bool = False) -> str | None:
         current_captain_id = str(self.pick_order[self.pick_count]["id"])
         ud = users.find_one({"discord_id": current_captain_id})
         if ud:
+            if tracker_link_name:
+                return tracker_link(ud.get("name", "Unknown"), ud.get("tag", "Unknown"))
             return f"{ud.get('name', 'Unknown')}#{ud.get('tag', 'Unknown')}"
         captain1 = getattr(self.bot, "captain1", None)
         captain2 = getattr(self.bot, "captain2", None)
@@ -548,7 +549,7 @@ class CaptainsDraftingView(discord.ui.View):
             if display_time != last_shown:
                 last_shown = display_time
                 self.draft_time_remaining = display_time
-                curr_captain_name = self._current_captain_name()
+                curr_captain_name = self._current_captain_name(tracker_link_name=True)
                 if curr_captain_name is None:
                     # Captain state was cleared — stop.
                     self.draft_finished = True
@@ -566,7 +567,7 @@ class CaptainsDraftingView(discord.ui.View):
             self.draft_finished = True
             return
         self.draft_time_remaining = 0
-        curr_captain_name = self._current_captain_name()
+        curr_captain_name = self._current_captain_name(tracker_link_name=True)
         if curr_captain_name is None:
             # Captain state was cleared — stop.
             self.draft_finished = True
@@ -659,29 +660,21 @@ class CaptainsDraftingView(discord.ui.View):
 
         # Remaining players embed
 
-        remaining_players_data: Dict[str, str | None] = (
-            {}
-        )  # Maps player names to tracker.gg links
+        remaining_players_lines = []
         for player in self.remaining_players:
             user_data = users.find_one({"discord_id": str(player["id"])})
             if user_data:
-                user_name = quote(f"{user_data.get('name','Unknown')}")
-                user_tag = quote(f"{user_data.get('tag','Unknown')}")
-                remaining_players_data[f"{user_name}#{user_tag}"] = (
-                    f"https://tracker.gg/valorant/profile/riot/{user_name}%23{user_tag}/overview"
+                remaining_players_lines.append(
+                    tracker_link(
+                        user_data.get("name", "Unknown"),
+                        user_data.get("tag", "Unknown"),
+                    )
                 )
             else:
-                remaining_players_data[player["name"]] = None
+                remaining_players_lines.append(player["name"])
 
-        remaining_players_text: str = ""
-        if remaining_players_data:
-            for name, tracker_link in remaining_players_data.items():
-                if tracker_link:
-                    remaining_players_text += f"[{name}]({tracker_link})\n"
-                else:
-                    remaining_players_text += f"{name}\n"
-            # Remove trailing newline
-            remaining_players_text = remaining_players_text.rstrip("\n")
+        if remaining_players_lines:
+            remaining_players_text = "\n".join(remaining_players_lines)
         else:
             remaining_players_text = "—"
 
@@ -697,7 +690,11 @@ class CaptainsDraftingView(discord.ui.View):
             for p in team:
                 ud = users.find_one({"discord_id": str(p["id"])})
                 if ud:
-                    out.append(f"{ud.get('name','Unknown')}#{ud.get('tag','Unknown')}")
+                    out.append(
+                        tracker_link(
+                            ud.get("name", "Unknown"), ud.get("tag", "Unknown")
+                        )
+                    )
                 else:
                     out.append(p["name"])
             return "\n".join(out) if out else "No players yet"
@@ -718,7 +715,7 @@ class CaptainsDraftingView(discord.ui.View):
 
         # Prompt for current captain
         current_captain_id = self.pick_order[self.pick_count]["id"]
-        curr_captain_name = self._current_captain_name()
+        curr_captain_name = self._current_captain_name(tracker_link_name=True)
         if curr_captain_name is None:
             # Captain state was cleared (e.g. by !cancel) — stop the draft quietly.
             self.draft_finished = True

@@ -14,6 +14,7 @@ from database import users, mmr_collection, seasons, all_matches
 from globals import API_KEY, TIME_ZONE_CST, mock_match_data
 from recent_queue import remember_recent_queue
 from stats_helper import update_stats
+from tracker_links import tracker_link
 from urllib.parse import quote
 
 
@@ -268,7 +269,7 @@ class ReportCommand(BotCommands):
                     self.bot.player_names[discord_id] = player_name
                 else:
                     await ctx.send(
-                        f"Player {player_name}#{player_tag} is not linked to any Discord account."
+                        f"Player {tracker_link(player_name, player_tag)} is not linked to any Discord account."
                     )
                     return
 
@@ -368,7 +369,7 @@ class ReportCommand(BotCommands):
             )
 
             for name, tag in missing_players:
-                mismatch_message += f"• {name}#{tag}\n"
+                mismatch_message += f"• {tracker_link(name, tag)}\n"
 
             mismatch_message += "\nPossible reasons:\n"
             mismatch_message += (
@@ -563,7 +564,7 @@ class ReportCommand(BotCommands):
                             if channel.name.lower() == "announcements":
                                 announcement_channel = channel
                                 break
-                    message = f"{riot_name}#{riot_tag} is now supersonic radiant!"
+                    message = f"{tracker_link(riot_name, riot_tag)} is now supersonic radiant!"
                     if announcement_channel:
                         await announcement_channel.send(message)
                     else:

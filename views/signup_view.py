@@ -8,6 +8,7 @@ from discord.ui import Button
 from database import users
 from riot_api import verify_riot_account
 from recent_queue import remember_recent_queue
+from tracker_links import tracker_link
 from views import safe_reply
 from views.mode_vote_view import ModeVoteView
 
@@ -373,7 +374,9 @@ class SignupView(discord.ui.View):
         player_embed_lines = []
         for player in self.bot.queue:
             display_name, riot_name, riot_tag = get_user_data(player)
-            player_embed_lines.append(f"{display_name} (`{riot_name}#{riot_tag}`)")
+            player_embed_lines.append(
+                f"{display_name} ({tracker_link(riot_name, riot_tag)})"
+            )
 
         embed = discord.Embed(
             title="Signup Queue",
