@@ -313,7 +313,7 @@ class SignupView(discord.ui.View):
         await self.bot.current_signup_message.edit(view=self)
 
         self.bot.chosen_mode = None
-        mode_vote = ModeVoteView(self.ctx, self.bot)
+        mode_vote = ModeVoteView(self.ctx, self.bot, self.setup_generation)
         await mode_vote.send_view()
         self.stop()
         self.cancel_refresh_signup_task()

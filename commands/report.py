@@ -606,6 +606,14 @@ class ReportCommand(BotCommands):
         await asyncio.sleep(5)
         self.bot.match_not_reported = False
         self.bot.match_ongoing = False
+        # Reset remaining match state so !cancel reports "nothing to cancel"
+        # instead of pretending a match is still active.
+        self.bot.selected_map = None
+        self.bot.chosen_mode = None
+        self.bot.captain1 = None
+        self.bot.captain2 = None
+        self.bot.team1 = []
+        self.bot.team2 = []
         await cleanup_match_resources(self.bot)
 
 

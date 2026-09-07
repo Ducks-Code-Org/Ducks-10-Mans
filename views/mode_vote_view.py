@@ -10,13 +10,16 @@ from views.map_type_vote_view import MapTypeVoteView
 
 
 class ModeVoteView(discord.ui.View):
-    def __init__(self, ctx, bot):
+    def __init__(self, ctx, bot, setup_generation: int | None = None):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
         # Capture the current setup cycle so we can detect a later !cancel
-        # (or a new signup superseding this vote).
-        self.setup_generation = bot.setup_generation
+        # (or a new signup superseding this vote). Parent views pass their own
+        # captured generation so a cancel racing view creation is still seen.
+        self.setup_generation = (
+            bot.setup_generation if setup_generation is None else setup_generation
+        )
 
         # Setup Interaction Buttons
         self.balanced_button = Button(
@@ -224,7 +227,7 @@ class ModeVoteView(discord.ui.View):
         except discord.NotFound:
             pass
 
-        map_type_vote = MapTypeVoteView(self.ctx, self.bot)
+        map_type_vote = MapTypeVoteView(self.ctx, self.bot, self.setup_generation)
         await map_type_vote.send_view()
         self.stop()
         self.cancel_interaction_queue_task()
