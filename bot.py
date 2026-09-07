@@ -482,23 +482,31 @@ class CustomBot(commands.Bot):
 
     def ensure_player_mmr(self, player_id, player_names):
         if player_id not in self.player_mmr:
-            self.player_mmr[player_id] = {
-                "mmr": 1000,
-                "wins": 0,
-                "losses": 0,
-                "total_combat_score": 0,
-                "total_kills": 0,
-                "total_deaths": 0,
-                "matches_played": 0,
-                "total_rounds_played": 0,
-                "average_combat_score": 0,
-                "kill_death_ratio": 0,
-            }
-            user_data = users.find_one({"discord_id": str(player_id)})
-            if user_data:
-                player_names[player_id] = user_data.get("name", "Unknown")
-            else:
-                player_names[player_id] = "Unknown"
+            self._init_player_mmr_entry(player_id)
+        elif self.player_mmr[player_id].get("matches_played", -1) == -1:
+            # Entry exists but was never populated with defaults (e.g. from
+            # load_mmr_data() where the player had no db doc).  Fill in defaults.
+            self._init_player_mmr_entry(player_id)
+
+        user_data = users.find_one({"discord_id": str(player_id)})
+        if user_data:
+            player_names[player_id] = user_data.get("name", "Unknown")
+        else:
+            player_names[player_id] = "Unknown"
+
+    def _init_player_mmr_entry(self, player_id):
+        self.player_mmr[player_id] = {
+            "mmr": 1000,
+            "wins": 0,
+            "losses": 0,
+            "total_combat_score": 0,
+            "total_kills": 0,
+            "total_deaths": 0,
+            "matches_played": 0,
+            "total_rounds_played": 0,
+            "average_combat_score": 0,
+            "kill_death_ratio": 0,
+        }
 
     async def setup_hook(self):
         await self.load_extension("commands.admin_commands")

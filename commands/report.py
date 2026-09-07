@@ -17,6 +17,8 @@ from urllib.parse import quote
 
 
 async def setup(bot):
+    if not hasattr(bot, "report_lock"):
+        bot.report_lock = asyncio.Lock()
     await bot.add_cog(ReportCommand(bot))
 
 
@@ -113,30 +115,57 @@ async def cleanup_match_resources(bot):
 class ReportCommand(BotCommands):
     @commands.command()
     async def report(self, ctx):
-        await ctx.send("Attempting to report latest match...")
+        # ---------------------------------------------------------
+        # Acquire report_lock to prevent concurrent double-reporting.
+        # Only one !report command may run at a time.  We additionally
+        # atomically clear match_not_reported so a second reporter who
+        # acquires the lock after us sees the flag as already cleared.
+        # ---------------------------------------------------------
+        async with self.bot.report_lock:
+            await ctx.send("Attempting to report latest match...")
 
-        # linkage check
-        current_user = users.find_one({"discord_id": str(ctx.author.id)})
-        if not current_user:
-            await ctx.send(
-                "You need to link your Riot account first using `!linkriot Name#Tag`"
-            )
-            return
+            # linkage check
+            current_user = users.find_one({"discord_id": str(ctx.author.id)})
+            if not current_user:
+                await ctx.send(
+                    "You need to link your Riot account first using `!linkriot Name#Tag`"
+                )
+                return
 
-        name = (current_user.get("name") or "").lower().strip()
-        tag = (current_user.get("tag") or "").lower().strip()
-        if not name or not tag:
-            await ctx.send(
-                "Your Riot account looks incomplete. Re-link with `!linkriot Name#Tag`."
-            )
-            return
+            name = (current_user.get("name") or "").lower().strip()
+            tag = (current_user.get("tag") or "").lower().strip()
+            if not name or not tag:
+                await ctx.send(
+                    "Your Riot account looks incomplete. Re-link with `!linkriot Name#Tag`."
+                )
+                return
 
-        if not self.bot.match_ongoing:
-            await ctx.send("No match is currently active, use `!signup` to start one")
-            return
-        if not self.bot.selected_map:
-            await ctx.send("No map was selected for this match.")
-            return
+            if not self.bot.match_ongoing:
+                await ctx.send(
+                    "No match is currently active, use `!signup` to start one"
+                )
+                return
+            if not self.bot.selected_map:
+                await ctx.send("No map was selected for this match.")
+                return
+
+            # ------------------------------------------------------------
+            # ATOMIC CLAIM: only the FIRST simultaneous reporter to get here
+            # may proceed; later ones will see match_not_reported == False.
+            # ------------------------------------------------------------
+            if not self.bot.match_not_reported:
+                await ctx.send(
+                    "This match has already been reported (a report is in progress "
+                    "or completed)."
+                )
+                return
+            self.bot.match_not_reported = False  # claim it right now
+
+        # ------------------------------------------------------------
+        # After this point we hold the sole right to write to the DB.
+        # Everything outside the lock reads match state that won't change
+        # until this handler finishes (cleanup at the end resets flags).
+        # ------------------------------------------------------------
 
         def _norm_map(s: str) -> str:
             m = (s or "").strip().lower()
