@@ -535,6 +535,7 @@ class ReportCommand(BotCommands):
         # Adjust MMR once
         # self.bot.adjust_mmr(winning_team, losing_team)
         # print("[DEBUG] MMR adjusted")
+        await ctx.send("Match stats and MMR updated!")
 
         # Build a per-player MMR gain/loss summary
         mmr_lines = []
@@ -564,7 +565,20 @@ class ReportCommand(BotCommands):
         )
         for label, entries_text in mmr_lines:
             results_embed.add_field(name=label, value=entries_text, inline=True)
-        await ctx.send(embed=results_embed)
+
+        # Post the results in the persistent #10-mans channel; the match
+        # channel gets deleted during cleanup, so posting there would lose
+        # the summary.
+        results_channel = None
+        if ctx.guild:
+            for channel in ctx.guild.text_channels:
+                if channel.name.lower() == "10-mans":
+                    results_channel = channel
+                    break
+        if results_channel:
+            await results_channel.send(embed=results_embed)
+        else:
+            await ctx.send(embed=results_embed)
 
         self.bot.save_mmr_data()
         print("[DEBUG] MMR data saved")
