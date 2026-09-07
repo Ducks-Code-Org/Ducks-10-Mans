@@ -317,10 +317,13 @@ class MapVoteView(discord.ui.View):
                 return
             self.vote_time_remaining -= 1
             if self.view_message:
-                await self.view_message.edit(
-                    content=f"Vote for the map to play: ({self.vote_time_remaining}s)",
-                    view=self,
-                )
+                try:
+                    await self.view_message.edit(
+                        content=f"Vote for the map to play: ({self.vote_time_remaining}s)",
+                        view=self,
+                    )
+                except discord.NotFound:
+                    pass
         if not self.voting_phase_ended:
             self.timeout = True
             await self.check_for_winner()
