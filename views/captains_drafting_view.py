@@ -624,6 +624,9 @@ class CaptainsDraftingView(discord.ui.View):
         """Whether this setup cycle was cancelled (e.g. by !cancel)."""
         return self.bot.setup_generation != self.setup_generation
 
+    def _player_mmr(self, player) -> int:
+        return self.bot.player_mmr.get(str(player["id"]), {}).get("mmr", 1000)
+
     async def send_current_draft_view(self):
         if self.draft_finished:
             return
@@ -655,6 +658,7 @@ class CaptainsDraftingView(discord.ui.View):
                 label = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
             else:
                 label = player["name"]
+            label = f"{label} (MMR: {self._player_mmr(player)})"
             options.append(discord.SelectOption(label=label, value=str(player["id"])))
         self.player_select.options = options
 
@@ -663,15 +667,13 @@ class CaptainsDraftingView(discord.ui.View):
         remaining_players_lines = []
         for player in self.remaining_players:
             user_data = users.find_one({"discord_id": str(player["id"])})
+            mmr = self._player_mmr(player)
             if user_data:
                 remaining_players_lines.append(
-                    tracker_link(
-                        user_data.get("name", "Unknown"),
-                        user_data.get("tag", "Unknown"),
-                    )
+                    f"{tracker_link(user_data.get('name', 'Unknown'), user_data.get('tag', 'Unknown'))} (MMR: {mmr})"
                 )
             else:
-                remaining_players_lines.append(player["name"])
+                remaining_players_lines.append(f"{player['name']} (MMR: {mmr})")
 
         if remaining_players_lines:
             remaining_players_text = "\n".join(remaining_players_lines)
@@ -689,14 +691,13 @@ class CaptainsDraftingView(discord.ui.View):
             out = []
             for p in team:
                 ud = users.find_one({"discord_id": str(p["id"])})
+                mmr = self._player_mmr(p)
                 if ud:
                     out.append(
-                        tracker_link(
-                            ud.get("name", "Unknown"), ud.get("tag", "Unknown")
-                        )
+                        f"{tracker_link(ud.get('name', 'Unknown'), ud.get('tag', 'Unknown'))} (MMR: {mmr})"
                     )
                 else:
-                    out.append(p["name"])
+                    out.append(f"{p['name']} (MMR: {mmr})")
             return "\n".join(out) if out else "No players yet"
 
         drafting_embed = discord.Embed(
