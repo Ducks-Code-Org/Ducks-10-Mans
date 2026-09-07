@@ -18,9 +18,13 @@ class SecondCaptainChoiceView(discord.ui.View):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
+        # Capture the current setup cycle so we can detect a later !cancel
+        # (or a new signup superseding this view).
+        self.setup_generation = bot.setup_generation
         self.view_message = None
         self.decision_time_remaining = DECISION_TIMEOUT_SECONDS
         self.timeout_timer_task = asyncio.create_task(self.timeout_timer())
+        self.decision_finished = False
 
         # Buttons
         self.first_pick_button = discord.ui.Button(
@@ -41,6 +45,10 @@ class SecondCaptainChoiceView(discord.ui.View):
         self.add_item(self.double_pick_button)
 
     async def send_view(self):
+        if self.is_setup_cancelled():
+            self.decision_finished = True
+            self.cancel_timeout_timer()
+            return
         await self.ctx.send(
             f"Captains Chosen: <@{self.bot.captain1['id']}> and <@{self.bot.captain2['id']}>"
         )
@@ -49,8 +57,29 @@ class SecondCaptainChoiceView(discord.ui.View):
             view=self,
         )
 
+    def is_setup_cancelled(self) -> bool:
+        """Whether this setup cycle was cancelled (e.g. by !cancel)."""
+        return self.bot.setup_generation != self.setup_generation
+
     async def _validate_second_captain(self, interaction: discord.Interaction) -> bool:
-        if str(interaction.user.id) != str(self.bot.captain2["id"]):
+        if self.decision_finished:
+            await interaction.response.send_message(
+                "This decision phase has already ended.", ephemeral=True
+            )
+            return False
+        if self.is_setup_cancelled():
+            self.decision_finished = True
+            self.cancel_timeout_timer()
+            try:
+                self.stop()
+            except Exception:
+                pass
+            await interaction.response.send_message(
+                "This match setup was cancelled.", ephemeral=True
+            )
+            return False
+        captain2 = getattr(self.bot, "captain2", None)
+        if not captain2 or str(interaction.user.id) != str(captain2["id"]):
             await interaction.response.send_message(
                 "Only the second captain can make this choice!", ephemeral=True
             )
@@ -62,6 +91,7 @@ class SecondCaptainChoiceView(discord.ui.View):
             return
 
         self.cancel_timeout_timer()
+        self.decision_finished = True
         self.first_pick_button.disabled = True
         self.double_pick_button.disabled = True
         await interaction.message.edit(view=self)
@@ -74,6 +104,7 @@ class SecondCaptainChoiceView(discord.ui.View):
             return
 
         self.cancel_timeout_timer()
+        self.decision_finished = True
         self.first_pick_button.disabled = True
         self.double_pick_button.disabled = True
         await interaction.message.edit(view=self)
@@ -84,6 +115,9 @@ class SecondCaptainChoiceView(discord.ui.View):
         await self.start_draft(single_pick=False)
 
     async def start_draft(self, single_pick: bool):
+        # Only proceed if this setup cycle is still the current one.
+        if self.is_setup_cancelled():
+            return
         mode_name = "Single Pick" if single_pick else "Double Pick"
         await self.ctx.send(f"**{mode_name}** chosen! Starting draft phase...")
 
@@ -100,6 +134,8 @@ class SecondCaptainChoiceView(discord.ui.View):
         start_time = loop.time()
         last_shown = DECISION_TIMEOUT_SECONDS
         while True:
+            if self.decision_finished:
+                return
             remaining = DECISION_TIMEOUT_SECONDS - (loop.time() - start_time)
             if remaining <= 0:
                 break
@@ -107,25 +143,39 @@ class SecondCaptainChoiceView(discord.ui.View):
             if display_time != last_shown:
                 last_shown = display_time
                 self.decision_time_remaining = display_time
+                captain2 = getattr(self.bot, "captain2", None)
+                if self.is_setup_cancelled() or not captain2:
+                    self.decision_finished = True
+                    return
                 if self.view_message:
                     try:
                         await self.view_message.edit(
-                            content=f"<@{self.bot.captain2['id']}>, choose draft type: ({self.decision_time_remaining}s)",
+                            content=f"<@{captain2['id']}>, choose draft type: ({self.decision_time_remaining}s)",
                             view=self,
                         )
                     except discord.NotFound:
                         pass
             await asyncio.sleep(min(1.0, remaining))
+        if self.decision_finished:
+            return
+        if self.is_setup_cancelled():
+            # Match setup was cancelled (e.g. by !cancel); nothing to do.
+            self.decision_finished = True
+            return
         if self.view_message:
-            try:
-                await self.view_message.edit(
-                    content=f"<@{self.bot.captain2['id']}>, choose draft type: (0s)",
-                    view=self,
-                )
-            except discord.NotFound:
-                pass
+            captain2 = getattr(self.bot, "captain2", None)
+            if captain2:
+                try:
+                    await self.view_message.edit(
+                        content=f"<@{captain2['id']}>, choose draft type: (0s)",
+                        view=self,
+                    )
+                except discord.NotFound:
+                    pass
         # Cancel Signup
+        self.decision_finished = True
         await self.ctx.send("The captain took too long. Match will be cancelled...")
+        self.bot.setup_generation += 1
         self.bot.signup_active = False
         self.bot.match_ongoing = False
         self.bot.match_not_reported = False
@@ -137,21 +187,7 @@ class SecondCaptainChoiceView(discord.ui.View):
         self.bot.chosen_mode = None
         self.bot.selected_map = None
 
-        try:
-            if getattr(self.bot, "match_channel", None):
-                await self.bot.match_channel.delete()
-        except discord.NotFound:
-            pass
-        finally:
-            self.bot.match_channel = None
-
-        try:
-            if getattr(self.bot, "match_role", None):
-                await self.bot.match_role.delete()
-        except discord.NotFound:
-            pass
-        finally:
-            self.bot.match_role = None
+        await cleanup_match_resources(self.bot)
 
         try:
             self.stop()
@@ -169,6 +205,9 @@ class CaptainsDraftingView(discord.ui.View):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
+        # Capture the current setup cycle so we can detect a later !cancel
+        # (or a new signup superseding this draft).
+        self.setup_generation = bot.setup_generation
 
         # Build remaining pool
         cap1_id = str(self.bot.captain1["id"])
@@ -272,6 +311,11 @@ class CaptainsDraftingView(discord.ui.View):
             return
         self.draft_finished = True
 
+        # If the match setup was cancelled externally (e.g. !cancel), skip
+        # finalization entirely.
+        if self.is_setup_cancelled():
+            return
+
         if self.draft_timer_task:
             self.draft_timer_task.cancel()
             self.draft_timer_task = None
@@ -352,7 +396,13 @@ class CaptainsDraftingView(discord.ui.View):
 
         self.bot.match_ongoing = True
         self.bot.match_not_reported = True
-        await self.bot.match_channel.edit(name=f"{self.bot.match_name}《in-game》")
+        if self.bot.match_channel:
+            try:
+                await self.bot.match_channel.edit(
+                    name=f"{self.bot.match_name}《in-game》"
+                )
+            except (discord.NotFound, discord.HTTPException):
+                pass
 
         # prevent further callbacks
         try:
@@ -367,6 +417,24 @@ class CaptainsDraftingView(discord.ui.View):
         if self.draft_finished:
             await interaction.response.send_message(
                 "Draft is already complete!", ephemeral=True
+            )
+            return
+
+        # If the match setup was cancelled externally (e.g. !cancel mid-draft),
+        # stop quietly without processing the pick.
+        if self.is_setup_cancelled():
+            self.draft_finished = True
+            self.cancel_draft_timer()
+            try:
+                self.player_select.disabled = True
+            except Exception:
+                pass
+            try:
+                self.stop()
+            except Exception:
+                pass
+            await interaction.response.send_message(
+                "This match setup was cancelled.", ephemeral=True
             )
             return
 
@@ -391,7 +459,8 @@ class CaptainsDraftingView(discord.ui.View):
             return
 
         # Assign to current captain's team
-        if current_captain_id == str(self.bot.captain1["id"]):
+        captain1 = getattr(self.bot, "captain1", None)
+        if current_captain_id == str(captain1["id"]):
             self.bot.team1.append(player_dict)
         else:
             self.bot.team2.append(player_dict)
@@ -413,6 +482,9 @@ class CaptainsDraftingView(discord.ui.View):
         await self.draft_next_player()
 
     async def draft_next_player(self):
+        if self.is_setup_cancelled():
+            self.draft_finished = True
+            return
         if self._picks_exhausted():
             await self.finalize_draft()
             return
@@ -422,6 +494,11 @@ class CaptainsDraftingView(discord.ui.View):
         if self.draft_timer_task:
             self.draft_timer_task.cancel()
         self.draft_timer_task = asyncio.create_task(self.draft_timeout_timer())
+
+    def cancel_draft_timer(self):
+        if self.draft_timer_task:
+            self.draft_timer_task.cancel()
+            self.draft_timer_task = None
 
     def _current_captain_name(self) -> str | None:
         current_captain_id = str(self.pick_order[self.pick_count]["id"])
@@ -443,6 +520,11 @@ class CaptainsDraftingView(discord.ui.View):
         start_time = loop.time()
         last_shown = PICK_TIMEOUT_SECONDS
         while not self.draft_finished:
+            # If the match setup was cancelled externally (e.g. !cancel
+            # mid-draft), stop the timer quietly.
+            if self.is_setup_cancelled():
+                self.draft_finished = True
+                return
             remaining = PICK_TIMEOUT_SECONDS - (loop.time() - start_time)
             if remaining <= 0:
                 break
@@ -452,7 +534,7 @@ class CaptainsDraftingView(discord.ui.View):
                 self.draft_time_remaining = display_time
                 curr_captain_name = self._current_captain_name()
                 if curr_captain_name is None:
-                    # Captain state was cleared (e.g. !cancel mid-draft) — stop.
+                    # Captain state was cleared — stop.
                     self.draft_finished = True
                     return
                 if self.captain_pick_message:
@@ -464,10 +546,13 @@ class CaptainsDraftingView(discord.ui.View):
             await asyncio.sleep(min(1.0, remaining))
         if self.draft_finished:
             return
+        if self.is_setup_cancelled():
+            self.draft_finished = True
+            return
         self.draft_time_remaining = 0
         curr_captain_name = self._current_captain_name()
         if curr_captain_name is None:
-            # Captain state was cleared (e.g. !cancel mid-draft) — stop.
+            # Captain state was cleared — stop.
             self.draft_finished = True
             return
         if self.captain_pick_message:
@@ -480,12 +565,19 @@ class CaptainsDraftingView(discord.ui.View):
         await self._cancel_match_on_timeout(curr_captain_name)
 
     async def _cancel_match_on_timeout(self, captain_name: str):
+        if self.is_setup_cancelled():
+            # Someone already cancelled (e.g. !cancel); do not touch state again.
+            self.draft_finished = True
+            return
+
         self.draft_finished = True
 
         await self.ctx.send(f"{captain_name} took too long. Match will be cancelled...")
         await asyncio.sleep(2)
 
-        # Reset shared state, then clean up channel/role centrally
+        # Invalidate this setup cycle, reset shared state, then clean up
+        # channel/role centrally
+        self.bot.setup_generation += 1
         self.bot.signup_active = False
         self.bot.match_ongoing = False
         self.bot.match_not_reported = False
@@ -503,14 +595,17 @@ class CaptainsDraftingView(discord.ui.View):
         except Exception:
             pass
 
+    def is_setup_cancelled(self) -> bool:
+        """Whether this setup cycle was cancelled (e.g. by !cancel)."""
+        return self.bot.setup_generation != self.setup_generation
+
     async def send_current_draft_view(self):
         if self.draft_finished:
             return
 
-        # If the match setup was cancelled externally (e.g. !cancel mid-draft), stop quietly.
-        if getattr(self.bot, "match_channel", None) is None and not getattr(
-            self.bot, "match_ongoing", False
-        ):
+        # If the match setup was cancelled externally (e.g. !cancel mid-draft),
+        # stop quietly.
+        if self.is_setup_cancelled():
             self.draft_finished = True
             try:
                 self.player_select.disabled = True
@@ -647,7 +742,8 @@ class CaptainsDraftingView(discord.ui.View):
             # If only one player left, auto-assign and finalize
             if len(self.remaining_players) == 1:
                 player_dict = self.remaining_players[0]
-                if str(current_captain_id) == str(self.bot.captain1["id"]):
+                captain1 = getattr(self.bot, "captain1", None)
+                if captain1 and str(current_captain_id) == str(captain1["id"]):
                     self.bot.team1.append(player_dict)
                 else:
                     self.bot.team2.append(player_dict)

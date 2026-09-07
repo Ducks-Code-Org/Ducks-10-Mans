@@ -15,6 +15,9 @@ class MapTypeVoteView(discord.ui.View):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
+        # Capture the current setup cycle so we can detect a later !cancel
+        # (or a new signup superseding this vote).
+        self.setup_generation = bot.setup_generation
 
         # Setup Interaction Buttons
         self.competitive_button = Button(
@@ -51,6 +54,13 @@ class MapTypeVoteView(discord.ui.View):
         print("Starting new map type vote...")
 
     async def send_view(self):
+        if self.is_setup_cancelled():
+            print("Map type vote not sent because match setup was cancelled.")
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
         self.view_message = await self.ctx.send(
             f"Vote for the map pool: ({self.vote_time_remaining}s)", view=self
         )
@@ -77,6 +87,9 @@ class MapTypeVoteView(discord.ui.View):
             try:
                 # Process the interaction for this interaction
                 await self.handle_map_type_vote(interaction, mode)
+            except Exception as e:
+                # Keep the queue alive so later interactions still work
+                print(f"[DEBUG] Error processing map type vote interaction: {e}")
             finally:
                 # Ensure the waiting coroutine is notified, even if an error occurs
                 if not fut.done():
@@ -88,8 +101,8 @@ class MapTypeVoteView(discord.ui.View):
             self.interaction_queue_task = None
 
     def is_setup_cancelled(self) -> bool:
-        """Whether match setup was cancelled externally (e.g. !cancel)."""
-        return self.bot.match_channel is None and not self.bot.match_ongoing
+        """Whether this setup cycle was cancelled (e.g. by !cancel)."""
+        return self.bot.setup_generation != self.setup_generation
 
     async def handle_map_type_vote(
         self, interaction: discord.Interaction, map_type: str
@@ -98,6 +111,15 @@ class MapTypeVoteView(discord.ui.View):
         if self.voting_phase_ended:
             await safe_reply(
                 interaction, "This voting phase has already ended", ephemeral=True
+            )
+            return
+        if self.is_setup_cancelled():
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            await safe_reply(
+                interaction, "This match setup was cancelled.", ephemeral=True
             )
             return
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
@@ -135,6 +157,12 @@ class MapTypeVoteView(discord.ui.View):
 
         async with self.vote_lock:
             if self.voting_phase_ended:
+                return
+            if self.is_setup_cancelled():
+                self.voting_phase_ended = True
+                self.stop()
+                self.cancel_interaction_queue_task()
+                self.cancel_timeout_timer()
                 return
 
             competitive_votes = self.map_pool_votes["Competitive"]
@@ -188,7 +216,10 @@ class MapTypeVoteView(discord.ui.View):
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
-        await self.view_message.edit(content="Vote for the map pool:", view=self)
+        try:
+            await self.view_message.edit(content="Vote for the map pool:", view=self)
+        except discord.NotFound:
+            pass
 
         if chosen_map_type == "Competitive":
             map_list: list[str] = get_competitive_maps()
