@@ -463,6 +463,28 @@ class TDMCommands(BotCommands):
                 self.tdm_team2 if team1_kills > team2_kills else self.tdm_team1
             )
 
+            # Snapshot each player's TDM leaderboard rank before this match
+            tdm_pre_played = {
+                pid
+                for pid, stats in self.bot.player_mmr.items()
+                if (stats.get("tdm_wins", 0) + stats.get("tdm_losses", 0)) > 0
+            }
+            tdm_pre_update_ranks = {
+                pid: rank
+                for rank, (pid, _) in enumerate(
+                    sorted(
+                        (
+                            (pid, stats)
+                            for pid, stats in self.bot.player_mmr.items()
+                            if pid in tdm_pre_played
+                        ),
+                        key=lambda x: x[1]["tdm_mmr"],
+                        reverse=True,
+                    ),
+                    start=1,
+                )
+            }
+
             # Update player stats
             for player_stats in match_players:
                 self._update_tdm_stats(player_stats, _resolve_api_player)
@@ -503,6 +525,40 @@ class TDMCommands(BotCommands):
                         },
                         upsert=True,
                     )
+
+            # Record each player's previous TDM leaderboard rank so the
+            # TDM leaderboard can display rank gain/loss since the last match
+            tdm_new_played = {
+                pid
+                for pid, stats in self.bot.player_mmr.items()
+                if (stats.get("tdm_wins", 0) + stats.get("tdm_losses", 0)) > 0
+            }
+            tdm_new_ranks = {
+                pid: rank
+                for rank, (pid, _) in enumerate(
+                    sorted(
+                        (
+                            (pid, stats)
+                            for pid, stats in self.bot.player_mmr.items()
+                            if pid in tdm_new_played
+                        ),
+                        key=lambda x: x[1].get("tdm_mmr", 1000),
+                        reverse=True,
+                    ),
+                    start=1,
+                )
+            }
+            for pid in {p["id"] for p in winning_team + losing_team}:
+                tdm_mmr_collection.update_one(
+                    {"player_id": pid},
+                    {
+                        "$set": {
+                            "previous_tdm_rank": tdm_pre_update_ranks.get(pid),
+                            "current_tdm_rank": tdm_new_ranks.get(pid),
+                        }
+                    },
+                    upsert=True,
+                )
 
             # Create results embed
             embed = discord.Embed(
