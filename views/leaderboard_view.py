@@ -23,6 +23,25 @@ def _has_played_tdm(doc: dict) -> bool:
     return (doc.get("tdm_wins", 0) + doc.get("tdm_losses", 0)) > 0
 
 
+def _rank_display(
+    player_data: dict, mode: str, sort_by: str, fallback_rank: int
+) -> str:
+    """Format the rank column, showing gain/loss since the player's last match."""
+    mmr_sort = "tdm_mmr" if mode == "tdm" else "mmr"
+    if sort_by != mmr_sort:
+        return str(fallback_rank)
+
+    rank_field = "current_tdm_rank" if mode == "tdm" else "current_rank"
+    prev_field = "previous_tdm_rank" if mode == "tdm" else "previous_rank"
+    rank = player_data.get(rank_field)
+    prev = player_data.get(prev_field)
+    if not isinstance(rank, int):
+        return str(fallback_rank)
+    if not isinstance(prev, int) or prev == rank:
+        return str(rank)
+    return f"{rank} ({prev - rank:+d})"
+
+
 def truncate_by_display_width(original_string, max_width=15, ellipsis=True):
     display_len = wcwidth.wcswidth(original_string)
     if display_len <= max_width:
@@ -135,6 +154,8 @@ class LeaderboardView(View):
             else:
                 name = "Unknown"
 
+            rank = _rank_display(player_data, mode, self.sort_by, idx + start_index)
+
             if mode == "tdm":
                 mmr = player_data.get("tdm_mmr", 1000)
                 wins = player_data.get("tdm_wins", 0)
@@ -144,7 +165,7 @@ class LeaderboardView(View):
 
                 leaderboard_data.append(
                     [
-                        idx + start_index,
+                        rank,
                         name,
                         mmr,
                         wins,
@@ -162,7 +183,7 @@ class LeaderboardView(View):
 
                 leaderboard_data.append(
                     [
-                        idx + start_index,
+                        rank,
                         name,
                         mmr,
                         wins,
