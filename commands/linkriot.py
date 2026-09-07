@@ -7,6 +7,7 @@ from discord.ext import commands
 from commands import BotCommands
 from database import users, mmr_collection, tdm_mmr_collection
 from globals import API_KEY
+from tracker_links import tracker_link
 
 
 async def setup(bot):
@@ -105,4 +106,6 @@ class LinkRiotCommand(BotCommands):
             {"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False
         )
 
-        await ctx.send(f"Successfully linked {full_name} to your Discord account.")
+        await ctx.send(
+            f"Successfully linked {tracker_link(riot_name, riot_tag)} to your Discord account."
+        )
