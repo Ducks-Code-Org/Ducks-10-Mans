@@ -217,9 +217,13 @@ class CustomBot(commands.Bot):
         self.player_mmr.clear()
         self.player_names.clear()
 
+        # mmr_data is keyed by player_id (the Discord id). If duplicate docs
+        # exist for a player, prefer the one with real stats so a stale
+        # default doc can't silently zero out a player's record.
+        doc_scores = {}
         for doc in mmr_collection.find():
             player_id = doc["player_id"]
-            self.player_mmr[player_id] = {
+            entry = {
                 "mmr": doc.get("mmr", 1000),
                 "wins": doc.get("wins", 0),
                 "losses": doc.get("losses", 0),
@@ -231,6 +235,14 @@ class CustomBot(commands.Bot):
                 "average_combat_score": doc.get("average_combat_score", 0),
                 "kill_death_ratio": doc.get("kill_death_ratio", 0),
             }
+            score = (
+                doc.get("matches_played", 0),
+                doc.get("wins", 0) + doc.get("losses", 0),
+            )
+
+            if player_id not in self.player_mmr or score > doc_scores[player_id]:
+                self.player_mmr[player_id] = entry
+                doc_scores[player_id] = score
 
     def save_mmr_data(self):
         for player_id, stats in self.player_mmr.items():
