@@ -112,10 +112,15 @@ def verify_riot_account(name: str, tag: str) -> Tuple[bool, str]:
             "Riot lookup failed: API key missing or invalid. Ask an admin to set env `api_key`.",
         )
 
+    if r.status_code == 429:
+        # Rate limited: the check was inconclusive, not an actual failure.
+        # Never block a signup over this.
+        return (True, "rate limited (verification skipped)")
+
     # fallback
     return (
         False,
-        f"Riot API error ({r.status_code}). Try again in a few seconds or relink your account with `!linkriot`.",
+        f"Riot API error ({r.status_code}).",
     )
 
 
@@ -150,12 +155,14 @@ async def riot_account_exists_async(
     tag: str,
     *,
     timeout: int = 10,
+    retries: int = 2,
 ) -> bool | None:
     """Async version of riot_account_exists.
 
     Returns True (exists), False (confirmed missing via 404), or None when
-    the result is inconclusive (network/auth errors — never treat as invalid).
-    Does not block the event loop, so many checks can run in parallel.
+    the result is inconclusive (network/auth/rate-limit errors — never treat
+    as invalid). Retries on 429 with a short backoff. Does not block the
+    event loop, so many checks can run in parallel.
     """
     name = (name or "").strip()
     tag = (tag or "").strip()
@@ -164,12 +171,19 @@ async def riot_account_exists_async(
 
     url = f"{HENRIK_BASE}/v2/account/{quote(name, safe='')}/{quote(tag, safe='')}"
 
-    try:
-        async with session.get(url, headers=_headers(), timeout=timeout) as r:
-            if r.status == 200:
-                return True
-            if r.status == 404:
-                return False
+    for attempt in range(retries + 1):
+        try:
+            async with session.get(url, headers=_headers(), timeout=timeout) as r:
+                if r.status == 200:
+                    return True
+                if r.status == 404:
+                    return False
+                if r.status == 429 and attempt < retries:
+                    # Rate limited: back off briefly and retry. Inconclusive
+                    # if still rate limited on the final attempt.
+                    await asyncio.sleep(2 * (attempt + 1))
+                    continue
+                return None
+        except (aiohttp.ClientError, asyncio.TimeoutError):
             return None
-    except (aiohttp.ClientError, asyncio.TimeoutError):
-        return None
+    return None
