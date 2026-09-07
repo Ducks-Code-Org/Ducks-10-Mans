@@ -12,6 +12,7 @@ from discord.ext import commands
 from commands import BotCommands, convert_to_utc
 from database import users, mmr_collection, seasons, all_matches
 from globals import API_KEY, TIME_ZONE_CST, mock_match_data
+from recent_queue import remember_recent_queue
 from stats_helper import update_stats
 from urllib.parse import quote
 
@@ -25,6 +26,8 @@ async def setup(bot):
 async def cleanup_match_resources(bot):
     await bot.wait_until_ready()
     try:
+        if bot.queue:
+            remember_recent_queue(bot.queue)
         if hasattr(bot, "match_channel") and bot.match_channel:
             try:
                 await bot.match_channel.delete()

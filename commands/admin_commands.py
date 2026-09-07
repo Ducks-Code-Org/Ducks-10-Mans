@@ -6,6 +6,7 @@ from discord.ext import commands
 from commands import BotCommands
 from commands.report import cleanup_match_resources
 from database import mmr_collection
+from recent_queue import get_recent_queue, remember_recent_queue
 from views.signup_view import SignupView
 from views.mode_vote_view import ModeVoteView
 from views.captains_drafting_view import CaptainsDraftingView
@@ -153,6 +154,9 @@ class AdminCommands(BotCommands):
                 self.bot.signup_view.cleanup()
                 self.bot.signup_view = None
 
+            if self.bot.queue:
+                remember_recent_queue(self.bot.queue)
+            self.bot.current_signup_message = None
             self.bot.signup_active = False
             self.bot.match_not_reported = False
             self.bot.match_ongoing = False
@@ -207,6 +211,20 @@ class AdminCommands(BotCommands):
             print("Cancelling match setup...")
         else:
             await ctx.send("No active signup or match to cancel.")
+
+    @commands.command()
+    @commands.has_role("Owner")
+    async def pingrecent(self, ctx):
+        """Pings everyone who was in the most recently cancelled/finished queue."""
+        recent_ids = get_recent_queue()
+        if not recent_ids:
+            await ctx.send("No recent queue found to ping.")
+            return
+        await ctx.send(
+            "The most recent queue was cancelled. "
+            + " ".join(f"<@{pid}>" for pid in recent_ids)
+            + " — a new queue may be starting if you're up for a game!"
+        )
 
     @commands.command()
     @commands.has_role("Owner")
