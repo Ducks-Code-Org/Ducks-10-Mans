@@ -17,6 +17,8 @@ from urllib.parse import quote
 
 
 async def setup(bot):
+    if not hasattr(bot, "report_lock"):
+        bot.report_lock = asyncio.Lock()
     await bot.add_cog(ReportCommand(bot))
 
 
@@ -113,28 +115,57 @@ async def cleanup_match_resources(bot):
 class ReportCommand(BotCommands):
     @commands.command()
     async def report(self, ctx):
-        # linkage check
-        current_user = users.find_one({"discord_id": str(ctx.author.id)})
-        if not current_user:
-            await ctx.send(
-                "You need to link your Riot account first using `!linkriot Name#Tag`"
-            )
-            return
+        # ---------------------------------------------------------
+        # Acquire report_lock to prevent concurrent double-reporting.
+        # Only one !report command may run at a time.  We additionally
+        # atomically clear match_not_reported so a second reporter who
+        # acquires the lock after us sees the flag as already cleared.
+        # ---------------------------------------------------------
+        async with self.bot.report_lock:
+            await ctx.send("Attempting to report latest match...")
 
-        name = (current_user.get("name") or "").lower().strip()
-        tag = (current_user.get("tag") or "").lower().strip()
-        if not name or not tag:
-            await ctx.send(
-                "Your Riot account looks incomplete. Re-link with `!linkriot Name#Tag`."
-            )
-            return
+            # linkage check
+            current_user = users.find_one({"discord_id": str(ctx.author.id)})
+            if not current_user:
+                await ctx.send(
+                    "You need to link your Riot account first using `!linkriot Name#Tag`"
+                )
+                return
 
-        if not self.bot.match_ongoing:
-            await ctx.send("No match is currently active, use `!signup` to start one")
-            return
-        if not self.bot.selected_map:
-            await ctx.send("No map was selected for this match.")
-            return
+            name = (current_user.get("name") or "").lower().strip()
+            tag = (current_user.get("tag") or "").lower().strip()
+            if not name or not tag:
+                await ctx.send(
+                    "Your Riot account looks incomplete. Re-link with `!linkriot Name#Tag`."
+                )
+                return
+
+            if not self.bot.match_ongoing:
+                await ctx.send(
+                    "No match is currently active, use `!signup` to start one"
+                )
+                return
+            if not self.bot.selected_map:
+                await ctx.send("No map was selected for this match.")
+                return
+
+            # ------------------------------------------------------------
+            # ATOMIC CLAIM: only the FIRST simultaneous reporter to get here
+            # may proceed; later ones will see match_not_reported == False.
+            # ------------------------------------------------------------
+            if not self.bot.match_not_reported:
+                await ctx.send(
+                    "This match has already been reported (a report is in progress "
+                    "or completed)."
+                )
+                return
+            self.bot.match_not_reported = False  # claim it right now
+
+        # ------------------------------------------------------------
+        # After this point we hold the sole right to write to the DB.
+        # Everything outside the lock reads match state that won't change
+        # until this handler finishes (cleanup at the end resets flags).
+        # ------------------------------------------------------------
 
         def _norm_map(s: str) -> str:
             m = (s or "").strip().lower()
@@ -567,26 +598,10 @@ class ReportCommand(BotCommands):
         # Record every match played in a new collection
         all_matches.insert_one(match)
 
-        now_utc = datetime.now(timezone.utc)
-        current = seasons.find_one({"_id": "current"}) or {}
-
-        started_at = convert_to_utc(current.get("started_at"))  # <-- normalize
-        reset_months = int(current.get("reset_period_months", 2))
-
-        if not started_at:
-            started_at = now_utc
-            seasons.update_one(
-                {"_id": "current"},
-                {"$set": {"started_at": started_at, "is_closed": False}},
-                upsert=True,
-            )
-
-        season_end_utc = convert_to_utc(
-            _add_months(started_at, reset_months)
-        )  # <-- normalize
-
-        if not current.get("is_closed", False) and now_utc >= season_end_utc:
-            await end_season(ctx, started_at_utc=started_at, ended_at_utc=now_utc)
+        # Increment Current Season Match Count
+        seasons.update_one(
+            {"_id": "current"}, {"$inc": {"matches_played": 1}}, upsert=True
+        )
 
         await asyncio.sleep(5)
         self.bot.match_not_reported = False
@@ -620,86 +635,3 @@ def rounds_to_int(value):
         return int(value)
     except Exception:
         return 0
-
-
-async def end_season(ctx, started_at_utc=None, ended_at_utc=None):
-    current = seasons.find_one({"_id": "current"}) or {}
-    if current.get("is_closed"):
-        return
-
-    now_utc = datetime.now(timezone.utc)
-
-    started_at_utc = convert_to_utc(
-        started_at_utc or current.get("started_at") or now_utc
-    )
-    ended_at_utc = convert_to_utc(ended_at_utc or now_utc)
-
-    # Determine winner
-    top_doc = mmr_collection.find_one(sort=[("mmr", -1)])
-    if not top_doc:
-        winner_player_id = None
-        winner_name = "No players"
-        winner_mmr = 0
-    else:
-        winner_player_id = str(top_doc.get("player_id"))
-        winner_mmr = top_doc.get("mmr", 0)
-
-        u = users.find_one({"discord_id": winner_player_id})
-        if u:
-            winner_name = f"{u.get('name', 'Unknown')}#{u.get('tag', 'Unknown')}"
-        else:
-            winner_name = top_doc.get("name", "Unknown")
-
-    started_cst = started_at_utc.astimezone(TIME_ZONE_CST) if started_at_utc else None
-    ended_cst = ended_at_utc.astimezone(TIME_ZONE_CST)
-    started_str = (
-        started_cst.strftime("%Y-%m-%d %I:%M %p %Z") if started_cst else "unknown"
-    )
-    ended_str = ended_cst.strftime("%Y-%m-%d %I:%M %p %Z")
-
-    await ctx.send(
-        "🏁 **Season complete!**\n"
-        f"**Winner:** {winner_name}\n"
-        f"**Final MMR:** {winner_mmr}\n"
-        f"**Season window (Central):** {started_str} → {ended_str}"
-    )
-
-    seasons.update_one(
-        {"_id": "current"},
-        {
-            "$set": {
-                "is_closed": True,
-                "ended_at": ended_at_utc,
-                "winner_player_id": winner_player_id,
-                "winner_name": winner_name,
-                "winner_mmr": winner_mmr,
-            }
-        },
-        upsert=True,
-    )
-
-    # next season
-    next_season_number = int(current.get("season_number", 1)) + 1
-    reset_period_months = int(current.get("reset_period_months", 2))
-
-    seasons.update_one(
-        {"_id": "current"},
-        {
-            "$set": {
-                "season_number": next_season_number,
-                "started_at": ended_at_utc,
-                "is_closed": False,
-                "reset_period_months": reset_period_months,
-                "matches_played": 0,
-                "last_season": {
-                    "season_number": current.get("season_number", 1),
-                    "started_at": started_at_utc,
-                    "ended_at": ended_at_utc,
-                    "winner_player_id": winner_player_id,
-                    "winner_name": winner_name,
-                    "winner_mmr": winner_mmr,
-                    "matches_played": current.get("matches_played", 0),
-                },
-            }
-        },
-    )

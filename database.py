@@ -4,7 +4,12 @@ from pymongo.server_api import ServerApi
 
 from globals import URI_KEY
 
-client = MongoClient(URI_KEY, server_api=ServerApi("1"), serverSelectionTimeoutMS=8000)
+client = MongoClient(
+    URI_KEY,
+    tlsAllowInvalidCertificates=True,
+    server_api=ServerApi("1"),
+    serverSelectionTimeoutMS=8000,
+)
 
 try:
     client.admin.command("ping")
