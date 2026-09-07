@@ -2,10 +2,13 @@
 
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
+import certifi
 
 from globals import URI_KEY
 
-client = MongoClient(URI_KEY, server_api=ServerApi("1"))
+client = MongoClient(
+    URI_KEY, tlsAllowInvalidCertificates=True, server_api=ServerApi("1")
+)
 
 # Initialize MongoDB Collections
 db = client["valorant"]

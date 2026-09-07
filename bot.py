@@ -57,11 +57,14 @@ class CustomBot(commands.Bot):
             {"_id": "current"},
             {
                 "$setOnInsert": {
-                    "season_number": 1,
-                    "started_at": datetime.now(timezone.utc),
+                    "_id": "current",
                     "matches_played": 0,
-                    "is_closed": False,
-                    "reset_period_months": 2,  # 2-month seasons
+                    "season_number": 0,
+                    "winner_mmr": None,
+                    "winner_name": None,
+                    "winner_player_id": None,
+                    "started_at": datetime.now(timezone.utc),
+                    "ended_at": None,
                 }
             },
             upsert=True,
@@ -90,42 +93,46 @@ class CustomBot(commands.Bot):
             tzinfo=timezone.utc,
         )
 
-    def create_new_season(self, *, reset_player_stats: bool = True) -> dict:
-        now_utc = datetime.now(timezone.utc)
-        starts = now_utc
-        ends = self._two_months_after(starts)
+    def create_new_season(self, *, reset_player_stats: bool = True, winner) -> dict:
+        current = seasons.find_one({"_id": "current"})
+        current_num = int(current.get("season_number", 0))
+        next_num = current_num + 1
 
-        current = seasons.find_one({"_id": "current"}) or {}
-        next_num = int(current.get("season_number", 0)) + 1
+        # Save Old Season
+        old_season_obj = {
+            "_id": current_num,
+            "matches_played": current.get("matches_played"),
+            "season_number": current_num,
+            "winner_mmr": winner.get("mmr"),
+            "winner_name": winner.get("name"),
+            "winner_player_id": winner.get("player_id"),
+            "started_at": current.get("started_at"),
+            "ended_at": datetime.now(timezone.utc),
+        }
+        seasons.insert_one(old_season_obj)
+
+        # Create New Season
+
+        new_season_obj = {
+            "matches_played": 0,
+            "season_number": next_num,
+            "winner_mmr": None,
+            "winner_name": None,
+            "winner_player_id": None,
+            "started_at": datetime.now(timezone.utc),
+            "ended_at": None,
+        }
 
         seasons.update_one(
             {"_id": "current"},
-            {
-                "$set": {
-                    "season_number": next_num,
-                    "started_at": starts,
-                    "is_closed": False,
-                    "reset_period_months": 2,
-                    "matches_played": 0,
-                    "ends_at_expected": ends,
-                },
-                "$unset": {"ended_at": ""},
-            },
+            {"$set": new_season_obj},
             upsert=True,
         )
 
         if reset_player_stats:
             self._reset_all_players_for_new_season(next_num)
 
-        # Return a small dict used by the newseason command for display
-        return {
-            "season_number": next_num,
-            "started_at": starts,  # UTC
-            "ends_at_expected": ends,  # UTC
-            "started_at_cst": starts.astimezone(TIME_ZONE_CST),
-            "ends_at_cst": ends.astimezone(TIME_ZONE_CST),
-            "is_closed": False,
-        }
+        return new_season_obj
 
     def _reset_all_players_for_new_season(self, season_number: int) -> None:
         """
@@ -475,23 +482,31 @@ class CustomBot(commands.Bot):
 
     def ensure_player_mmr(self, player_id, player_names):
         if player_id not in self.player_mmr:
-            self.player_mmr[player_id] = {
-                "mmr": 1000,
-                "wins": 0,
-                "losses": 0,
-                "total_combat_score": 0,
-                "total_kills": 0,
-                "total_deaths": 0,
-                "matches_played": 0,
-                "total_rounds_played": 0,
-                "average_combat_score": 0,
-                "kill_death_ratio": 0,
-            }
-            user_data = users.find_one({"discord_id": str(player_id)})
-            if user_data:
-                player_names[player_id] = user_data.get("name", "Unknown")
-            else:
-                player_names[player_id] = "Unknown"
+            self._init_player_mmr_entry(player_id)
+        elif self.player_mmr[player_id].get("matches_played", -1) == -1:
+            # Entry exists but was never populated with defaults (e.g. from
+            # load_mmr_data() where the player had no db doc).  Fill in defaults.
+            self._init_player_mmr_entry(player_id)
+
+        user_data = users.find_one({"discord_id": str(player_id)})
+        if user_data:
+            player_names[player_id] = user_data.get("name", "Unknown")
+        else:
+            player_names[player_id] = "Unknown"
+
+    def _init_player_mmr_entry(self, player_id):
+        self.player_mmr[player_id] = {
+            "mmr": 1000,
+            "wins": 0,
+            "losses": 0,
+            "total_combat_score": 0,
+            "total_kills": 0,
+            "total_deaths": 0,
+            "matches_played": 0,
+            "total_rounds_played": 0,
+            "average_combat_score": 0,
+            "kill_death_ratio": 0,
+        }
 
     async def setup_hook(self):
         await self.load_extension("commands.admin_commands")

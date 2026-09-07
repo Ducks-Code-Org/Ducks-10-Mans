@@ -4,10 +4,11 @@ import requests
 import pytz
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
+from globals import URI_KEY
 
 # MongoDB Connection
-uri = "mongodb+srv://x4skinniestduck:8QZOdjPrrgJkRGPX@rapid.12llf.mongodb.net/?retryWrites=true&w=majority&appName=Rapid"
-client = MongoClient(uri, server_api=ServerApi("1"))
+uri = URI_KEY
+client = MongoClient(uri, tlsAllowInvalidCertificates=True, server_api=ServerApi("1"))
 
 # Initialize MongoDB Collections
 db = client["valorant"]
