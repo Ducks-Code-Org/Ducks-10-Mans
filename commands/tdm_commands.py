@@ -12,6 +12,7 @@ from globals import API_KEY
 
 
 from database import users, tdm_matches, tdm_mmr_collection
+from tracker_links import tracker_link
 
 
 async def setup(bot):
@@ -124,8 +125,12 @@ class TDMCommands(BotCommands):
                 for player in self.tdm_queue:
                     user_data = users.find_one({"discord_id": player["id"]})
                     if user_data:
-                        riot_name = f"{user_data.get('name')}#{user_data.get('tag')}"
-                        riot_names.append(riot_name)
+                        riot_names.append(
+                            tracker_link(
+                                user_data.get("name", "Unknown"),
+                                user_data.get("tag", "Unknown"),
+                            )
+                        )
                     else:
                         riot_names.append("Unknown")
 
@@ -199,8 +204,12 @@ class TDMCommands(BotCommands):
                 for player in self.tdm_queue:
                     user_data = users.find_one({"discord_id": player["id"]})
                     if user_data:
-                        riot_name = f"{user_data.get('name')}#{user_data.get('tag')}"
-                        riot_names.append(riot_name)
+                        riot_names.append(
+                            tracker_link(
+                                user_data.get("name", "Unknown"),
+                                user_data.get("tag", "Unknown"),
+                            )
+                        )
                     else:
                         riot_names.append("Unknown")
 
@@ -324,9 +333,10 @@ class TDMCommands(BotCommands):
             for player in team:
                 user_data = users.find_one({"discord_id": player["id"]})
                 if user_data:
-                    name = f"{user_data.get('name')}#{user_data.get('tag')}"
                     mmr = self.bot.player_mmr[player["id"]].get("tdm_mmr", 1000)
-                    team_text.append(f"{name} (MMR: {mmr})")
+                    team_text.append(
+                        f"{tracker_link(user_data.get('name', 'Unknown'), user_data.get('tag', 'Unknown'))} (MMR: {mmr})"
+                    )
 
             embed.add_field(
                 name=f"Team {team_num} (Avg MMR: {team_mmr:.0f})",
@@ -392,14 +402,33 @@ class TDMCommands(BotCommands):
                 await ctx.send("No player data found in match.")
                 return
 
-            # Verify queue players are in the match
-            queue_riot_ids = set()
+            # Resolve queued players to their Discord ids (persistent identity);
+            # Riot name/tag is only a lookup label.
+            queue_members = []
             for player in self.tdm_queue:
                 user_data = users.find_one({"discord_id": str(player["id"])})
                 if user_data:
-                    player_name = user_data.get("name", "").lower()
-                    player_tag = user_data.get("tag", "").lower()
-                    queue_riot_ids.add((player_name, player_tag))
+                    queue_members.append(
+                        {
+                            "discord_id": str(player["id"]),
+                            "puuid": (user_data.get("puuid") or "").strip().lower(),
+                            "name": user_data.get("name", "").lower(),
+                            "tag": user_data.get("tag", "").lower(),
+                        }
+                    )
+
+            def _resolve_api_player(api_player):
+                api_puuid = (api_player.get("puuid") or "").strip().lower()
+                api_name = (api_player.get("name") or "").lower()
+                api_tag = (api_player.get("tag") or "").lower()
+
+                for member in queue_members:
+                    if api_puuid and member["puuid"] and api_puuid == member["puuid"]:
+                        return member["discord_id"]
+                for member in queue_members:
+                    if api_name == member["name"] and api_tag == member["tag"]:
+                        return member["discord_id"]
+                return None
 
             match_player_ids = set()
             for player in match_players:
@@ -407,6 +436,9 @@ class TDMCommands(BotCommands):
                 player_tag = player.get("tag", "").lower()
                 match_player_ids.add((player_name, player_tag))
 
+            queue_riot_ids = {
+                (member["name"], member["tag"]) for member in queue_members
+            }
             if not queue_riot_ids.issubset(match_player_ids):
                 await ctx.send("Not all queued players were found in the match.")
                 return
@@ -415,13 +447,13 @@ class TDMCommands(BotCommands):
             team1_kills = sum(
                 player.get("stats", {}).get("kills", 0)
                 for player in match_players
-                if self._is_player_in_team(player, self.tdm_team1)
+                if self._is_player_in_team(player, self.tdm_team1, _resolve_api_player)
             )
 
             team2_kills = sum(
                 player.get("stats", {}).get("kills", 0)
                 for player in match_players
-                if self._is_player_in_team(player, self.tdm_team2)
+                if self._is_player_in_team(player, self.tdm_team2, _resolve_api_player)
             )
 
             winning_team = (
@@ -433,7 +465,7 @@ class TDMCommands(BotCommands):
 
             # Update player stats
             for player_stats in match_players:
-                self._update_tdm_stats(player_stats)
+                self._update_tdm_stats(player_stats, _resolve_api_player)
 
             # Adjust MMR
             self.bot.adjust_tdm_mmr(winning_team, losing_team)
@@ -490,7 +522,7 @@ class TDMCommands(BotCommands):
                             (
                                 p
                                 for p in match_players
-                                if p["name"].lower() == user_data["name"].lower()
+                                if _resolve_api_player(p) == str(player["id"])
                             ),
                             None,
                         )
@@ -536,29 +568,22 @@ class TDMCommands(BotCommands):
             await ctx.send(f"An error occurred while processing the match: {str(e)}")
             return
 
-    def _is_player_in_team(self, player_stats, team):
-        player_name = player_stats.get("name", "").lower()
-        player_tag = player_stats.get("tag", "").lower()
+    def _is_player_in_team(self, player_stats, team, resolve_api_player):
+        discord_id = resolve_api_player(player_stats)
+        if not discord_id:
+            return False
 
         for team_player in team:
-            user_data = users.find_one({"discord_id": str(team_player["id"])})
-            if user_data:
-                if (
-                    user_data.get("name", "").lower() == player_name
-                    and user_data.get("tag", "").lower() == player_tag
-                ):
-                    return True
+            if str(team_player["id"]) == str(discord_id):
+                return True
         return False
 
-    def _update_tdm_stats(self, player_stats):
-        name = player_stats.get("name", "").lower()
-        tag = player_stats.get("tag", "").lower()
-
-        user_entry = users.find_one({"name": name, "tag": tag})
-        if not user_entry:
+    def _update_tdm_stats(self, player_stats, resolve_api_player):
+        discord_id = resolve_api_player(player_stats)
+        if not discord_id:
             return
 
-        discord_id = str(user_entry.get("discord_id"))
+        discord_id = str(discord_id)
         stats = player_stats.get("stats", {})
         kills = stats.get("kills", 0)
         deaths = stats.get("deaths", 0)
@@ -688,6 +713,11 @@ class TDMCommands(BotCommands):
             embed = discord.Embed(
                 title=f"{player_name}'s TDM Stats", color=discord.Color.blue()
             )
+            if user_data:
+                embed.description = tracker_link(
+                    user_data.get("name", "Unknown"),
+                    user_data.get("tag", "Unknown"),
+                )
 
             # Main stats
             embed.add_field(
