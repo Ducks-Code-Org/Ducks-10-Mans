@@ -6,6 +6,7 @@ from discord.ui import Select
 from urllib.parse import quote
 
 from database import users
+from commands.report import cleanup_match_resources
 
 
 class SecondCaptainChoiceView(discord.ui.View):
@@ -355,6 +356,21 @@ class CaptainsDraftingView(discord.ui.View):
         if self.draft_finished:
             return
 
+        # If the match setup was cancelled externally (e.g. !cancel mid-draft), stop quietly.
+        if getattr(self.bot, "match_channel", None) is None and not getattr(
+            self.bot, "match_ongoing", False
+        ):
+            self.draft_finished = True
+            try:
+                self.player_select.disabled = True
+            except Exception:
+                pass
+            try:
+                self.stop()
+            except Exception:
+                pass
+            return
+
         # If no one left to pick, finish
         if not self.remaining_players or self._picks_exhausted():
             await self.finalize_draft()
@@ -436,11 +452,18 @@ class CaptainsDraftingView(discord.ui.View):
         if ud:
             curr_captain_name = f"{ud.get('name','Unknown')}#{ud.get('tag','Unknown')}"
         else:
-            c = (
-                self.bot.captain1
-                if self.bot.captain1["id"] == current_captain_id
-                else self.bot.captain2
-            )
+            captain1 = getattr(self.bot, "captain1", None)
+            captain2 = getattr(self.bot, "captain2", None)
+            if captain1 and str(captain1.get("id")) == str(current_captain_id):
+                c = captain1
+            elif captain2:
+                c = captain2
+            else:
+                c = None
+            if c is None:
+                # Captain data was cleared (match setup cancelled) — bail out quietly.
+                print("Current captain missing from bot state; draft likely cancelled.")
+                return
             curr_captain_name = c["name"]
 
         message = f"**{curr_captain_name}**, pick a player:"
@@ -495,33 +518,18 @@ class CaptainsDraftingView(discord.ui.View):
                     )
                     await asyncio.sleep(2)
 
-                    # Reset state
+                    # Reset shared state, then clean up channel/role centrally
                     self.bot.signup_active = False
                     self.bot.match_ongoing = False
                     self.bot.match_not_reported = False
-                    self.bot.queue.clear()
-                    self.bot.team1 = []
-                    self.bot.team2 = []
-                    self.bot.captain1 = None
-                    self.bot.captain2 = None
                     self.bot.chosen_mode = None
                     self.bot.selected_map = None
+                    self.bot.captain1 = None
+                    self.bot.captain2 = None
+                    self.bot.team1 = []
+                    self.bot.team2 = []
 
-                    try:
-                        if getattr(self.bot, "match_channel", None):
-                            await self.bot.match_channel.delete()
-                    except discord.NotFound:
-                        pass
-                    finally:
-                        self.bot.match_channel = None
-
-                    try:
-                        if getattr(self.bot, "match_role", None):
-                            await self.bot.match_role.delete()
-                    except discord.NotFound:
-                        pass
-                    finally:
-                        self.bot.match_role = None
+                    await cleanup_match_resources(self.bot)
 
                     try:
                         self.stop()

@@ -92,6 +92,10 @@ class MapVoteView(discord.ui.View):
             self.interaction_queue_task.cancel()
             self.interaction_queue_task = None
 
+    def is_setup_cancelled(self) -> bool:
+        """Whether match setup was cancelled externally (e.g. !cancel)."""
+        return self.bot.match_channel is None and not self.bot.match_ongoing
+
     async def handle_map_vote(self, interaction: discord.Interaction, map):
         # Ensure vote is valid
         if self.voting_phase_ended:
@@ -122,6 +126,13 @@ class MapVoteView(discord.ui.View):
         await self.check_for_winner()
 
     async def check_for_winner(self):
+        if self.is_setup_cancelled():
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
+
         async with self.vote_lock:
             if self.voting_phase_ended:
                 return
@@ -165,6 +176,14 @@ class MapVoteView(discord.ui.View):
                 return
 
     async def close_vote(self, winning_map: str):
+        if self.is_setup_cancelled():
+            print("Map vote skipping close because match setup was cancelled.")
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
+
         self.winning_map = winning_map
         self.bot.selected_map = winning_map
         for child in self.children:
@@ -238,6 +257,10 @@ class MapVoteView(discord.ui.View):
         return True
 
     async def finalize_match_setup(self):
+        if self.is_setup_cancelled():
+            print("Skipping match finalization because match setup was cancelled.")
+            return
+
         # Finalize teams after map chosen
         teams_embed = discord.Embed(
             title=f"Teams on {self.winning_map}",
@@ -283,6 +306,11 @@ class MapVoteView(discord.ui.View):
 
     async def timeout_timer(self):
         await asyncio.sleep(25)
+        if self.is_setup_cancelled():
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            return
         if not self.voting_phase_ended:
             self.timeout = True
             await self.check_for_winner()
