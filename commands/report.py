@@ -537,6 +537,49 @@ class ReportCommand(BotCommands):
         # print("[DEBUG] MMR adjusted")
         await ctx.send("Match stats and MMR updated!")
 
+        # Build a per-player MMR gain/loss summary
+        mmr_lines = []
+        for label, team in (
+            ("Attackers", self.bot.team1),
+            ("Defenders", self.bot.team2),
+        ):
+            entries = []
+            for p in team:
+                pid = str(p["id"])
+                old = pre_update_mmr.get(pid, {}).get("mmr", 1000)
+                new = self.bot.player_mmr.get(pid, {}).get("mmr", 1000)
+                delta = new - old
+                u = users.find_one({"discord_id": pid})
+                name = (
+                    f"{u.get('name', 'Unknown')}#{u.get('tag', 'Unknown')}"
+                    if u
+                    else p.get("name", "Unknown")
+                )
+                sign = "+" if delta >= 0 else ""
+                entries.append(f"{name}: {sign}{delta}")
+            mmr_lines.append((label, "\n".join(entries)))
+
+        results_embed = discord.Embed(
+            title="Match Reported — MMR Changes",
+            color=discord.Color.green(),
+        )
+        for label, entries_text in mmr_lines:
+            results_embed.add_field(name=label, value=entries_text, inline=True)
+
+        # Post the results in the persistent #10-mans channel; the match
+        # channel gets deleted during cleanup, so posting there would lose
+        # the summary.
+        results_channel = None
+        if ctx.guild:
+            for channel in ctx.guild.text_channels:
+                if channel.name.lower() == "10-mans":
+                    results_channel = channel
+                    break
+        if results_channel:
+            await results_channel.send(embed=results_embed)
+        else:
+            await ctx.send(embed=results_embed)
+
         self.bot.save_mmr_data()
         print("[DEBUG] MMR data saved")
 
