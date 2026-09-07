@@ -7,6 +7,7 @@ from discord.ext import commands
 from commands import BotCommands
 from database import users, mmr_collection, tdm_mmr_collection
 from globals import API_KEY
+from tracker_links import tracker_link
 
 
 async def setup(bot):
@@ -70,6 +71,21 @@ class LinkRiotCommand(BotCommands):
             return
 
         discord_id = str(ctx.author.id)
+
+        # Riot IDs can only be linked to one Discord account: remove any
+        # stale duplicate links from other users
+        for stale in users.find(
+            {"name": riot_name.lower().strip(), "tag": riot_tag.lower().strip()}
+        ):
+            if str(stale.get("discord_id")) != discord_id:
+                users.delete_one({"_id": stale["_id"]})
+                mmr_collection.delete_one({"player_id": stale.get("discord_id")})
+                tdm_mmr_collection.delete_one({"player_id": stale.get("discord_id")})
+                print(
+                    f"[linkriot] Removed stale Riot ID link {riot_name}#{riot_tag} "
+                    f"from discord id {stale.get('discord_id')}"
+                )
+
         users.update_one(
             {"discord_id": discord_id},
             {
@@ -90,4 +106,6 @@ class LinkRiotCommand(BotCommands):
             {"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False
         )
 
-        await ctx.send(f"Successfully linked {full_name} to your Discord account.")
+        await ctx.send(
+            f"Successfully linked {tracker_link(riot_name, riot_tag)} to your Discord account."
+        )

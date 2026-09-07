@@ -12,7 +12,9 @@ from discord.ext import commands
 from commands import BotCommands, convert_to_utc
 from database import users, mmr_collection, seasons, all_matches
 from globals import API_KEY, TIME_ZONE_CST, mock_match_data
+from recent_queue import remember_recent_queue
 from stats_helper import update_stats
+from tracker_links import tracker_link
 from urllib.parse import quote
 
 
@@ -25,6 +27,8 @@ async def setup(bot):
 async def cleanup_match_resources(bot):
     await bot.wait_until_ready()
     try:
+        if bot.queue:
+            remember_recent_queue(bot.queue)
         if hasattr(bot, "match_channel") and bot.match_channel:
             try:
                 await bot.match_channel.delete()
@@ -265,7 +269,7 @@ class ReportCommand(BotCommands):
                     self.bot.player_names[discord_id] = player_name
                 else:
                     await ctx.send(
-                        f"Player {player_name}#{player_tag} is not linked to any Discord account."
+                        f"Player {tracker_link(player_name, player_tag)} is not linked to any Discord account."
                     )
                     return
 
@@ -310,13 +314,38 @@ class ReportCommand(BotCommands):
             await ctx.send("No players found in match data.")
             return
 
-        queue_riot_ids = set()
+        # Resolve every queued player to their Discord id (the persistent
+        # identity) plus their current Riot name/tag (only a lookup label).
+        # The Discord id is authoritative; Riot IDs can change at any time.
+        queue_members = []
         for player in self.bot.queue:
             user_data = users.find_one({"discord_id": str(player["id"])})
             if user_data:
-                player_name = user_data.get("name").lower()
-                player_tag = user_data.get("tag").lower()
-                queue_riot_ids.add((player_name, player_tag))
+                queue_members.append(
+                    {
+                        "discord_id": str(player["id"]),
+                        "puuid": (user_data.get("puuid") or "").strip().lower(),
+                        "name": user_data.get("name", "").lower(),
+                        "tag": user_data.get("tag", "").lower(),
+                    }
+                )
+
+        # Map each API player back to a queue member's Discord id. Prefer the
+        # puuid when both sides have one; fall back to the Riot name/tag.
+        def _resolve_api_player(api_player):
+            api_puuid = (api_player.get("puuid") or "").strip().lower()
+            api_name = (api_player.get("name") or "").lower()
+            api_tag = (api_player.get("tag") or "").lower()
+
+            for member in queue_members:
+                if api_puuid and member["puuid"] and api_puuid == member["puuid"]:
+                    return member["discord_id"]
+            for member in queue_members:
+                if api_name == member["name"] and api_tag == member["tag"]:
+                    return member["discord_id"]
+            return None
+
+        queue_riot_ids = {(member["name"], member["tag"]) for member in queue_members}
 
         print(f"[DEBUG] Queued players RIOT ID's: {queue_riot_ids}")
 
@@ -340,7 +369,7 @@ class ReportCommand(BotCommands):
             )
 
             for name, tag in missing_players:
-                mismatch_message += f"• {name}#{tag}\n"
+                mismatch_message += f"• {tracker_link(name, tag)}\n"
 
             mismatch_message += "\nPossible reasons:\n"
             mismatch_message += (
@@ -369,40 +398,26 @@ class ReportCommand(BotCommands):
             await ctx.send("Could not determine the winning team.")
             return
 
-        match_team_players = {"red": set(), "blue": set()}
+        match_team_players = {"red": {}, "blue": {}}
         for player_info in match_players:
             raw_team_id = player_info.get("team_id", "").lower()  # "red" or "blue"
-            p_name = player_info.get("name", "").lower()
-            p_tag = player_info.get("tag", "").lower()
-            if raw_team_id in match_team_players:
-                match_team_players[raw_team_id].add((p_name, p_tag))
+            p_discord_id = _resolve_api_player(player_info)
+            if raw_team_id in match_team_players and p_discord_id:
+                match_team_players[raw_team_id][p_discord_id] = player_info
 
-        team1_riot_ids = set()
-        for player in self.bot.team1:
-            user_data = users.find_one({"discord_id": str(player["id"])})
-            if user_data:
-                player_name = user_data.get("name", "").lower()
-                player_tag = user_data.get("tag").lower()
-                team1_riot_ids.add((player_name, player_tag))
+        team1_ids_set = {str(player["id"]) for player in self.bot.team1}
+        team2_ids_set = {str(player["id"]) for player in self.bot.team2}
 
-        team2_riot_ids = set()
-        for player in self.bot.team2:
-            user_data = users.find_one({"discord_id": str(player["id"])})
-            if user_data:
-                player_name = user_data.get("name", "").lower()
-                player_tag = user_data.get("tag").lower()
-                team2_riot_ids.add((player_name, player_tag))
+        print(f"[DEBUG] team1 discord ids: {team1_ids_set}")
+        print(f"[DEBUG] team2 discord ids: {team2_ids_set}")
 
-        print(f"[DEBUG] team1_riot_ids: {team1_riot_ids}")
-        print(f"[DEBUG] team2_riot_ids: {team2_riot_ids}")
+        winning_match_team_ids = set(match_team_players.get(winning_team_id, {}))
+        print(f"[DEBUG] Winning team Discord ID's: {winning_match_team_ids}")
 
-        winning_match_team_players = match_team_players.get(winning_team_id, set())
-        print(f"[DEBUG] Winning team Riot ID's: {winning_match_team_players}")
-
-        if winning_match_team_players == team1_riot_ids:
+        if winning_match_team_ids == team1_ids_set:
             winning_team = self.bot.team1
             losing_team = self.bot.team2
-        elif winning_match_team_players == team2_riot_ids:
+        elif winning_match_team_ids == team2_ids_set:
             winning_team = self.bot.team2
             losing_team = self.bot.team1
         else:
@@ -416,6 +431,29 @@ class ReportCommand(BotCommands):
         # Get top players
         self.bot.player_mmr = {str(k): v for k, v in self.bot.player_mmr.items()}
         pre_update_mmr = copy.deepcopy(self.bot.player_mmr)
+
+        # Snapshot each player's leaderboard rank before this match is applied
+        pre_played_ids = {
+            pid
+            for pid, stats in pre_update_mmr.items()
+            if stats.get("matches_played", 0) > 0
+            or (stats.get("wins", 0) + stats.get("losses", 0)) > 0
+        }
+        pre_update_ranks = {
+            pid: rank
+            for rank, (pid, _) in enumerate(
+                sorted(
+                    (
+                        (pid, stats)
+                        for pid, stats in pre_update_mmr.items()
+                        if pid in pre_played_ids
+                    ),
+                    key=lambda x: x[1]["mmr"],
+                    reverse=True,
+                ),
+                start=1,
+            )
+        }
 
         valid_mmr_entries = [
             (pid, stats)
@@ -437,20 +475,13 @@ class ReportCommand(BotCommands):
             top_mmr_before = 1000
             top_players_before = []
 
-        # Helper
-        riot_to_teamlabel = {}
+        # Helper: discord id -> team label (the discord id is the persistent
+        # identity; Riot name/tag is only a display label)
+        discord_to_teamlabel = {}
         for p in self.bot.team1:
-            u = users.find_one({"discord_id": str(p["id"])})
-            if u:
-                riot_to_teamlabel[
-                    (u.get("name", "").lower(), u.get("tag", "").lower())
-                ] = "team1"
+            discord_to_teamlabel[str(p["id"])] = "team1"
         for p in self.bot.team2:
-            u = users.find_one({"discord_id": str(p["id"])})
-            if u:
-                riot_to_teamlabel[
-                    (u.get("name", "").lower(), u.get("tag", "").lower())
-                ] = "team2"
+            discord_to_teamlabel[str(p["id"])] = "team2"
 
         team1_ids = [str(p["id"]) for p in self.bot.team1]
         team2_ids = [str(p["id"]) for p in self.bot.team2]
@@ -464,20 +495,19 @@ class ReportCommand(BotCommands):
         self.team1_mmr = sum(_mmr_of(pid) for pid in team1_ids)
         self.team2_mmr = sum(_mmr_of(pid) for pid in team2_ids)
 
-        riot_to_api_color = {}
+        # discord id -> API team color ("red"/"blue")
+        discord_to_api_color = {}
         for p in match_players:
-            nm = (p.get("name") or "").lower()
-            tg = (p.get("tag") or "").lower()
-            color = (p.get("team_id") or "").lower()
-            riot_to_api_color[(nm, tg)] = color
+            p_discord_id = _resolve_api_player(p)
+            if p_discord_id:
+                discord_to_api_color[p_discord_id] = (p.get("team_id") or "").lower()
 
         # Helper to get the API color
         def _team_api_color(team_players):
             for pl in team_players:
-                u = users.find_one({"discord_id": str(pl["id"])})
-                if u:
-                    key = (u.get("name", "").lower(), u.get("tag", "").lower())
-                    return riot_to_api_color.get(key)
+                color = discord_to_api_color.get(str(pl["id"]))
+                if color:
+                    return color
             return None
 
         team1_api_color = _team_api_color(self.bot.team1)
@@ -494,14 +524,19 @@ class ReportCommand(BotCommands):
         self.team2_rounds = int(api_rounds.get(team2_api_color, 0))
         round_diff_val = abs(self.team1_rounds - self.team2_rounds)
         self.winning_team = (
-            "team1" if winning_match_team_players == team1_riot_ids else "team2"
+            "team1" if winning_match_team_ids == team1_ids_set else "team2"
         )
 
         # Update stats for each player
         for player_stats in match_players:
-            p_name = (player_stats.get("name") or "").lower()
-            p_tag = (player_stats.get("tag") or "").lower()
-            team_label = riot_to_teamlabel.get((p_name, p_tag))
+            p_discord_id = _resolve_api_player(player_stats)
+            if not p_discord_id:
+                print(
+                    f"[DEBUG] API player {player_stats.get('name')}#"
+                    f"{player_stats.get('tag')} is not in the queue; skipping"
+                )
+                continue
+            team_label = discord_to_teamlabel.get(p_discord_id)
             if not team_label:
                 continue
 
@@ -510,6 +545,7 @@ class ReportCommand(BotCommands):
                 total_rounds,
                 self.bot.player_mmr,
                 self.bot.player_names,
+                discord_id=p_discord_id,
                 team_sum_mmr=(
                     self.team1_mmr if team_label == "team1" else self.team2_mmr
                 ),
@@ -524,39 +560,90 @@ class ReportCommand(BotCommands):
         # print("[DEBUG] MMR adjusted")
         await ctx.send("Match stats and MMR updated!")
 
+        # Build a per-player MMR gain/loss summary
+        mmr_lines = []
+        for label, team in (
+            ("Attackers", self.bot.team1),
+            ("Defenders", self.bot.team2),
+        ):
+            entries = []
+            for p in team:
+                pid = str(p["id"])
+                old = pre_update_mmr.get(pid, {}).get("mmr", 1000)
+                new = self.bot.player_mmr.get(pid, {}).get("mmr", 1000)
+                delta = new - old
+                u = users.find_one({"discord_id": pid})
+                name = (
+                    f"{u.get('name', 'Unknown')}#{u.get('tag', 'Unknown')}"
+                    if u
+                    else p.get("name", "Unknown")
+                )
+                sign = "+" if delta >= 0 else ""
+                entries.append(f"{name}: {sign}{delta}")
+            mmr_lines.append((label, "\n".join(entries)))
+
+        results_embed = discord.Embed(
+            title="Match Reported — MMR Changes",
+            color=discord.Color.green(),
+        )
+        for label, entries_text in mmr_lines:
+            results_embed.add_field(name=label, value=entries_text, inline=True)
+
+        # Post the results in the persistent #10-mans channel; the match
+        # channel gets deleted during cleanup, so posting there would lose
+        # the summary.
+        results_channel = None
+        if ctx.guild:
+            for channel in ctx.guild.text_channels:
+                if channel.name.lower() == "10-mans":
+                    results_channel = channel
+                    break
+        if results_channel:
+            await results_channel.send(embed=results_embed)
+        else:
+            await ctx.send(embed=results_embed)
+
         self.bot.save_mmr_data()
         print("[DEBUG] MMR data saved")
 
-        self.bot.load_mmr_data()  # Reload the MMR data
-        print("[DEBUG] Reloaded MMR data after save")
+        self.bot.save_mmr_data()
+        print("[DEBUG] MMR data saved")
 
-        # save all updates to the database
-        print("Before player stats updated")
-
-        for discord_id, stats in self.bot.player_mmr.items():
-            # Get the riot name for the player
-            user_data = users.find_one({"discord_id": str(discord_id)})
-            if user_data:
-                riot_name = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
-            else:
-                riot_name = "Unknown"
-
-            complete_stats = {
-                "mmr": stats.get("mmr", 1000),
-                "wins": stats.get("wins", 0),
-                "losses": stats.get("losses", 0),
-                "name": riot_name.lower(),
-                "total_combat_score": stats.get("total_combat_score", 0),
-                "total_kills": stats.get("total_kills", 0),
-                "total_deaths": stats.get("total_deaths", 0),
-                "matches_played": stats.get("matches_played", 0),
-                "total_rounds_played": stats.get("total_rounds_played", 0),
-                "average_combat_score": stats.get("average_combat_score", 0),
-                "kill_death_ratio": stats.get("kill_death_ratio", 0),
-            }
-
+        # Record each player's previous leaderboard rank so the
+        # leaderboard can display rank gain/loss since the last match
+        played_ids = {
+            pid
+            for pid, stats in self.bot.player_mmr.items()
+            if stats.get("matches_played", 0) > 0
+            or (stats.get("wins", 0) + stats.get("losses", 0)) > 0
+        }
+        new_ranks = {
+            pid: rank
+            for rank, (pid, _) in enumerate(
+                sorted(
+                    (
+                        (pid, stats)
+                        for pid, stats in self.bot.player_mmr.items()
+                        if pid in played_ids
+                    ),
+                    key=lambda x: x[1].get("mmr", 1000),
+                    reverse=True,
+                ),
+                start=1,
+            )
+        }
+        for discord_id in self.bot.player_mmr:
+            previous_rank = pre_update_ranks.get(discord_id)
+            new_rank = new_ranks.get(discord_id)
             mmr_collection.update_one(
-                {"player_id": discord_id}, {"$set": complete_stats}, upsert=True
+                {"player_id": discord_id},
+                {
+                    "$set": {
+                        "previous_rank": previous_rank,
+                        "current_rank": new_rank,
+                    }
+                },
+                upsert=True,
             )
 
         print("[DEBUG] All stats saved to database")
@@ -583,7 +670,7 @@ class ReportCommand(BotCommands):
                             if channel.name.lower() == "announcements":
                                 announcement_channel = channel
                                 break
-                    message = f"{riot_name}#{riot_tag} is now supersonic radiant!"
+                    message = f"{tracker_link(riot_name, riot_tag)} is now supersonic radiant!"
                     if announcement_channel:
                         await announcement_channel.send(message)
                     else:
@@ -606,6 +693,14 @@ class ReportCommand(BotCommands):
         await asyncio.sleep(5)
         self.bot.match_not_reported = False
         self.bot.match_ongoing = False
+        # Reset remaining match state so !cancel reports "nothing to cancel"
+        # instead of pretending a match is still active.
+        self.bot.selected_map = None
+        self.bot.chosen_mode = None
+        self.bot.captain1 = None
+        self.bot.captain2 = None
+        self.bot.team1 = []
+        self.bot.team2 = []
         await cleanup_match_resources(self.bot)
 
 

@@ -3,6 +3,7 @@
 from discord.ext import commands
 from commands import BotCommands
 from database import users
+from tracker_links import tracker_link
 
 
 async def setup(bot):
@@ -76,7 +77,7 @@ class StatsCommand(BotCommands):
                 slash = ""
 
             await ctx.send(
-                f"**{player_name}'s Stats:**\n"
+                f"**{player_name}'s Stats:** {tracker_link(riot_name, riot_tag)}\n"
                 f"MMR: {mmr_value}\n"
                 f"Rank: {position}{slash}{total_players}\n"
                 f"Wins: {wins}\n"
