@@ -40,6 +40,11 @@ class CustomBot(commands.Bot):
         self.match_role = None
         self.match_name = "10-Mans"
 
+        # Increments every time a match-setup cycle starts or is cancelled.
+        # Setup views capture the current value and treat any change as
+        # "this setup was cancelled or superseded" (e.g. by !cancel).
+        self.setup_generation = 0
+
         # TDM attributes
         self.tdm_queue = []
         self.tdm_team1 = []
