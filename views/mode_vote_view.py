@@ -10,10 +10,16 @@ from views.map_type_vote_view import MapTypeVoteView
 
 
 class ModeVoteView(discord.ui.View):
-    def __init__(self, ctx, bot):
+    def __init__(self, ctx, bot, setup_generation: int | None = None):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
+        # Capture the current setup cycle so we can detect a later !cancel
+        # (or a new signup superseding this vote). Parent views pass their own
+        # captured generation so a cancel racing view creation is still seen.
+        self.setup_generation = (
+            bot.setup_generation if setup_generation is None else setup_generation
+        )
 
         # Setup Interaction Buttons
         self.balanced_button = Button(
@@ -48,6 +54,13 @@ class ModeVoteView(discord.ui.View):
         print("Starting new mode vote...")
 
     async def send_view(self):
+        if self.is_setup_cancelled():
+            print("Mode vote not sent because match setup was cancelled.")
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
         self.view_message = await self.ctx.send(
             f"Vote how teams should be chosen: ({self.vote_time_remaining}s)", view=self
         )
@@ -74,6 +87,9 @@ class ModeVoteView(discord.ui.View):
             try:
                 # Process the interaction for this interaction
                 await self.handle_mode_vote(interaction, mode)
+            except Exception as e:
+                # Keep the queue alive so later interactions still work
+                print(f"[DEBUG] Error processing mode vote interaction: {e}")
             finally:
                 # Ensure the waiting coroutine is notified, even if an error occurs
                 if not fut.done():
@@ -84,11 +100,24 @@ class ModeVoteView(discord.ui.View):
             self.interaction_queue_task.cancel()
             self.interaction_queue_task = None
 
+    def is_setup_cancelled(self) -> bool:
+        """Whether this setup cycle was cancelled (e.g. by !cancel)."""
+        return self.bot.setup_generation != self.setup_generation
+
     async def handle_mode_vote(self, interaction: discord.Interaction, mode: str):
         # Ensure vote is valid
         if self.voting_phase_ended:
             await safe_reply(
                 interaction, "This voting phase has already ended", ephemeral=True
+            )
+            return
+        if self.is_setup_cancelled():
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            await safe_reply(
+                interaction, "This match setup was cancelled.", ephemeral=True
             )
             return
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
@@ -115,8 +144,21 @@ class ModeVoteView(discord.ui.View):
         await self.check_for_winner()
 
     async def check_for_winner(self):
+        if self.is_setup_cancelled():
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
+
         async with self.vote_lock:
             if self.voting_phase_ended:
+                return
+            if self.is_setup_cancelled():
+                self.voting_phase_ended = True
+                self.stop()
+                self.cancel_interaction_queue_task()
+                self.cancel_timeout_timer()
                 return
 
             balanced_votes: int = self.votes["Balanced"]
@@ -159,6 +201,14 @@ class ModeVoteView(discord.ui.View):
                 return
 
     async def close_vote(self):
+        if self.is_setup_cancelled():
+            print("Mode vote skipping close because match setup was cancelled.")
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
+
         if self.timeout:
             print(
                 f"Mode vote ended by timeout. Setting bot mode to: {self.bot.chosen_mode}"
@@ -170,11 +220,14 @@ class ModeVoteView(discord.ui.View):
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
-        await self.view_message.edit(
-            content="Vote how teams should be chosen:", view=self
-        )
+        try:
+            await self.view_message.edit(
+                content="Vote how teams should be chosen:", view=self
+            )
+        except discord.NotFound:
+            pass
 
-        map_type_vote = MapTypeVoteView(self.ctx, self.bot)
+        map_type_vote = MapTypeVoteView(self.ctx, self.bot, self.setup_generation)
         await map_type_vote.send_view()
         self.stop()
         self.cancel_interaction_queue_task()
@@ -210,12 +263,20 @@ class ModeVoteView(discord.ui.View):
             await asyncio.sleep(1)
             if self.voting_phase_ended:
                 return
+            if self.is_setup_cancelled():
+                self.voting_phase_ended = True
+                self.stop()
+                self.cancel_interaction_queue_task()
+                return
             self.vote_time_remaining -= 1
             if self.view_message:
-                await self.view_message.edit(
-                    content=f"Vote how teams should be chosen: ({self.vote_time_remaining}s)",
-                    view=self,
-                )
+                try:
+                    await self.view_message.edit(
+                        content=f"Vote how teams should be chosen: ({self.vote_time_remaining}s)",
+                        view=self,
+                    )
+                except discord.NotFound:
+                    pass
         if not self.voting_phase_ended:
             self.timeout = True
             await self.check_for_winner()

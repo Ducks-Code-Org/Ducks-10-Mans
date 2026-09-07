@@ -18,6 +18,8 @@ class SignupView(discord.ui.View):
         self.ctx = ctx
         self.bot = bot
         self.bot.origin_ctx = ctx
+        # Capture the current setup cycle so we can detect a later !cancel.
+        self.setup_generation = bot.setup_generation
 
         # Start Task Runners
         self.signup_request_queue = (
@@ -70,6 +72,13 @@ class SignupView(discord.ui.View):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
+        # If this signup was cancelled (e.g. by !cancel), stop processing.
+        if self.bot is None or self.bot.setup_generation != self.setup_generation:
+            await interaction.followup.send(
+                "This signup was cancelled.", ephemeral=True
+            )
+            return
+
         # Check if the user is in the queue
         player_id: str = str(interaction.user.id)
         if player_id not in [p["id"] for p in self.bot.queue]:
@@ -115,6 +124,9 @@ class SignupView(discord.ui.View):
             try:
                 # Process the signup for this interaction
                 await self.handle_signup(interaction)
+            except Exception as e:
+                # Keep the queue alive so later signups still work
+                print(f"[DEBUG] Error processing signup interaction: {e}")
             finally:
                 # Ensure the waiting coroutine is notified, even if an error occurs
                 if not fut.done():
@@ -167,7 +179,8 @@ class SignupView(discord.ui.View):
         if self.bot.queue:
             remember_recent_queue(self.bot.queue)
 
-        # Clear variables
+        # Invalidate this setup cycle, then clear variables
+        self.bot.setup_generation += 1
         self.bot.signup_active = False
         self.bot.queue = []
         self.bot.captain1 = None
@@ -195,6 +208,11 @@ class SignupView(discord.ui.View):
         self.cancel_timeout_monitor_task()
 
     async def handle_signup(self, interaction: discord.Interaction):
+        # If this signup was cancelled (e.g. by !cancel), stop processing.
+        if self.bot is None or self.bot.setup_generation != self.setup_generation:
+            await safe_reply(interaction, "This signup was cancelled.", ephemeral=True)
+            return
+
         # Only allow up to 10 players in the queue
         if len(self.bot.queue) >= 10:
             await safe_reply(
@@ -272,6 +290,11 @@ class SignupView(discord.ui.View):
             await self.finalize_signup(interaction)
 
     async def finalize_signup(self, interaction: discord.Interaction):
+        # If this signup was cancelled (e.g. by !cancel), don't start match setup.
+        if self.bot.setup_generation != self.setup_generation:
+            print("Skipping signup finalization because signup was cancelled.")
+            return
+
         await interaction.channel.send(
             "The queue is now full, proceeding to the voting stage."
         )
@@ -295,7 +318,7 @@ class SignupView(discord.ui.View):
         await self.bot.current_signup_message.edit(view=self)
 
         self.bot.chosen_mode = None
-        mode_vote = ModeVoteView(self.ctx, self.bot)
+        mode_vote = ModeVoteView(self.ctx, self.bot, self.setup_generation)
         await mode_vote.send_view()
         self.stop()
         self.cancel_refresh_signup_task()

@@ -45,6 +45,9 @@ class SignupCommand(BotCommands):
                 self.bot.signup_view = None
 
         # Reset all match related states
+        # Bump the setup generation so any stale views from a previous
+        # match-setup cycle are invalidated.
+        self.bot.setup_generation += 1
         self.bot.signup_active = True
         self.bot.queue = []
         self.bot.captain1 = None

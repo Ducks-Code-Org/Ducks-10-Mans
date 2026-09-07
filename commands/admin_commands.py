@@ -73,13 +73,20 @@ class AdminCommands(BotCommands):
 
     @commands.command()
     async def simulate_queue(self, ctx):
-        if self.bot.signup_view is None:
-            self.bot.signup_view = SignupView(ctx, self.bot)
+        # Start a new setup cycle: invalidate any stale views first.
+        self.bot.setup_generation += 1
+
+        # Clean up any previous signup view and start a fresh one
+        if self.bot.signup_view is not None:
+            self.bot.signup_view.cleanup()
+            self.bot.signup_view = None
+        self.bot.signup_view = SignupView(ctx, self.bot)
+
         if self.bot.signup_active:
             await ctx.send(
                 "A signup is already in progress. Resetting queue for simulation."
             )
-            self.bot.queue.clear()
+        self.bot.queue.clear()
 
         # Add 10 dummy players to the queue
         queue = [{"id": i, "name": f"Player{i}"} for i in range(1, 11)]
@@ -103,7 +110,7 @@ class AdminCommands(BotCommands):
 
         await ctx.send("The queue is now full! Proceeding with match setup...")
 
-        mode_vote = ModeVoteView(ctx, self.bot)
+        mode_vote = ModeVoteView(ctx, self.bot, self.bot.setup_generation)
         await mode_vote.send_view()
 
     # Set the bot to development mode
@@ -136,36 +143,72 @@ class AdminCommands(BotCommands):
     @commands.command()
     @commands.has_role("Owner")
     async def cancel(self, ctx):
+        # Handle an active signup (queue phase before the queue is full)
         if self.bot.signup_active:
+            # Invalidate in-flight setup views first so lingering vote/draft
+            # tasks see the cancellation and bail out instead of resurrecting
+            # match setup.
+            self.bot.setup_generation += 1
+
             if self.bot.signup_view:
                 self.bot.signup_view.cleanup()
                 self.bot.signup_view = None
 
             if self.bot.queue:
                 remember_recent_queue(self.bot.queue)
-            self.bot.queue = []
             self.bot.current_signup_message = None
             self.bot.signup_active = False
+            self.bot.match_not_reported = False
+            self.bot.match_ongoing = False
+            self.bot.chosen_mode = None
+            self.bot.selected_map = None
+            self.bot.captain1 = None
+            self.bot.captain2 = None
+            self.bot.team1 = []
+            self.bot.team2 = []
+            self.bot.queue.clear()
 
             await ctx.send(
                 "Canceled active signup. Feel free to start a new one with `!signup`."
             )
             print("Cancelling signup...")
 
-            try:
-                await self.bot.match_channel.delete()
-                await self.bot.match_role.delete()
-            except discord.NotFound:
-                pass
-        elif self.bot.match_ongoing and self.bot.selected_map:
-            # Logic to cancel the current match and clear info from memory
+            await cleanup_match_resources(self.bot)
+        # Handle a match that is already in progress
+        elif self.bot.match_ongoing or self.bot.selected_map:
+            self.bot.setup_generation += 1
+
             self.bot.match_not_reported = False
             self.bot.match_ongoing = False
-            await cleanup_match_resources(self.bot)
+            self.bot.chosen_mode = None
+            self.bot.selected_map = None
+            self.bot.captain1 = None
+            self.bot.captain2 = None
+            self.bot.team1 = []
+            self.bot.team2 = []
             await ctx.send(
                 "Cancelled active match. Feel free to start a new one with `!signup`."
             )
+            await cleanup_match_resources(self.bot)
             print("Cancelling active match...")
+        # Handle a signup whose queue already filled (match setup phase:
+        # team-mode vote, map-pool vote, map vote, or captains draft)
+        elif self.bot.match_channel:
+            self.bot.setup_generation += 1
+
+            self.bot.match_not_reported = False
+            self.bot.match_ongoing = False
+            self.bot.chosen_mode = None
+            self.bot.selected_map = None
+            self.bot.captain1 = None
+            self.bot.captain2 = None
+            self.bot.team1 = []
+            self.bot.team2 = []
+            await ctx.send(
+                "Cancelled match setup. Feel free to start a new one with `!signup`."
+            )
+            await cleanup_match_resources(self.bot)
+            print("Cancelling match setup...")
         else:
             await ctx.send("No active signup or match to cancel.")
 
@@ -198,5 +241,6 @@ class AdminCommands(BotCommands):
         ]
         for bot in bot_queue:
             self.bot.queue.append(bot)
-        draft = CaptainsDraftingView(ctx, self.bot, True)
+        self.bot.setup_generation += 1
+        draft = CaptainsDraftingView(ctx, self.bot, True, self.bot.setup_generation)
         await draft.send_current_draft_view()
