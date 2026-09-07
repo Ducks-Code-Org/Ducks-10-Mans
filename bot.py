@@ -40,6 +40,11 @@ class CustomBot(commands.Bot):
         self.match_role = None
         self.match_name = "10-Mans"
 
+        # Increments every time a match-setup cycle starts or is cancelled.
+        # Setup views capture the current value and treat any change as
+        # "this setup was cancelled or superseded" (e.g. by !cancel).
+        self.setup_generation = 0
+
         # TDM attributes
         self.tdm_queue = []
         self.tdm_team1 = []
@@ -217,9 +222,13 @@ class CustomBot(commands.Bot):
         self.player_mmr.clear()
         self.player_names.clear()
 
+        # mmr_data is keyed by player_id (the Discord id). If duplicate docs
+        # exist for a player, prefer the one with real stats so a stale
+        # default doc can't silently zero out a player's record.
+        doc_scores = {}
         for doc in mmr_collection.find():
             player_id = doc["player_id"]
-            self.player_mmr[player_id] = {
+            entry = {
                 "mmr": doc.get("mmr", 1000),
                 "wins": doc.get("wins", 0),
                 "losses": doc.get("losses", 0),
@@ -231,6 +240,14 @@ class CustomBot(commands.Bot):
                 "average_combat_score": doc.get("average_combat_score", 0),
                 "kill_death_ratio": doc.get("kill_death_ratio", 0),
             }
+            score = (
+                doc.get("matches_played", 0),
+                doc.get("wins", 0) + doc.get("losses", 0),
+            )
+
+            if player_id not in self.player_mmr or score > doc_scores[player_id]:
+                self.player_mmr[player_id] = entry
+                doc_scores[player_id] = score
 
     def save_mmr_data(self):
         for player_id, stats in self.player_mmr.items():

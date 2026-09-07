@@ -11,10 +11,16 @@ from views import safe_reply
 
 
 class MapVoteView(discord.ui.View):
-    def __init__(self, ctx, bot, map_choices):
+    def __init__(self, ctx, bot, map_choices, setup_generation: int | None = None):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
+        # Capture the current setup cycle so we can detect a later !cancel
+        # (or a new signup superseding this vote). Parent views pass their own
+        # captured generation so a cancel racing view creation is still seen.
+        self.setup_generation = (
+            bot.setup_generation if setup_generation is None else setup_generation
+        )
 
         # Setup Task Runners
         self.interaction_request_queue = (
@@ -65,6 +71,14 @@ class MapVoteView(discord.ui.View):
             self.map_buttons.append(button)
 
     async def send_view(self):
+        if self.is_setup_cancelled():
+            print("Map vote not sent because match setup was cancelled.")
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
+
         if not self.bot.chosen_mode:
             print("No mode selected at start of map vote.")
             await self.ctx.send(
@@ -86,6 +100,9 @@ class MapVoteView(discord.ui.View):
             try:
                 # Process the interaction for this interaction
                 await self.handle_map_vote(interaction, map)
+            except Exception as e:
+                # Keep the queue alive so later interactions still work
+                print(f"[DEBUG] Error processing map vote interaction: {e}")
             finally:
                 # Ensure the waiting coroutine is notified, even if an error occurs
                 if not fut.done():
@@ -96,11 +113,24 @@ class MapVoteView(discord.ui.View):
             self.interaction_queue_task.cancel()
             self.interaction_queue_task = None
 
+    def is_setup_cancelled(self) -> bool:
+        """Whether this setup cycle was cancelled (e.g. by !cancel)."""
+        return self.bot.setup_generation != self.setup_generation
+
     async def handle_map_vote(self, interaction: discord.Interaction, map):
         # Ensure vote is valid
         if self.voting_phase_ended:
             await safe_reply(
                 interaction, "This voting phase has already ended", ephemeral=True
+            )
+            return
+        if self.is_setup_cancelled():
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            await safe_reply(
+                interaction, "This match setup was cancelled.", ephemeral=True
             )
             return
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
@@ -126,8 +156,21 @@ class MapVoteView(discord.ui.View):
         await self.check_for_winner()
 
     async def check_for_winner(self):
+        if self.is_setup_cancelled():
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
+
         async with self.vote_lock:
             if self.voting_phase_ended:
+                return
+            if self.is_setup_cancelled():
+                self.voting_phase_ended = True
+                self.stop()
+                self.cancel_interaction_queue_task()
+                self.cancel_timeout_timer()
                 return
             # Check for majority winner
             highest_number_of_votes = max(self.map_votes.values())
@@ -169,12 +212,23 @@ class MapVoteView(discord.ui.View):
                 return
 
     async def close_vote(self, winning_map: str):
+        if self.is_setup_cancelled():
+            print("Map vote skipping close because match setup was cancelled.")
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
+
         self.winning_map = winning_map
         self.bot.selected_map = winning_map
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
-        await self.view_message.edit(content="Vote for the map to play:", view=self)
+        try:
+            await self.view_message.edit(content="Vote for the map to play:", view=self)
+        except discord.NotFound:
+            pass
 
         # Finalize match setup
         if self.bot.chosen_mode == "Balanced":
@@ -191,7 +245,9 @@ class MapVoteView(discord.ui.View):
                     self.cancel_timeout_timer()
                     return
 
-            choice_view = SecondCaptainChoiceView(self.ctx, self.bot)
+            choice_view = SecondCaptainChoiceView(
+                self.ctx, self.bot, self.setup_generation
+            )
             await choice_view.send_view()
         else:
             await self.ctx.send("Error: No game mode selected!")
@@ -240,6 +296,10 @@ class MapVoteView(discord.ui.View):
         return True
 
     async def finalize_match_setup(self):
+        if self.is_setup_cancelled():
+            print("Skipping match finalization because match setup was cancelled.")
+            return
+
         # Finalize teams after map chosen
         teams_embed = discord.Embed(
             title=f"Teams on {self.winning_map}",
@@ -281,19 +341,33 @@ class MapVoteView(discord.ui.View):
 
         self.bot.match_ongoing = True
         self.bot.match_not_reported = True
-        await self.bot.match_channel.edit(name=f"{self.bot.match_name}《in-game》")
+        if self.bot.match_channel:
+            try:
+                await self.bot.match_channel.edit(
+                    name=f"{self.bot.match_name}《in-game》"
+                )
+            except (discord.NotFound, discord.HTTPException):
+                pass
 
     async def timeout_timer(self):
         for _ in range(25):
             await asyncio.sleep(1)
             if self.voting_phase_ended:
                 return
+            if self.is_setup_cancelled():
+                self.voting_phase_ended = True
+                self.stop()
+                self.cancel_interaction_queue_task()
+                return
             self.vote_time_remaining -= 1
             if self.view_message:
-                await self.view_message.edit(
-                    content=f"Vote for the map to play: ({self.vote_time_remaining}s)",
-                    view=self,
-                )
+                try:
+                    await self.view_message.edit(
+                        content=f"Vote for the map to play: ({self.vote_time_remaining}s)",
+                        view=self,
+                    )
+                except discord.NotFound:
+                    pass
         if not self.voting_phase_ended:
             self.timeout = True
             await self.check_for_winner()
