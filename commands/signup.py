@@ -48,7 +48,11 @@ async def purge_invalid_riot_ids(bot=None) -> list[str]:
     display names of the removed players. Inconclusive checks (network/API
     errors) are skipped so flaky API responses never purge data.
     """
-    docs = [doc for doc in users.find() if (doc.get("name") or "").strip() and (doc.get("tag") or "").strip()]
+    docs = [
+        doc
+        for doc in users.find()
+        if (doc.get("name") or "").strip() and (doc.get("tag") or "").strip()
+    ]
     if not docs:
         return []
 
