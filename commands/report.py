@@ -234,9 +234,7 @@ class ReportCommand(BotCommands):
         # Get total rounds played from the match data
         teams = match.get("teams", [])
         if teams:
-            total_rounds = metadata.get("rounds_played") or metadata.get(
-                "total_rounds"
-            )
+            total_rounds = metadata.get("rounds_played") or metadata.get("total_rounds")
             if not total_rounds:
                 rounds_data = match.get("rounds") or []
                 total_rounds = len(rounds_data)
