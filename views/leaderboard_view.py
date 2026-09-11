@@ -101,7 +101,7 @@ class LeaderboardView(View):
         self.add_item(self.next_button)
 
         print(
-            f"[LB] mode={self.mode} items={len(self.sorted_data)} per_page={self.players_per_page} pages={self.total_pages}"
+            f"[LB] items={len(self.sorted_data)} per_page={self.players_per_page} pages={self.total_pages}"
         )
 
     def make_content(self, data, page_count):
