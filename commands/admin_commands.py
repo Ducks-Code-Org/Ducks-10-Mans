@@ -10,7 +10,6 @@ from database import mmr_collection
 from recent_queue import get_recent_queue, remember_recent_queue
 from views.signup_view import SignupView
 from views.mode_vote_view import ModeVoteView
-from views.captains_drafting_view import CaptainsDraftingView
 
 
 async def setup(bot):
@@ -230,22 +229,3 @@ class AdminCommands(BotCommands):
             + " ".join(f"<@{pid}>" for pid in recent_ids)
             + " — a new queue may be starting if you're up for a game!"
         )
-
-    @commands.command()
-    @commands.has_role("Owner")
-    async def force_draft(self, ctx):
-        bot_queue = [
-            {"name": "Player3", "id": 1},
-            {"name": "Player4", "id": 2},
-            {"name": "Player5", "id": 3},
-            {"name": "Player6", "id": 4},
-            {"name": "Player7", "id": 5},
-            {"name": "Player8", "id": 6},
-            {"name": "Player9", "id": 7},
-            {"name": "Player10", "id": 8},
-        ]
-        for bot in bot_queue:
-            self.bot.queue.append(bot)
-        self.bot.setup_generation += 1
-        draft = CaptainsDraftingView(ctx, self.bot, True, self.bot.setup_generation)
-        await draft.send_current_draft_view()

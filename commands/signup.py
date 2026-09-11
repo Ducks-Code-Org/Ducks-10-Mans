@@ -8,18 +8,17 @@ import discord
 from discord.ext import commands
 
 from commands import BotCommands
-from database import mmr_collection, tdm_mmr_collection, users
+from database import mmr_collection, users
 from riot_api import riot_account_exists_async
 from views.signup_view import SignupView
 from identity import ensure_current_riot_identity
 
 
 def _remove_user_everywhere(doc) -> str:
-    """Delete a user doc and its mmr/tdm docs. Returns the Riot ID string."""
+    """Delete a user doc and its mmr doc. Returns the Riot ID string."""
     discord_id = str(doc.get("discord_id"))
     users.delete_one({"_id": doc["_id"]})
     mmr_collection.delete_one({"player_id": discord_id})
-    tdm_mmr_collection.delete_one({"player_id": discord_id})
     name = (doc.get("name") or "").strip()
     tag = (doc.get("tag") or "").strip()
     riot_id = f"{name}#{tag}"

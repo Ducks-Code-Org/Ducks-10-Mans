@@ -93,7 +93,6 @@ class SignupView(discord.ui.View):
             if player["id"] != player_id:
                 new_queue.append(player)
         self.bot.queue = new_queue
-        riot_names: list[str] = self.get_riot_names()
         print(f"{interaction.user.name} left the queue successfully")
 
         # Update last activity
@@ -279,7 +278,6 @@ class SignupView(discord.ui.View):
                 "losses": 0,
             }
         self.bot.player_names[user_id] = interaction.user.name
-        riot_names: list[str] = self.get_riot_names()
         print(f"{interaction.user.name} joined the queue successfully.")
 
         # Update last activity
@@ -348,8 +346,6 @@ class SignupView(discord.ui.View):
         try:
             await asyncio.sleep(60)
             while self.bot.signup_active:
-                riot_names: list[str] = self.get_riot_names()
-
                 if self.bot.current_signup_message:
                     try:
                         await self.bot.current_signup_message.edit(
@@ -436,15 +432,6 @@ class SignupView(discord.ui.View):
         if self.channel_rename_task:
             self.channel_rename_task.cancel()
             self.channel_rename_task = None
-
-    def get_riot_names(self) -> list[str]:
-        riot_names: list[str] = []
-        for player in self.bot.queue:
-            discord_id = player["id"]
-            user_data = users.find_one({"discord_id": str(discord_id)})
-            riot_name = user_data.get("name", "Unknown") if user_data else "Unknown"
-            riot_names.append(riot_name)
-        return riot_names
 
     def cleanup(self):
         """Used to cleanup the signup externally"""
