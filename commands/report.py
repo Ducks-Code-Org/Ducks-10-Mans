@@ -3,17 +3,16 @@
 import copy
 import asyncio
 
-import requests
+import aiohttp
 import discord
 from discord.ext import commands
 
 from commands import BotCommands
 from database import users, mmr_collection, seasons, all_matches
-from globals import API_KEY
 from recent_queue import remember_recent_queue
+from riot_api import RiotApiInconclusive, get_recent_matches_async
 from stats_helper import update_stats
 from tracker_links import tracker_link
-from urllib.parse import quote
 
 
 async def setup(bot):
@@ -179,37 +178,26 @@ class ReportCommand(BotCommands):
             return aliases.get(m, m)
 
         region, platform = "na", "pc"
-        q_name, q_tag = quote(name, safe=""), quote(tag, safe="")
-        url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{q_name}/{q_tag}"
 
         try:
-            resp = requests.get(url, headers={"Authorization": API_KEY}, timeout=30)
-        except requests.RequestException as e:
+            async with aiohttp.ClientSession() as session:
+                data = await get_recent_matches_async(
+                    session,
+                    name,
+                    tag,
+                    region=region,
+                    platform=platform,
+                    priority=True,
+                )
+        except (RiotApiInconclusive, aiohttp.ClientError, asyncio.TimeoutError) as e:
             await ctx.send(f"Network error reaching HenrikDev API: {e}")
             return
 
-        if resp.status_code == 401:
-            await ctx.send(
-                "HenrikDev API rejected the request (401). Check that your API key is valid."
-            )
-            return
-        if resp.status_code == 404:
+        if data is None:
             await ctx.send("No recent matches found for your Riot ID (404).")
             return
-        if resp.status_code == 429:
-            await ctx.send("Rate limit hit (429). Try again in a bit.")
-            return
-        if resp.status_code == 503:
-            await ctx.send(
-                "Riot/HenrikDev upstream is temporarily unavailable (503). Try again later."
-            )
-            return
-        if resp.status_code != 200:
-            await ctx.send(f"Unexpected error from API ({resp.status_code}).")
-            return
 
-        data = resp.json()
-        if not isinstance(data, dict) or "data" not in data or not data["data"]:
+        if not data.get("data"):
             await ctx.send("Could not retrieve match data.")
             return
 

@@ -1,11 +1,13 @@
 "Link your Riot account to your Discord account."
 
-import requests
+import asyncio
+
+import aiohttp
 from discord.ext import commands
 
 from commands import BotCommands
 from database import users, mmr_collection
-from globals import API_KEY
+from riot_api import RiotApiInconclusive, get_account_by_riot_id
 from tracker_links import tracker_link
 
 
@@ -23,49 +25,19 @@ class LinkRiotCommand(BotCommands):
             await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
             return
 
-        if not API_KEY or not API_KEY.strip():
-            await ctx.send("API key is not configured")
-            return
-
-        from urllib.parse import quote
-
-        q_name = quote(riot_name, safe="")
-        q_tag = quote(riot_tag, safe="")
-
-        url = f"https://api.henrikdev.xyz/valorant/v2/account/{q_name}/{q_tag}"
         try:
-            resp = requests.get(url, headers={"Authorization": API_KEY}, timeout=30)
-        except requests.RequestException as e:
+            async with aiohttp.ClientSession() as session:
+                payload = await get_account_by_riot_id(
+                    session, riot_name, riot_tag, priority=True
+                )
+        except (RiotApiInconclusive, aiohttp.ClientError, asyncio.TimeoutError) as e:
             await ctx.send(f"Network error reaching HenrikDev API: {e}")
             return
 
         # fully document API outcomes
-        if resp.status_code == 401:
-            await ctx.send(
-                "HenrikDev API rejected the request (401). Check that your API key is valid."
-            )
-            return
-        if resp.status_code == 429:
-            await ctx.send("Rate limit hit (429). Try again in a bit.")
-            return
-        if resp.status_code == 503:
-            await ctx.send(
-                "Riot/HenrikDev upstream is temporarily unavailable (503). Try again later."
-            )
-            return
-        if resp.status_code == 404:
+        if payload is None or not payload.get("_raw"):
             await ctx.send(
                 "Could not find that Riot account. Double-check the name and tag."
-            )
-            return
-        if resp.status_code != 200:
-            await ctx.send(f"Unexpected error from API ({resp.status_code}).")
-            return
-
-        data = resp.json()
-        if "data" not in data:
-            await ctx.send(
-                "Could not find your Riot account. Please check the name and tag."
             )
             return
 
