@@ -321,7 +321,9 @@ async def get_recent_matches_async(
     recent matches (404), and raises RiotApiInconclusive on network errors,
     auth failures, persistent 429s or unexpected statuses.
     """
-    q_name, q_tag = quote((name or "").strip(), safe=""), quote((tag or "").strip(), safe="")
+    q_name, q_tag = quote((name or "").strip(), safe=""), quote(
+        (tag or "").strip(), safe=""
+    )
     url = f"{HENRIK_BASE}/v4/matches/{region}/{platform}/{q_name}/{q_tag}"
 
     status, data = await _henrik_get_json(
