@@ -40,10 +40,9 @@ class LeaderboardCommand(BotCommands):
             sort_by_internal,
             players_per_page=10,
             timeout=None,
-            mode="normal",
         )
         content = leaderboard_view.make_content(
-            sorted_data, "normal", leaderboard_view.total_pages
+            sorted_data, leaderboard_view.total_pages
         )
         return leaderboard_view, content, None
 
