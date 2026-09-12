@@ -32,6 +32,8 @@ This guide will cover everything you need to do to set up the codebase for local
     set "api_key=<YOUR_HENRIKDEV_KEY>"
     ```
 
+- (Optional) Review `bot.ini` in the repository root. This read-only config file is parsed by the bot at startup and will be used by future updates to enable and disable certain features under the `[features]` section.
+
 - Install needed packages with `pip install -r requirements.txt`
 - Run the command `call env.bat` in a `cmd` terminal
   - This is needed to set the proper environment variables to run the bot, and will have to be run once each session
