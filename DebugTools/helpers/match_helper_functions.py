@@ -9,7 +9,7 @@ from globals import URI_KEY
 
 # MongoDB Connection
 uri = URI_KEY
-client = MongoClient(uri, tlsAllowInvalidCertificates=True, server_api=ServerApi("1"))
+client = MongoClient(uri, tls=True, server_api=ServerApi("1"))
 
 # Initialize MongoDB Collections
 db = client["valorant"]

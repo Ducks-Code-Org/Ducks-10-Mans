@@ -34,6 +34,11 @@ class AdminCommands(BotCommands):
         winner_doc = mmr_collection.find_one(
             {"matches_played": {"$gt": 0}}, sort=[("mmr", -1)]
         )
+        if winner_doc is None:
+            await ctx.send(
+                "No player has played a match yet; there is no winner to crown."
+            )
+            return
 
         doc = self.bot.create_new_season(reset_player_stats=reset, winner=winner_doc)
 
@@ -44,7 +49,13 @@ class AdminCommands(BotCommands):
         await ctx.guild.edit_role_positions(positions={ssr_role: 5})
         await ssr_role.edit(color=discord.Color.teal())
         winner_member = ctx.guild.get_member(int(winner_doc["player_id"]))
-        await winner_member.add_roles(ssr_role)
+        if winner_member:
+            await winner_member.add_roles(ssr_role)
+        else:
+            print(
+                f"[newseason] Winner {winner_doc.get('player_id')} is not in this guild; "
+                "SSR role created but not assigned."
+            )
 
         # Try to send to 'announcements' channel if it exists
         announcement_channel = None
@@ -72,6 +83,7 @@ class AdminCommands(BotCommands):
         )
 
     @commands.command()
+    @commands.has_permissions(administrator=True)
     async def simulate_queue(self, ctx):
         # Start a new setup cycle: invalidate any stale views first.
         self.bot.setup_generation += 1
@@ -91,7 +103,9 @@ class AdminCommands(BotCommands):
         # Add 10 dummy players to the queue
         queue = [{"id": i, "name": f"Player{i}"} for i in range(1, 11)]
 
-        # Assign default MMR to the dummy players and map IDs to names
+        # Assign default MMR to the dummy players and map IDs to names.
+        # Kept in memory only: never persisted, so simulation can't pollute
+        # the real MMR database with fake players.
         for player in queue:
             if player["id"] not in self.bot.player_mmr:
                 self.bot.player_mmr[player["id"]] = {
@@ -100,8 +114,6 @@ class AdminCommands(BotCommands):
                     "losses": 0,
                 }
             self.bot.player_names[player["id"]] = player["name"]
-
-        self.bot.save_mmr_data()
 
         self.bot.signup_active = True
         await ctx.send(

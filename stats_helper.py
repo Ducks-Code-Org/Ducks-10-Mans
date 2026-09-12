@@ -220,8 +220,8 @@ def update_stats(
             {
                 "$set": {
                     "mmr": player_mmr[discord_id]["mmr"],
-                    "wins": 0,
-                    "losses": 0,
+                    "wins": player_mmr[discord_id]["wins"],
+                    "losses": player_mmr[discord_id]["losses"],
                     "name": riot_name,
                     "total_combat_score": total_combat_score,
                     "total_kills": total_kills,

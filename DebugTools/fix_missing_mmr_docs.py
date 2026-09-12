@@ -20,8 +20,6 @@ default record.
 from __future__ import annotations
 
 import argparse
-import datetime
-import json
 import os
 import re
 import sys
@@ -79,7 +77,7 @@ def get_client() -> MongoClient:
         sys.exit("[fix] Could not find uri_key in environment, env.bat, or globals.py")
     client = MongoClient(
         uri,
-        tlsAllowInvalidCertificates=True,
+        tls=True,
         server_api=ServerApi("1"),
         serverSelectionTimeoutMS=10000,
     )
@@ -183,7 +181,7 @@ def diagnose(db, *, fix: bool = False):
     elif fix:
         print("[fix] Nothing to fix.")
     else:
-        print(f"\n[fix] Run with --fix to create/reset the missing documents.")
+        print("\n[fix] Run with --fix to create/reset the missing documents.")
 
 
 def main():
