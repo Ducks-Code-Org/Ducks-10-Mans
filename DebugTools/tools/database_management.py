@@ -2,13 +2,10 @@
 
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-import certifi
 
 from globals import URI_KEY
 
-client = MongoClient(
-    URI_KEY, tlsAllowInvalidCertificates=True, server_api=ServerApi("1")
-)
+client = MongoClient(URI_KEY, tls=True, server_api=ServerApi("1"))
 
 # Initialize MongoDB Collections
 db = client["valorant"]
@@ -96,12 +93,12 @@ def make_changes_to_database(stat_changes: list[StatChange]):
             {"_id": change.id}, {"$set": {change.stat_name: change.new}}
         )
 
-    print(f"Completed Changes")
+    print("Completed Changes")
 
 
 def lower_names():
     name_changes = get_lower_names_changes()
-    print(f"All Changes that will be made to the database:")
+    print("All Changes that will be made to the database:")
     display_all_changes(name_changes)
 
     confirm = input(

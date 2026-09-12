@@ -1,12 +1,14 @@
 "Link your Riot account to your Discord account."
 
-import requests
-import discord
+import asyncio
+
+import aiohttp
 from discord.ext import commands
 
 from commands import BotCommands
-from database import users, mmr_collection, tdm_mmr_collection
-from globals import API_KEY
+from database import users, mmr_collection
+from riot_api import RiotApiInconclusive, get_account_by_riot_id
+from tracker_links import tracker_link
 
 
 async def setup(bot):
@@ -23,53 +25,37 @@ class LinkRiotCommand(BotCommands):
             await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
             return
 
-        if not API_KEY or not API_KEY.strip():
-            await ctx.send("API key is not configured")
-            return
-
-        from urllib.parse import quote
-
-        q_name = quote(riot_name, safe="")
-        q_tag = quote(riot_tag, safe="")
-
-        url = f"https://api.henrikdev.xyz/valorant/v2/account/{q_name}/{q_tag}"
         try:
-            resp = requests.get(url, headers={"Authorization": API_KEY}, timeout=30)
-        except requests.RequestException as e:
+            async with aiohttp.ClientSession() as session:
+                payload = await get_account_by_riot_id(
+                    session, riot_name, riot_tag, priority=True
+                )
+        except (RiotApiInconclusive, aiohttp.ClientError, asyncio.TimeoutError) as e:
             await ctx.send(f"Network error reaching HenrikDev API: {e}")
             return
 
         # fully document API outcomes
-        if resp.status_code == 401:
-            await ctx.send(
-                "HenrikDev API rejected the request (401). Check that your API key is valid."
-            )
-            return
-        if resp.status_code == 429:
-            await ctx.send("Rate limit hit (429). Try again in a bit.")
-            return
-        if resp.status_code == 503:
-            await ctx.send(
-                "Riot/HenrikDev upstream is temporarily unavailable (503). Try again later."
-            )
-            return
-        if resp.status_code == 404:
+        if payload is None or not payload.get("_raw"):
             await ctx.send(
                 "Could not find that Riot account. Double-check the name and tag."
             )
             return
-        if resp.status_code != 200:
-            await ctx.send(f"Unexpected error from API ({resp.status_code}).")
-            return
-
-        data = resp.json()
-        if "data" not in data:
-            await ctx.send(
-                "Could not find your Riot account. Please check the name and tag."
-            )
-            return
 
         discord_id = str(ctx.author.id)
+
+        # Riot IDs can only be linked to one Discord account: remove any
+        # stale duplicate links from other users
+        for stale in users.find(
+            {"name": riot_name.lower().strip(), "tag": riot_tag.lower().strip()}
+        ):
+            if str(stale.get("discord_id")) != discord_id:
+                users.delete_one({"_id": stale["_id"]})
+                mmr_collection.delete_one({"player_id": stale.get("discord_id")})
+                print(
+                    f"[linkriot] Removed stale Riot ID link {riot_name}#{riot_tag} "
+                    f"from discord id {stale.get('discord_id')}"
+                )
+
         users.update_one(
             {"discord_id": discord_id},
             {
@@ -86,8 +72,7 @@ class LinkRiotCommand(BotCommands):
         mmr_collection.update_one(
             {"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False
         )
-        tdm_mmr_collection.update_one(
-            {"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False
-        )
 
-        await ctx.send(f"Successfully linked {full_name} to your Discord account.")
+        await ctx.send(
+            f"Successfully linked {tracker_link(riot_name, riot_tag)} to your Discord account."
+        )

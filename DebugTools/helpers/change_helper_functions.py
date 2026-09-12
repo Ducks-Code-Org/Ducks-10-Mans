@@ -13,7 +13,7 @@ class StatChange:
 
 # MongoDB Connection
 uri = URI_KEY
-client = MongoClient(uri, tlsAllowInvalidCertificates=True, server_api=ServerApi("1"))
+client = MongoClient(uri, tls=True, server_api=ServerApi("1"))
 
 # Initialize MongoDB Collections
 db = client["valorant"]
@@ -299,15 +299,9 @@ def get_changes_that_will_be_made(match):
 
 def make_changes(changes: list[StatChange], match=None):
     for change in changes:
-        # Add old value to the new value for cumulative stats, replace for calculated stats
-        if change.stat_name in ["average_combat_score", "kill_death_ratio"]:
-            mmr_collection.update_one(
-                {"name": change.player_name}, {"$set": {change.stat_name: change.new}}
-            )
-        else:
-            mmr_collection.update_one(
-                {"name": change.player_name}, {"$set": {change.stat_name: change.new}}
-            )
+        mmr_collection.update_one(
+            {"name": change.player_name}, {"$set": {change.stat_name: change.new}}
+        )
 
     print("Changes have been successfully applied to the database.")
 

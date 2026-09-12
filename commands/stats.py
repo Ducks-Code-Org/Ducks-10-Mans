@@ -3,6 +3,7 @@
 from discord.ext import commands
 from commands import BotCommands
 from database import users
+from tracker_links import tracker_link
 
 
 async def setup(bot):
@@ -63,7 +64,6 @@ class StatsCommand(BotCommands):
                 reverse=True,
             )
             position = None
-            slash = "/"
             for idx, (pid, _) in enumerate(sorted_mmr, start=1):
                 if pid == player_id:
                     position = idx
@@ -71,14 +71,14 @@ class StatsCommand(BotCommands):
 
             # Rank 1 tag
             if position == 1:
-                position = "*Supersonic Radiant!* (Rank 1)"
-                total_players = ""
-                slash = ""
+                rank_line = "*Supersonic Radiant!* (Rank 1)"
+            else:
+                rank_line = f"Rank: {position}/{total_players}"
 
             await ctx.send(
-                f"**{player_name}'s Stats:**\n"
+                f"**{player_name}'s Stats:** {tracker_link(riot_name, riot_tag)}\n"
                 f"MMR: {mmr_value}\n"
-                f"Rank: {position}{slash}{total_players}\n"
+                f"{rank_line}\n"
                 f"Wins: {wins}\n"
                 f"Losses: {losses}\n"
                 f"Win%: {win_percent:.2f}%\n"

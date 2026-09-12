@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 
 import requests
@@ -8,7 +9,7 @@ from globals import URI_KEY
 
 # MongoDB Connection
 uri = URI_KEY
-client = MongoClient(uri, tlsAllowInvalidCertificates=True, server_api=ServerApi("1"))
+client = MongoClient(uri, tls=True, server_api=ServerApi("1"))
 
 # Initialize MongoDB Collections
 db = client["valorant"]
@@ -21,7 +22,7 @@ def get_custom_matchlist(name, tag):
     response = requests.get(
         f"https://api.henrikdev.xyz/valorant/v4/matches/na/pc/{name}/{tag}?mode=custom",
         headers={
-            "Authorization": "HDEV-0f2e4072-7536-44a8-861b-e969b6837de7",
+            "Authorization": os.getenv("api_key", ""),
         },
     )
     data = response.json()["data"]
@@ -118,21 +119,3 @@ def convert_to_central_time(utc_timestamp):
 
     # Return the Central Time in ISO 8601 format
     return central_time.isoformat()
-
-
-def get_matches_from_season(start_time, end_time=""):
-    # Construct the query
-    if end_time:
-        query = {"metadata.started_at": {"$gte": start_time, "$lte": end_time}}
-    else:
-        query = {"metadata.started_at": {"$gte": start_time}}
-    unique_matches_dict = {}
-    # Execute the query and return the results
-    matches = all_matches.find(query)
-    matches_list = list(matches)
-    for match in matches_list:
-        match_id = match["metadata"]["match_id"]
-        if match_id not in unique_matches_dict:
-            unique_matches_dict[match_id] = match
-
-    return unique_matches_dict.values()
