@@ -301,3 +301,38 @@ async def verify_riot_account_async(
             "Riot lookup failed: API key missing or invalid. Ask an admin to set env `api_key`.",
         )
     return (True, f"api status {status} (verification skipped)")
+
+
+async def get_recent_matches_async(
+    session: aiohttp.ClientSession,
+    name: str,
+    tag: str,
+    *,
+    region: str = "na",
+    platform: str = "pc",
+    timeout: int = 30,
+    retries: int = 2,
+    priority: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """GET the most recent matches for a Riot ID through the shared
+    30 req/min rate limiter.
+
+    Returns the parsed payload for HTTP 200, None when the Riot ID has no
+    recent matches (404), and raises RiotApiInconclusive on network errors,
+    auth failures, persistent 429s or unexpected statuses.
+    """
+    q_name, q_tag = quote((name or "").strip(), safe=""), quote(
+        (tag or "").strip(), safe=""
+    )
+    url = f"{HENRIK_BASE}/v4/matches/{region}/{platform}/{q_name}/{q_tag}"
+
+    status, data = await _henrik_get_json(
+        session, url, timeout=timeout, retries=retries, priority=priority
+    )
+    if status == 404:
+        return None
+    if status != 200:
+        raise RiotApiInconclusive(f"Henrik API returned {status} for {url}")
+    if not isinstance(data, dict) or "data" not in data:
+        raise RiotApiInconclusive(f"Henrik API returned malformed payload for {url}")
+    return data
