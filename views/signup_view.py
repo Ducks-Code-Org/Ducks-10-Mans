@@ -173,7 +173,7 @@ class SignupView(discord.ui.View):
         try:
             await self.ctx.send(f"Signup cancelled: {reason}")
             print(f"Signup cancelled: {reason}")
-        except:
+        except discord.HTTPException:
             pass  # In case channel is deleted or something
 
         # Remember who was in the queue for !pingrecent
@@ -194,11 +194,11 @@ class SignupView(discord.ui.View):
         # Delete role and channel
         try:
             await self.bot.match_role.delete()
-        except:
+        except discord.HTTPException:
             pass
         try:
             await self.bot.match_channel.delete()
-        except:
+        except discord.HTTPException:
             pass
 
         # Cleanup view

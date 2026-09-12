@@ -1,7 +1,6 @@
 """Hold various general functions of the bot."""
 
 from datetime import datetime, timezone
-from calendar import monthrange
 
 import discord
 from discord.ext import commands
@@ -10,30 +9,25 @@ from views.signup_view import SignupView
 from commands.leaderboard import LeaderboardCommand
 from database import mmr_collection, users, seasons
 
-try:
-    from dateutil.relativedelta import relativedelta
-except Exception:
-    relativedelta = None
-
 
 class CustomBot(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # 10 mans attributes
-        self.signup_view: SignupView = None
+        self.signup_view: SignupView | None = None
         self.match_not_reported = False
-        self.player_mmr = {}
-        self.player_names = {}
+        self.player_mmr: dict[str, dict] = {}
+        self.player_names: dict[str, str] = {}
         self.match_ongoing = False
-        self.selected_map = None
-        self.team1 = []
-        self.team2 = []
+        self.selected_map: str | None = None
+        self.team1: list[dict] = []
+        self.team2: list[dict] = []
         self.signup_active = False
         self.current_signup_message = None
-        self.queue = []
-        self.captain1 = None
-        self.captain2 = None
-        self.chosen_mode = None
+        self.queue: list[dict] = []
+        self.captain1: dict | None = None
+        self.captain2: dict | None = None
+        self.chosen_mode: str | None = None
 
         self.match_channel = None
         self.match_role = None
@@ -60,29 +54,6 @@ class CustomBot(commands.Bot):
                 }
             },
             upsert=True,
-        )
-
-    def _two_months_after(self, start_utc: datetime) -> datetime:
-        if relativedelta is not None:
-            return start_utc + relativedelta(months=+2)
-
-        # Fallback
-        y, m = start_utc.year, start_utc.month
-        m += 2
-        while m > 12:
-            y += 1
-            m -= 12
-
-        d = min(start_utc.day, monthrange(y, m)[1])
-        return datetime(
-            y,
-            m,
-            d,
-            start_utc.hour,
-            start_utc.minute,
-            start_utc.second,
-            start_utc.microsecond,
-            tzinfo=timezone.utc,
         )
 
     def create_new_season(self, *, reset_player_stats: bool = True, winner) -> dict:
@@ -232,38 +203,6 @@ class CustomBot(commands.Bot):
                 upsert=True,
             )
 
-    # adjust MMR and track wins/losses
-    def adjust_mmr(self, winning_team, losing_team):
-        MMR_CONSTANT = 32
-
-        # Calculate average MMR for winning and losing teams
-        winning_team_mmr = sum(
-            self.player_mmr[player["id"]]["mmr"] for player in winning_team
-        ) / len(winning_team)
-        losing_team_mmr = sum(
-            self.player_mmr[player["id"]]["mmr"] for player in losing_team
-        ) / len(losing_team)
-
-        # Calculate expected results
-        expected_win = 1 / (1 + 10 ** ((losing_team_mmr - winning_team_mmr) / 400))
-        expected_loss = 1 / (1 + 10 ** ((winning_team_mmr - losing_team_mmr) / 400))
-
-        # Adjust MMR for winning team
-        for player in winning_team:
-            player_id = player["id"]
-            current_mmr = self.player_mmr[player_id]["mmr"]
-            new_mmr = current_mmr + MMR_CONSTANT * (1 - expected_win)
-            self.player_mmr[player_id]["mmr"] = round(new_mmr)
-            self.player_mmr[player_id]["wins"] += 1
-
-        # Adjust MMR for losing team
-        for player in losing_team:
-            player_id = player["id"]
-            current_mmr = self.player_mmr[player_id]["mmr"]
-            new_mmr = current_mmr + MMR_CONSTANT * (0 - expected_loss)
-            self.player_mmr[player_id]["mmr"] = max(0, round(new_mmr))
-            self.player_mmr[player_id]["losses"] += 1
-
     def ensure_player_mmr(self, player_id, player_names):
         if player_id not in self.player_mmr:
             self._init_player_mmr_entry(player_id)
@@ -306,48 +245,44 @@ class CustomBot(commands.Bot):
 
     async def purge_old_match_roles(self):
         print("Checking for old match roles to delete...")
+        found_any = False
         for guild in self.guilds:
             # Find roles with 'match' in the name (case-insensitive)
-            old_roles = list(
-                filter(
-                    lambda r: "match" in r.name.lower(),
-                    guild.roles,
-                )
+            old_roles = [r for r in guild.roles if "match" in r.name.lower()]
+            if not old_roles:
+                continue
+            found_any = True
+            print(
+                f"Deleting roles in guild '{guild.name}':",
+                [role.name for role in old_roles],
             )
-            if old_roles:
-                print(
-                    f"Deleting roles in guild '{guild.name}':",
-                    [role.name for role in old_roles],
-                )
-                for role in old_roles:
-                    try:
-                        await role.delete()
-                    except discord.HTTPException:
-                        pass
-        if not old_roles:
+            for role in old_roles:
+                try:
+                    await role.delete()
+                except discord.HTTPException:
+                    pass
+        if not found_any:
             print("No old roles found.")
 
     async def purge_old_match_channels(self):
         print("Checking for old match channels to delete...")
+        found_any = False
         for guild in self.guilds:
             # Find channels with 'match' in the name (case-insensitive)
-            old_channels = list(
-                filter(
-                    lambda c: "match" in c.name.lower(),
-                    guild.channels,
-                )
+            old_channels = [c for c in guild.channels if "match" in c.name.lower()]
+            if not old_channels:
+                continue
+            found_any = True
+            print(
+                f"Deleting channels in guild '{guild.name}':",
+                [channel.name for channel in old_channels],
             )
-            if old_channels:
-                print(
-                    f"Deleting channels in guild '{guild.name}':",
-                    [channel.name for channel in old_channels],
-                )
-                for channel in old_channels:
-                    try:
-                        await channel.delete()
-                    except discord.HTTPException:
-                        pass
-        if not old_channels:
+            for channel in old_channels:
+                try:
+                    await channel.delete()
+                except discord.HTTPException:
+                    pass
+        if not found_any:
             print("No old channels found.")
 
     async def send_new_leaderboard(self):

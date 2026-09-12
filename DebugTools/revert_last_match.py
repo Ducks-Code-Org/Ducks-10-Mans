@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import itertools
 import json
 import os
 import re
@@ -104,7 +103,7 @@ def get_client() -> MongoClient:
         )
     client = MongoClient(
         uri,
-        tlsAllowInvalidCertificates=True,
+        tls=True,
         server_api=ServerApi("1"),
         serverSelectionTimeoutMS=10000,
     )
@@ -427,7 +426,6 @@ def restore_from_backup(client, db, backup_path: Path):
                 coll = db[coll_name]
                 for raw in docs:
                     doc = _dejsonify(raw)
-                    coll_col: str = coll.name  # noqa: F841 (clarity)
                     if coll_name == "seasons" and doc.get("_id") == "current":
                         coll.replace_one({"_id": "current"}, doc, upsert=True)
                     elif coll_name == "matches":

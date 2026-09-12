@@ -205,17 +205,17 @@ class SignupCommand(BotCommands):
         except Exception as e:
             # Cleanup
             self.bot.signup_active = False
-            if hasattr(self.bot, "match_role") and self.bot.match_role:
+            if getattr(self.bot, "match_role", None):
                 try:
                     await self.bot.match_role.delete()
-                except:
+                except discord.HTTPException:
                     pass
-            if hasattr(self.bot, "match_channel") and self.bot.match_channel:
+            if getattr(self.bot, "match_channel", None):
                 try:
                     await self.bot.match_channel.delete()
-                except:
+                except discord.HTTPException:
                     pass
-            await ctx.send(f"Error setting up queue: {str(e)}")
+            await ctx.send(f"Error setting up queue: {e}")
 
 
 async def ensure_perms(ctx) -> bool:

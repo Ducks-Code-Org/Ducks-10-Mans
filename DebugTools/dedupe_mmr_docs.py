@@ -58,7 +58,7 @@ def get_client() -> MongoClient:
         sys.exit("[dedupe] Could not find uri_key in environment or env.bat")
     client = MongoClient(
         uri,
-        tlsAllowInvalidCertificates=True,
+        tls=True,
         server_api=ServerApi("1"),
         serverSelectionTimeoutMS=10000,
     )

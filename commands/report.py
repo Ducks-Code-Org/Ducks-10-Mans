@@ -21,96 +21,64 @@ async def setup(bot):
     await bot.add_cog(ReportCommand(bot))
 
 
+async def _delete_channel_safely(channel) -> None:
+    """Delete a channel, tolerating NotFound/Forbidden."""
+    try:
+        await channel.delete()
+    except discord.NotFound:
+        print("[DEBUG] Match channel already deleted")
+    except discord.Forbidden:
+        print("[DEBUG] Missing permissions to delete match channel")
+
+
+async def _remove_role_safely(role) -> None:
+    """Strip the role from its members, then delete it."""
+    try:
+        for member in list(role.members):
+            try:
+                await member.remove_roles(role)
+            except discord.HTTPException:
+                print("[DEBUG] Error removing role from member")
+    except discord.HTTPException:
+        print("[DEBUG] Error removing roles from members")
+    try:
+        await role.delete()
+    except discord.NotFound:
+        print("[DEBUG] Match role already deleted")
+    except discord.Forbidden:
+        print("[DEBUG] Missing permissions to delete match role")
+
+
+async def _delete_signup_message_safely(message) -> None:
+    try:
+        await message.delete()
+    except discord.NotFound:
+        pass
+
+
 async def cleanup_match_resources(bot):
+    """Delete the match channel/role and reset per-match state."""
     await bot.wait_until_ready()
     try:
         if bot.queue:
             remember_recent_queue(bot.queue)
-        if hasattr(bot, "match_channel") and bot.match_channel:
-            try:
-                await bot.match_channel.delete()
-            except discord.NotFound:
-                print("[DEBUG] Match channel already deleted")
-            except discord.Forbidden:
-                print("[DEBUG] Missing permissions to delete match channel")
-            finally:
-                bot.match_channel = None
+        if bot.match_channel:
+            await _delete_channel_safely(bot.match_channel)
+            bot.match_channel = None
 
-        if hasattr(bot, "match_role") and bot.match_role:
-
-            try:
-                for member in bot.match_role.members:
-                    await member.remove_roles(bot.match_role)
-            except discord.HTTPException:
-                print("[DEBUG] Error removing roles from members")
-
-            # delete the role
-            try:
-                await bot.match_role.delete()
-            except discord.NotFound:
-                print("[DEBUG] Match role already deleted")
-            except discord.Forbidden:
-                print("[DEBUG] Missing permissions to delete match role")
-            finally:
-                bot.match_role = None
+        if bot.match_role:
+            await _remove_role_safely(bot.match_role)
+            bot.match_role = None
 
         bot.match_not_reported = False
         bot.match_ongoing = False
         bot.queue.clear()
 
         if bot.current_signup_message:
-            try:
-                await bot.current_signup_message.delete()
-            except discord.NotFound:
-                pass
-            finally:
-                bot.current_signup_message = None
-
+            await _delete_signup_message_safely(bot.current_signup_message)
+            bot.current_signup_message = None
     except Exception as e:
-        print(f"[DEBUG] Error during cleanup: {str(e)}")
-        try:
-            if hasattr(bot, "match_channel") and bot.match_channel:
-                try:
-                    await bot.match_channel.delete()
-                except discord.NotFound:
-                    print("[DEBUG] Match channel already deleted")
-                except discord.Forbidden:
-                    print("[DEBUG] Missing permissions to delete match channel")
-                finally:
-                    bot.match_channel = None
-
-            if hasattr(bot, "match_role") and bot.match_role:
-
-                try:
-                    for member in bot.match_role.members:
-                        await member.remove_roles(bot.match_role)
-                except discord.HTTPException:
-                    print("[DEBUG] Error removing roles from members")
-
-                # delete the role
-                try:
-                    await bot.match_role.delete()
-                except discord.NotFound:
-                    print("[DEBUG] Match role already deleted")
-                except discord.Forbidden:
-                    print("[DEBUG] Missing permissions to delete match role")
-                finally:
-                    bot.match_role = None
-
-            bot.match_not_reported = False
-            bot.match_ongoing = False
-            bot.queue.clear()
-
-            if bot.current_signup_message:
-                try:
-                    await bot.current_signup_message.delete()
-                except discord.NotFound:
-                    pass
-                finally:
-                    bot.current_signup_message = None
-
-        except Exception as e:
-            print(f"[DEBUG] Error during cleanup: {str(e)}")
+        print(f"[DEBUG] Error during cleanup: {e}")
 
 
 class ReportCommand(BotCommands):
@@ -215,9 +183,6 @@ class ReportCommand(BotCommands):
                 "Map doesn't match your most recent match. Unable to report it."
             )
             return
-
-        # FOR TESTING PURPOSES
-        # self.bot.selected_map = map_name
 
         # Get total rounds played from the match data
         teams = match.get("teams", [])
@@ -337,17 +302,18 @@ class ReportCommand(BotCommands):
         print(f"[DEBUG] Winning team Discord ID's: {winning_match_team_ids}")
 
         if winning_match_team_ids == team1_ids_set:
-            winning_team = self.bot.team1
-            losing_team = self.bot.team2
+            playing_team_ids = [str(p["id"]) for p in self.bot.team1] + [
+                str(p["id"]) for p in self.bot.team2
+            ]
         elif winning_match_team_ids == team2_ids_set:
-            winning_team = self.bot.team2
-            losing_team = self.bot.team1
+            playing_team_ids = [str(p["id"]) for p in self.bot.team2] + [
+                str(p["id"]) for p in self.bot.team1
+            ]
         else:
             await ctx.send("Could not match the winning team to our teams.")
             return
 
-        for player in winning_team + losing_team:
-            player_id = str(player["id"])
+        for player_id in playing_team_ids:
             self.bot.ensure_player_mmr(player_id, self.bot.player_names)
 
         # Get top players
@@ -477,9 +443,6 @@ class ReportCommand(BotCommands):
             )
         print("[DEBUG] Basic stats updated")
 
-        # Adjust MMR once
-        # self.bot.adjust_mmr(winning_team, losing_team)
-        # print("[DEBUG] MMR adjusted")
         await ctx.send("Match stats and MMR updated!")
 
         # Build a per-player MMR gain/loss summary
@@ -524,9 +487,6 @@ class ReportCommand(BotCommands):
             await results_channel.send(embed=results_embed)
         else:
             await ctx.send(embed=results_embed)
-
-        self.bot.save_mmr_data()
-        print("[DEBUG] MMR data saved")
 
         self.bot.save_mmr_data()
         print("[DEBUG] MMR data saved")
@@ -620,7 +580,8 @@ class ReportCommand(BotCommands):
         await cleanup_match_resources(self.bot)
 
 
-def rounds_to_int(value):
+def rounds_to_int(value: object) -> int:
+    """Best-effort conversion of an API rounds field to a non-negative int."""
     if isinstance(value, dict):
         for key in ("won", "w", "value", "wins", "count"):
             v = value.get(key)

@@ -317,9 +317,6 @@ class CaptainsDraftingView(discord.ui.View):
 
         return out_of_turns or teams_full or pool_empty
 
-    def picks_exhausted(self) -> bool:
-        return self._picks_exhausted()
-
     async def finalize_draft(self):
         """Finalize teams, cleanup UI, announce result."""
         if self.draft_finished:
@@ -424,9 +421,6 @@ class CaptainsDraftingView(discord.ui.View):
             self.stop()
         except Exception:
             pass
-
-    async def finish_draft(self, *args, **kwargs):
-        await self.finalize_draft()
 
     async def select_callback(self, interaction: discord.Interaction):
         if self.draft_finished:

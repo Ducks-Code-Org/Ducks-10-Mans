@@ -6,7 +6,8 @@ from globals import URI_KEY
 
 client = MongoClient(
     URI_KEY,
-    tlsAllowInvalidCertificates=True,
+    # TLS certificate validation is required; never disable it.
+    tls=True,
     server_api=ServerApi("1"),
     serverSelectionTimeoutMS=8000,
 )
