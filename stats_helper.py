@@ -72,7 +72,6 @@ def update_stats(
     score = stats.get("score", 0)
     kills = stats.get("kills", 0)
     deaths = stats.get("deaths", 0)
-    assists = stats.get("assists", 0)
 
     if discord_id in player_mmr:
         player_data = player_mmr[discord_id]

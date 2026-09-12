@@ -1,11 +1,10 @@
 "Link your Riot account to your Discord account."
 
 import requests
-import discord
 from discord.ext import commands
 
 from commands import BotCommands
-from database import users, mmr_collection, tdm_mmr_collection
+from database import users, mmr_collection
 from globals import API_KEY
 from tracker_links import tracker_link
 
@@ -80,7 +79,6 @@ class LinkRiotCommand(BotCommands):
             if str(stale.get("discord_id")) != discord_id:
                 users.delete_one({"_id": stale["_id"]})
                 mmr_collection.delete_one({"player_id": stale.get("discord_id")})
-                tdm_mmr_collection.delete_one({"player_id": stale.get("discord_id")})
                 print(
                     f"[linkriot] Removed stale Riot ID link {riot_name}#{riot_tag} "
                     f"from discord id {stale.get('discord_id')}"
@@ -100,9 +98,6 @@ class LinkRiotCommand(BotCommands):
 
         full_name = f"{riot_name}#{riot_tag}"
         mmr_collection.update_one(
-            {"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False
-        )
-        tdm_mmr_collection.update_one(
             {"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False
         )
 

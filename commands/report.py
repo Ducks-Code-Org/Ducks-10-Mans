@@ -1,17 +1,15 @@
 "Report the most recent match played to update MMR and stats."
 
-from datetime import datetime, timezone
 import copy
 import asyncio
-from calendar import monthrange
 
 import requests
 import discord
 from discord.ext import commands
 
-from commands import BotCommands, convert_to_utc
+from commands import BotCommands
 from database import users, mmr_collection, seasons, all_matches
-from globals import API_KEY, TIME_ZONE_CST, mock_match_data
+from globals import API_KEY
 from recent_queue import remember_recent_queue
 from stats_helper import update_stats
 from tracker_links import tracker_link
@@ -230,84 +228,20 @@ class ReportCommand(BotCommands):
             )
             return
 
-        testing_mode = False  # TRUE WHILE TESTING
+        # FOR TESTING PURPOSES
+        # self.bot.selected_map = map_name
 
-        if testing_mode:
-            match = mock_match_data
-            self.bot.match_ongoing = True
-
-            # Reconstruct queue, team1, and team2 from mock_match_data
-            queue = []
-            team1 = []
-            team2 = []
-            self.bot.team1 = team1
-            self.bot.team2 = team2
-            self.bot.queue = queue
-
-            for player_data in match["players"]:
-                player_name = player_data["name"].lower()
-                player_tag = player_data["tag"].lower()
-
-                user = users.find_one({"name": player_name, "tag": player_tag})
-                if user:
-                    discord_id = user["discord_id"]
-                    player = {"id": discord_id, "name": player_name}
-
-                    queue.append(player)
-
-                    if player_data["team_id"] == "red":
-                        team1.append(player)
-                    else:
-                        team2.append(player)
-
-                    if discord_id not in self.bot.player_mmr:
-                        self.bot.player_mmr[discord_id] = {
-                            "mmr": 1000,
-                            "wins": 0,
-                            "losses": 0,
-                        }
-                    self.bot.player_names[discord_id] = player_name
-                else:
-                    await ctx.send(
-                        f"Player {tracker_link(player_name, player_tag)} is not linked to any Discord account."
-                    )
-                    return
-
-            # For mocking match data, set to amount of rounds played
-            total_rounds = 24
+        # Get total rounds played from the match data
+        teams = match.get("teams", [])
+        if teams:
+            total_rounds = metadata.get("rounds_played") or metadata.get("total_rounds")
+            if not total_rounds:
+                rounds_data = match.get("rounds") or []
+                total_rounds = len(rounds_data)
+            total_rounds = int(total_rounds)
         else:
-            if not self.bot.match_ongoing:
-                await ctx.send(
-                    "No match is currently active, use `!signup` to start one"
-                )
-                return
-
-            if not self.bot.selected_map:
-                await ctx.send("No map was selected for this match.")
-                return
-
-            # FOR TESTING PURPOSES
-            # self.bot.selected_map = map_name
-
-            if _norm_map(self.bot.selected_map) != api_map:
-                await ctx.send(
-                    "Map doesn't match your most recent match. Unable to report it."
-                )
-                return
-
-            # Get total rounds played from the match data
-            teams = match.get("teams", [])
-            if teams:
-                total_rounds = metadata.get("rounds_played") or metadata.get(
-                    "total_rounds"
-                )
-                if not total_rounds:
-                    rounds_data = match.get("rounds") or []
-                    total_rounds = len(rounds_data)
-                total_rounds = int(total_rounds)
-            else:
-                await ctx.send("No team data found in match data.")
-                return
+            await ctx.send("No team data found in match data.")
+            return
 
         match_players = match.get("players", [])
         if not match_players:
@@ -675,12 +609,6 @@ class ReportCommand(BotCommands):
                         await announcement_channel.send(message)
                     else:
                         await ctx.send(message)
-
-        def _add_months(dt, months):
-            year = dt.year + (dt.month - 1 + months) // 12
-            month = (dt.month - 1 + months) % 12 + 1
-            day = min(dt.day, monthrange(year, month)[1])
-            return dt.replace(year=year, month=month, day=day)
 
         # Record every match played in a new collection
         all_matches.insert_one(match)
