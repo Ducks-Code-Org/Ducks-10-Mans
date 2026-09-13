@@ -25,16 +25,26 @@ def _apply_rating(player_data: dict, rating: float, rounds: int) -> None:
 
 
 def _rating_fields(player_data: dict) -> dict:
-    total_rounds = player_data.get("total_rating_rounds", 0)
+    # avg_rating is always derived from the totals, never read from a
+    # possibly-missing/stale in-memory key, so a match with no rating
+    # can't clobber a player's recorded average.
     return {
         "total_rating_points": player_data.get("total_rating_points", 0.0),
-        "total_rating_rounds": total_rounds,
-        "avg_rating": (
-            player_data["avg_rating"]
-            if "avg_rating" in player_data and total_rounds > 0
-            else None
-        ),
+        "total_rating_rounds": player_data.get("total_rating_rounds", 0),
+        "avg_rating": avg_rating_of(player_data),
     }
+
+
+def avg_rating_of(player_data: dict) -> float | None:
+    """Round-weighted average VLR rating, or None when none recorded.
+
+    Derived from the additive totals so it is always consistent, even for
+    players loaded before the rating fields existed.
+    """
+    rounds = player_data.get("total_rating_rounds", 0)
+    if not rounds:
+        return None
+    return player_data.get("total_rating_points", 0.0) / rounds
 
 
 def _calc_mmr_delta(

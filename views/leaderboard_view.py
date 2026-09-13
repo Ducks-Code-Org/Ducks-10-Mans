@@ -8,6 +8,7 @@ from table2ascii import table2ascii as t2a, PresetStyle
 import wcwidth
 
 from database import users, mmr_collection
+from stats_helper import avg_rating_of
 
 
 def _has_played(doc: dict) -> bool:
@@ -142,7 +143,7 @@ class LeaderboardView(View):
             mmr = player_data.get("mmr", 1000)
             wins = player_data.get("wins", 0)
             losses = player_data.get("losses", 0)
-            avg_rating = player_data.get("avg_rating")
+            avg_rating = avg_rating_of(player_data)
             avg_rating_display = (
                 f"{avg_rating:.2f}" if isinstance(avg_rating, (int, float)) else "N/A"
             )

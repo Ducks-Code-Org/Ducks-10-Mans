@@ -159,6 +159,26 @@ def main():
     # --- stats_helper round-weighted aggregation -------------------------
     import stats_helper
 
+    # The average is derived from the persisted totals, so a player loaded
+    # from the DB without an avg_rating key still displays correctly, and a
+    # match with no rating preserves their recorded average.
+    assert (
+        abs(
+            stats_helper.avg_rating_of(
+                {"total_rating_points": 6.0, "total_rating_rounds": 4}
+            )
+            - 1.5
+        )
+        < 1e-9
+    )
+    assert stats_helper.avg_rating_of({}) is None
+    assert (
+        stats_helper.avg_rating_of(
+            {"total_rating_points": 0.0, "total_rating_rounds": 0}
+        )
+        is None
+    )
+
     store = {
         "1": {
             "mmr": 1000,
@@ -193,6 +213,24 @@ def main():
     )
     assert store2["2"].get("total_rating_rounds") == 0, store2["2"]
     assert store2["2"].get("avg_rating") is None, store2["2"]
+
+    # A rating-less match must not clobber an average loaded from totals.
+    store4 = {
+        "4": {
+            "mmr": 1000,
+            "matches_played": 2,
+            "total_rating_points": 6.0,
+            "total_rating_rounds": 4,
+        }
+    }
+    stats_helper.update_stats(
+        {"stats": {"score": 100, "kills": 1, "deaths": 1}},
+        4,
+        store4,
+        {},
+        discord_id="4",
+    )
+    assert abs(store4["4"]["avg_rating"] - 1.5) < 1e-9, store4["4"]
 
     # New-player branch records the rating of their first match
     store3 = {}

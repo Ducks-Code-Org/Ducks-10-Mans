@@ -121,6 +121,7 @@ class CustomBot(commands.Bot):
                     "kill_death_ratio": 0,
                     "total_rating_points": 0.0,
                     "total_rating_rounds": 0,
+                    "avg_rating": None,
                 }
             },
         )
