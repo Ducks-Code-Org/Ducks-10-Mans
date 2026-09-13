@@ -1,12 +1,11 @@
 import asyncio
 import math
+import random
 
 import discord
 from discord.ui import Select
 
 from database import users
-from commands.report import cleanup_match_resources
-from recent_queue import remember_recent_queue
 from tracker_links import tracker_link
 
 DECISION_TIMEOUT_SECONDS = 120
@@ -177,32 +176,17 @@ class SecondCaptainChoiceView(discord.ui.View):
                     )
                 except discord.NotFound:
                     pass
-        # Cancel Signup
+        # Randomly decide the draft type instead of cancelling the match.
         self.decision_finished = True
+        single_pick = random.choice([True, False])
         try:
-            await self.ctx.send("The captain took too long. Match will be cancelled...")
+            await self.ctx.send(
+                "The captain took too long to choose a draft type. "
+                f"Randomly selected: **{'First Pick' if single_pick else '2nd + 3rd Pick'}**"
+            )
         except (discord.NotFound, discord.HTTPException):
             pass
-        self.bot.setup_generation += 1
-        self.bot.signup_active = False
-        self.bot.match_ongoing = False
-        self.bot.match_not_reported = False
-        if self.bot.queue:
-            remember_recent_queue(self.bot.queue)
-        self.bot.queue.clear()
-        self.bot.team1 = []
-        self.bot.team2 = []
-        self.bot.captain1 = None
-        self.bot.captain2 = None
-        self.bot.chosen_mode = None
-        self.bot.selected_map = None
-
-        await cleanup_match_resources(self.bot)
-
-        try:
-            self.stop()
-        except Exception:
-            pass
+        await self.start_draft(single_pick)
 
     def cancel_timeout_timer(self):
         if self.timeout_timer_task:
@@ -257,6 +241,9 @@ class CaptainsDraftingView(discord.ui.View):
 
         self.pick_count = 0
         self.draft_finished = False
+        # Set while an auto-pick on timeout is committing; guards against a
+        # captain's manual pick racing it (both mutate the same state).
+        self.auto_pick_in_progress = False
 
         self.draft_time_remaining = PICK_TIMEOUT_SECONDS
         self.draft_timer_task = None
@@ -447,6 +434,13 @@ class CaptainsDraftingView(discord.ui.View):
             )
             return
 
+        # The timeout path is committing a random pick; don't double-pick.
+        if self.auto_pick_in_progress:
+            await interaction.response.send_message(
+                "Draft is already complete!", ephemeral=True
+            )
+            return
+
         if self._picks_exhausted():
             await self.finalize_draft()
             return
@@ -573,46 +567,53 @@ class CaptainsDraftingView(discord.ui.View):
                 )
             except discord.NotFound:
                 pass
-        await self._cancel_match_on_timeout(curr_captain_name)
+        await self._auto_pick_on_timeout(curr_captain_name)
 
-    async def _cancel_match_on_timeout(self, captain_name: str):
+    async def _auto_pick_on_timeout(self, captain_name: str):
+        """Make a random pick for the captain instead of cancelling the match."""
         if self.is_setup_cancelled():
-            # Someone already cancelled (e.g. !cancel); do not touch state again.
+            # Someone already cancelled (e.g. !cancel); do not touch state.
             self.draft_finished = True
             return
 
-        self.draft_finished = True
-
+        self.auto_pick_in_progress = True
         try:
-            await self.ctx.send(
-                f"{captain_name} took too long. Match will be cancelled..."
-            )
-        except (discord.NotFound, discord.HTTPException):
-            pass
-        await asyncio.sleep(2)
+            if not self.remaining_players:
+                # We're inside the draft timer task; clear the reference so
+                # finalize_draft doesn't cancel this coroutine mid-finalize.
+                self.draft_timer_task = None
+                await self.finalize_draft()
+                return
+            player_dict = random.choice(self.remaining_players)
+            current_captain_id = str(self.pick_order[self.pick_count]["id"])
+            captain1 = getattr(self.bot, "captain1", None)
+            if captain1 and current_captain_id == str(captain1["id"]):
+                self.bot.team1.append(player_dict)
+            else:
+                self.bot.team2.append(player_dict)
 
-        # Invalidate this setup cycle, reset shared state, then clean up
-        # channel/role centrally
-        self.bot.setup_generation += 1
-        self.bot.signup_active = False
-        self.bot.match_ongoing = False
-        self.bot.match_not_reported = False
-        if self.bot.queue:
-            remember_recent_queue(self.bot.queue)
-        self.bot.queue.clear()
-        self.bot.team1 = []
-        self.bot.team2 = []
-        self.bot.captain1 = None
-        self.bot.captain2 = None
-        self.bot.chosen_mode = None
-        self.bot.selected_map = None
+            self.pick_count += 1
+            try:
+                self.remaining_players.remove(player_dict)
+            except ValueError:
+                pass
 
-        await cleanup_match_resources(self.bot)
+            try:
+                await self.ctx.send(
+                    f"{captain_name} took too long to pick. Randomly selected: "
+                    f"**{player_dict['name']}**"
+                )
+            except (discord.NotFound, discord.HTTPException):
+                pass
+        finally:
+            self.auto_pick_in_progress = False
 
-        try:
-            self.stop()
-        except Exception:
-            pass
+        self.draft_time_remaining = PICK_TIMEOUT_SECONDS
+        # We are running inside the draft timer task itself; clear the
+        # reference so start_draft_timer doesn't cancel this coroutine
+        # mid-finalize (mirrors select_callback's cancel-and-clear).
+        self.draft_timer_task = None
+        await self.draft_next_player()
 
     def is_setup_cancelled(self) -> bool:
         """Whether this setup cycle was cancelled (e.g. by !cancel)."""
