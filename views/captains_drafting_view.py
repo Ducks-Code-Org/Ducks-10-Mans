@@ -7,6 +7,7 @@ from discord.ui import Select
 
 from database import users
 from tracker_links import tracker_link
+from voice_presence import move_teams_to_voice, voice_presence_enabled
 
 DECISION_TIMEOUT_SECONDS = 120
 PICK_TIMEOUT_SECONDS = 120
@@ -392,6 +393,9 @@ class CaptainsDraftingView(discord.ui.View):
 
         await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match and use `!report` to finalize results.")
+
+        if voice_presence_enabled() and self.ctx.guild:
+            await move_teams_to_voice(self.ctx.guild, self.bot.team1, self.bot.team2)
 
         self.bot.match_ongoing = True
         self.bot.match_not_reported = True

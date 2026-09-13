@@ -8,6 +8,7 @@ from database import users
 from tracker_links import tracker_link
 from views.captains_drafting_view import SecondCaptainChoiceView
 from views import safe_reply
+from voice_presence import move_teams_to_voice, voice_presence_enabled
 
 
 class MapVoteView(discord.ui.View):
@@ -339,6 +340,9 @@ class MapVoteView(discord.ui.View):
 
         await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match, then `!report` to finalize results.")
+
+        if voice_presence_enabled() and self.ctx.guild:
+            await move_teams_to_voice(self.ctx.guild, self.bot.team1, self.bot.team2)
 
         self.bot.match_ongoing = True
         self.bot.match_not_reported = True
