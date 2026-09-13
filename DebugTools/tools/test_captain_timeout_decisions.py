@@ -84,9 +84,9 @@ async def demo():
     single_pick = True  # would come from random.choice
     await choice_view.start_draft(single_pick)
 
-    assert any("chosen! Starting draft phase..." in (m or "") for m in ctx.messages), (
-        "timeout did not start the draft"
-    )
+    assert any(
+        "chosen! Starting draft phase..." in (m or "") for m in ctx.messages
+    ), "timeout did not start the draft"
     # No match-cancel state teardown should have happened.
     assert bot.setup_generation == 1, "timeout cancelled the match instead of deciding"
     assert bot.signup_active, "timeout cancelled the match instead of deciding"
@@ -101,15 +101,16 @@ async def demo():
     captain_name = view._current_captain_name()
     await view._auto_pick_on_timeout(captain_name)
 
-    assert any("Randomly selected" in (m or "") for m in ctx.messages), (
-        "no random-decision message was sent"
-    )
+    assert any(
+        "Randomly selected" in (m or "") for m in ctx.messages
+    ), "no random-decision message was sent"
     assert view.pick_count == 1, "auto-pick did not advance the draft"
     assert not view.draft_finished, "draft should continue after an auto-pick"
     picked = bot.team2[-1] if len(bot.team2) > 1 else None
-    assert picked is not None and picked["id"] not in ("0", "1"), (
-        "auto-pick picked a captain"
-    )
+    assert picked is not None and picked["id"] not in (
+        "0",
+        "1",
+    ), "auto-pick picked a captain"
 
     # Auto-pick until the draft exhausts: teams must fill to 5/5.
     for _ in range(len(view.pick_order) + 4):
@@ -117,9 +118,9 @@ async def demo():
             break
         await view._auto_pick_on_timeout(view._current_captain_name() or "x")
     assert view.draft_finished, "draft did not finish after repeated auto-picks"
-    assert len(bot.team1) == 5 and len(bot.team2) == 5, (
-        f"teams not full: {len(bot.team1)}/{len(bot.team2)}"
-    )
+    assert (
+        len(bot.team1) == 5 and len(bot.team2) == 5
+    ), f"teams not full: {len(bot.team1)}/{len(bot.team2)}"
     assert len(view.remaining_players) == 0
 
     # --- Manual pick is rejected while an auto-pick is committing ---
@@ -142,14 +143,24 @@ async def demo():
     assert sent, "racing manual pick was not rejected during auto-pick"
     assert view.pick_count == 0, "racing manual pick mutated draft state"
 
+    # --- Empty pool: auto-pick must finalize, not silently stop ---
+    bot = FakeBot()
+    ctx, view = make_draft_view(bot, single_pick=True)
+    view.remaining_players.clear()
+    await view._auto_pick_on_timeout("someone")
+    assert view.draft_finished, "empty-pool auto-pick did not finish the draft"
+    assert (
+        bot.match_ongoing and bot.match_not_reported
+    ), "empty-pool auto-pick skipped finalize_draft (teams never announced)"
+
     # --- !cancel still works mid-draft (setup generation bumped) ---
     bot = FakeBot()
     ctx, view = make_draft_view(bot, single_pick=True)
     bot.setup_generation += 1
     await view._auto_pick_on_timeout("someone")
-    assert view.draft_finished and len(bot.team1) + len(bot.team2) == 2, (
-        "cancelled setup should not auto-pick"
-    )
+    assert (
+        view.draft_finished and len(bot.team1) + len(bot.team2) == 2
+    ), "cancelled setup should not auto-pick"
 
     print("all captain-timeout auto-decide self-checks passed")
 

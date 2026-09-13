@@ -579,7 +579,9 @@ class CaptainsDraftingView(discord.ui.View):
         self.auto_pick_in_progress = True
         try:
             if not self.remaining_players:
-                self.draft_finished = True
+                # We're inside the draft timer task; clear the reference so
+                # finalize_draft doesn't cancel this coroutine mid-finalize.
+                self.draft_timer_task = None
                 await self.finalize_draft()
                 return
             player_dict = random.choice(self.remaining_players)
