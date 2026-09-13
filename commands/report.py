@@ -9,6 +9,7 @@ from discord.ext import commands
 
 from commands import BotCommands
 from database import users, mmr_collection, seasons, all_matches
+from globals import feature_enabled
 from recent_queue import remember_recent_queue
 from riot_api import RiotApiInconclusive, get_recent_matches_async
 from stats_helper import update_stats
@@ -79,6 +80,49 @@ async def cleanup_match_resources(bot):
             bot.current_signup_message = None
     except Exception as e:
         print(f"[DEBUG] Error during cleanup: {e}")
+
+
+async def grant_season_roles(guild, players) -> None:
+    """Give every player the persistent 'Season-#' role for the current season.
+
+    Gated by the `season_role` flag in bot.ini's [features] section.
+    """
+    if not feature_enabled("season_role") or guild is None or not players:
+        return
+
+    season_doc = seasons.find_one({"_id": "current"})
+    try:
+        season_number = int((season_doc or {}).get("season_number", 0))
+    except (TypeError, ValueError):
+        print("[season] Invalid season_number stored; skipping season role grant")
+        return
+    if season_number < 0:
+        return
+
+    role_name = f"Season-{season_number}"
+    season_role = discord.utils.get(guild.roles, name=role_name)
+    if season_role is None:
+        try:
+            season_role = await guild.create_role(name=role_name)
+        except discord.Forbidden:
+            print("[season] Missing permissions to create the season role")
+            return
+
+    for player in players:
+        try:
+            player_id = int(player["id"])
+            member = guild.get_member(player_id) or await guild.fetch_member(player_id)
+        except (KeyError, TypeError, ValueError):
+            print(f"[season] Skipping player with invalid id: {player!r}")
+            continue
+        except discord.HTTPException as e:
+            print(f"[season] Could not look up member {player.get('id')}: {e}")
+            continue
+        if season_role not in member.roles:
+            try:
+                await member.add_roles(season_role)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+                print(f"[season] Could not grant role to {player_id}: {e}")
 
 
 class ReportCommand(BotCommands):
@@ -565,6 +609,12 @@ class ReportCommand(BotCommands):
         seasons.update_one(
             {"_id": "current"}, {"$inc": {"matches_played": 1}}, upsert=True
         )
+
+        # Grant the persistent Season-# role to everyone who played
+        try:
+            await grant_season_roles(ctx.guild, self.bot.team1 + self.bot.team2)
+        except Exception as e:
+            print(f"[DEBUG] Failed to grant season roles: {e}")
 
         await asyncio.sleep(5)
         self.bot.match_not_reported = False

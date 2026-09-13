@@ -17,3 +17,16 @@ _config = configparser.ConfigParser()
 _config.read(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.ini"))
 BOT_CONFIG = _config
 BOT_FEATURES = _config["features"] if _config.has_section("features") else {}
+
+
+def feature_enabled(name: str, *, default: bool = True) -> bool:
+    """Whether a [features] flag in bot.ini is enabled.
+
+    Falls back to `default` when the flag is absent or not a valid boolean,
+    so a missing or typo'd line never crashes the feature that reads it.
+    """
+    try:
+        value = BOT_FEATURES.getboolean(name)
+    except (AttributeError, ValueError):
+        return default
+    return default if value is None else value
