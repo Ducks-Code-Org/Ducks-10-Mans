@@ -119,6 +119,9 @@ class CustomBot(commands.Bot):
                     "total_rounds_played": 0,
                     "average_combat_score": 0,
                     "kill_death_ratio": 0,
+                    "total_rating_points": 0.0,
+                    "total_rating_rounds": 0,
+                    "avg_rating": None,
                 }
             },
         )
@@ -137,6 +140,8 @@ class CustomBot(commands.Bot):
                     "total_rounds_played": 0,
                     "average_combat_score": 0,
                     "kill_death_ratio": 0,
+                    "total_rating_points": 0.0,
+                    "total_rating_rounds": 0,
                 }
             )
 
@@ -163,6 +168,8 @@ class CustomBot(commands.Bot):
                 "total_rounds_played": doc.get("total_rounds_played", 0),
                 "average_combat_score": doc.get("average_combat_score", 0),
                 "kill_death_ratio": doc.get("kill_death_ratio", 0),
+                "total_rating_points": doc.get("total_rating_points", 0.0),
+                "total_rating_rounds": doc.get("total_rating_rounds", 0),
             }
             score = (
                 doc.get("matches_played", 0),
@@ -198,6 +205,8 @@ class CustomBot(commands.Bot):
                         "total_rounds_played": stats.get("total_rounds_played", 0),
                         "average_combat_score": stats.get("average_combat_score", 0),
                         "kill_death_ratio": stats.get("kill_death_ratio", 0),
+                        "total_rating_points": stats.get("total_rating_points", 0.0),
+                        "total_rating_rounds": stats.get("total_rating_rounds", 0),
                     }
                 },
                 upsert=True,
@@ -229,6 +238,8 @@ class CustomBot(commands.Bot):
             "total_rounds_played": 0,
             "average_combat_score": 0,
             "kill_death_ratio": 0,
+            "total_rating_points": 0.0,
+            "total_rating_rounds": 0,
         }
 
     async def setup_hook(self):

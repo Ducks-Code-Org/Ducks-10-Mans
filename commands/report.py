@@ -14,6 +14,7 @@ from recent_queue import remember_recent_queue
 from riot_api import RiotApiInconclusive, get_recent_matches_async
 from stats_helper import update_stats
 from tracker_links import tracker_link
+from vlr_rating import estimate_ratings_v4
 
 
 async def setup(bot):
@@ -459,6 +460,14 @@ class ReportCommand(BotCommands):
             "team1" if winning_match_team_ids == team1_ids_set else "team2"
         )
 
+        # Estimated VLR Rating 2.0 per player (puuid-keyed). Best effort: a
+        # missing/unusable kill timeline just means no ratings this match.
+        try:
+            match_ratings = estimate_ratings_v4(match)
+        except Exception as e:
+            print(f"[DEBUG] VLR rating estimation failed, skipping: {e}")
+            match_ratings = {}
+
         # Update stats for each player
         for player_stats in match_players:
             p_discord_id = _resolve_api_player(player_stats)
@@ -472,6 +481,9 @@ class ReportCommand(BotCommands):
             if not team_label:
                 continue
 
+            p_puuid = (player_stats.get("puuid") or "").strip().lower()
+            rating_info = match_ratings.get(p_puuid) or {}
+
             update_stats(
                 player_stats,
                 total_rounds,
@@ -484,6 +496,7 @@ class ReportCommand(BotCommands):
                 opp_sum_mmr=self.team2_mmr if team_label == "team1" else self.team1_mmr,
                 team_won=(self.winning_team == team_label),
                 round_diff=round_diff_val,
+                rating=rating_info.get("rating"),
             )
         print("[DEBUG] Basic stats updated")
 

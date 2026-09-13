@@ -3,6 +3,7 @@
 from discord.ext import commands
 from commands import BotCommands
 from database import users
+from stats_helper import avg_rating_of
 from tracker_links import tracker_link
 
 
@@ -42,6 +43,11 @@ class StatsCommand(BotCommands):
             total_rounds_played = stats_data.get("total_rounds_played", 0)
             avg_cs = stats_data.get("average_combat_score", 0)
             kd_ratio = stats_data.get("kill_death_ratio", 0)
+            # Round-weighted average VLR rating; None when never recorded.
+            avg_rating = avg_rating_of(stats_data)
+            avg_rating_display = (
+                f"{avg_rating:.2f}" if isinstance(avg_rating, (int, float)) else "N/A"
+            )
             win_percent = (wins / matches_played) * 100 if matches_played > 0 else 0
 
             # Get riot name and tag
@@ -84,6 +90,7 @@ class StatsCommand(BotCommands):
                 f"Win%: {win_percent:.2f}%\n"
                 f"Matches Played: {matches_played}\n"
                 f"Total Rounds Played: {total_rounds_played}\n"
+                f"Avg Rating: {avg_rating_display}\n"
                 f"Average Combat Score: {avg_cs:.2f}\n"
                 f"Kill/Death Ratio: {kd_ratio:.2f}"
             )
