@@ -10,6 +10,7 @@ dnspython==2.8.0
 frozenlist==1.8.0
 idna==3.19
 multidict==6.8.0
+numpy==2.5.3
 propcache==0.5.2
 pymongo==4.18.1
 python-dateutil==2.9.0.post0

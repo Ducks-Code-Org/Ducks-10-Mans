@@ -113,7 +113,16 @@ class LeaderboardView(View):
             "losses": "Losses",
         }
 
-        headers = ["Rank", "User", "MMR", "Wins", "Losses", "Avg ACS", "K/D"]
+        headers = [
+            "Rank",
+            "User",
+            "MMR",
+            "Wins",
+            "Losses",
+            "Avg Rating",
+            "Avg ACS",
+            "K/D",
+        ]
 
         leaderboard_data = []
         start_index = self.current_page * self.players_per_page
@@ -133,6 +142,10 @@ class LeaderboardView(View):
             mmr = player_data.get("mmr", 1000)
             wins = player_data.get("wins", 0)
             losses = player_data.get("losses", 0)
+            avg_rating = player_data.get("avg_rating")
+            avg_rating_display = (
+                f"{avg_rating:.2f}" if isinstance(avg_rating, (int, float)) else "N/A"
+            )
             avg_cs = player_data.get("average_combat_score", 0)
             kd_ratio = player_data.get("kill_death_ratio", 0)
 
@@ -143,6 +156,7 @@ class LeaderboardView(View):
                     mmr,
                     wins,
                     losses,
+                    avg_rating_display,
                     f"{avg_cs:.2f}",
                     f"{kd_ratio:.2f}",
                 ]

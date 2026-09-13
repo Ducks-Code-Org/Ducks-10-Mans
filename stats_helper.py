@@ -3,6 +3,40 @@
 from database import mmr_collection
 
 
+# Round-weighted VLR rating accumulation helpers -----------------------------
+# "avg_rating" is the round-weighted mean of every recorded per-match rating:
+# total_rating_points / total_rating_rounds. Kept as additive totals so
+# each new match just adds its rating and rounds; N/A is represented by
+# total_rating_rounds == 0 (or a missing field for pre-existing players).
+def _apply_rating(player_data: dict, rating: float, rounds: int) -> None:
+    if (
+        rounds <= 0 or not isinstance(rating, (int, float)) or rating != rating
+    ):  # noqa: PLR0124 (NaN check)
+        return
+    player_data["total_rating_points"] = (
+        player_data.get("total_rating_points", 0.0) + float(rating) * rounds
+    )
+    player_data["total_rating_rounds"] = (
+        player_data.get("total_rating_rounds", 0) + rounds
+    )
+    player_data["avg_rating"] = (
+        player_data["total_rating_points"] / player_data["total_rating_rounds"]
+    )
+
+
+def _rating_fields(player_data: dict) -> dict:
+    total_rounds = player_data.get("total_rating_rounds", 0)
+    return {
+        "total_rating_points": player_data.get("total_rating_points", 0.0),
+        "total_rating_rounds": total_rounds,
+        "avg_rating": (
+            player_data["avg_rating"]
+            if "avg_rating" in player_data and total_rounds > 0
+            else None
+        ),
+    }
+
+
 def _calc_mmr_delta(
     *, won: bool, team_sum_mmr: float, opp_sum_mmr: float, acs: float, round_diff: int
 ) -> int:
@@ -56,6 +90,7 @@ def update_stats(
     opp_sum_mmr=None,
     team_won=None,
     round_diff=None,
+    rating=None,
 ):
     """Update player stats with proper initialization and error handling"""
     if discord_id is None:
@@ -81,6 +116,8 @@ def update_stats(
         player_data.setdefault("total_kills", 0)
         player_data.setdefault("total_deaths", 0)
         player_data.setdefault("total_rounds_played", 0)
+        player_data.setdefault("total_rating_points", 0.0)
+        player_data.setdefault("total_rating_rounds", 0)
 
         # Update stats
         total_matches = player_data["matches_played"] + 1
@@ -97,7 +134,7 @@ def update_stats(
             total_kills / total_deaths if total_deaths > 0 else total_kills
         )
 
-        # Update player_mmr dictionary
+        _apply_rating(player_data, rating, total_rounds)
         player_mmr[discord_id].update(
             {
                 "total_combat_score": total_combat_score,
@@ -107,6 +144,7 @@ def update_stats(
                 "total_rounds_played": total_rounds_played,
                 "average_combat_score": average_combat_score,
                 "kill_death_ratio": kill_death_ratio,
+                **_rating_fields(player_data),
             }
         )
 
@@ -154,6 +192,7 @@ def update_stats(
                     "kill_death_ratio": kill_death_ratio,
                     "total_kills": total_kills,
                     "total_deaths": total_deaths,
+                    **_rating_fields(player_data),
                 }
             },
             upsert=True,
@@ -185,7 +224,11 @@ def update_stats(
             "total_rounds_played": total_rounds_played,
             "average_combat_score": average_combat_score,
             "kill_death_ratio": kill_death_ratio,
+            "total_rating_points": 0.0,
+            "total_rating_rounds": 0,
+            "avg_rating": None,
         }
+        _apply_rating(player_mmr[discord_id], rating, total_rounds)
         player_names[discord_id] = riot_name
 
         if (
@@ -230,6 +273,7 @@ def update_stats(
                     "total_rounds_played": total_rounds_played,
                     "average_combat_score": average_combat_score,
                     "kill_death_ratio": kill_death_ratio,
+                    **_rating_fields(player_mmr[discord_id]),
                 }
             },
             upsert=True,
