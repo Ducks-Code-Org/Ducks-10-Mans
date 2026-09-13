@@ -9,6 +9,7 @@ from discord.ext import commands
 
 from commands import BotCommands
 from database import users, mmr_collection, seasons, all_matches
+from globals import feature_enabled
 from recent_queue import remember_recent_queue
 from riot_api import RiotApiInconclusive, get_recent_matches_async
 from stats_helper import update_stats
@@ -82,8 +83,11 @@ async def cleanup_match_resources(bot):
 
 
 async def grant_season_roles(guild, players) -> None:
-    """Give every player the persistent 'Season-#' role for the current season."""
-    if guild is None or not players:
+    """Give every player the persistent 'Season-#' role for the current season.
+
+    Gated by the `season_role` flag in bot.ini's [features] section.
+    """
+    if not feature_enabled("season_role") or guild is None or not players:
         return
 
     season_doc = seasons.find_one({"_id": "current"})
@@ -105,9 +109,14 @@ async def grant_season_roles(guild, players) -> None:
             return
 
     for player in players:
-        player_id = int(player["id"])
-        member = guild.get_member(player_id) or await guild.fetch_member(player_id)
-        if member is None:
+        try:
+            player_id = int(player["id"])
+            member = guild.get_member(player_id) or await guild.fetch_member(player_id)
+        except (KeyError, TypeError, ValueError):
+            print(f"[season] Skipping player with invalid id: {player!r}")
+            continue
+        except discord.HTTPException as e:
+            print(f"[season] Could not look up member {player.get('id')}: {e}")
             continue
         if season_role not in member.roles:
             try:
