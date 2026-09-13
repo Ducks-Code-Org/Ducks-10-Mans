@@ -8,7 +8,7 @@ from table2ascii import table2ascii as t2a, PresetStyle
 import wcwidth
 
 from database import users, mmr_collection
-from stats_helper import avg_rating_of
+from stats_helper import DEFAULT_MMR, avg_rating_of
 
 
 def _has_played(doc: dict) -> bool:

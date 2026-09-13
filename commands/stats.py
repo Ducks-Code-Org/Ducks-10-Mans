@@ -3,7 +3,7 @@
 from discord.ext import commands
 from commands import BotCommands
 from database import users
-from ranks import rank_of
+from ranks import tier_for_player
 from stats_helper import DEFAULT_MMR, avg_rating_of
 from tracker_links import tracker_link
 
@@ -82,8 +82,12 @@ class StatsCommand(BotCommands):
             else:
                 rank_line = f"Rank: {position}/{total_players}"
 
-            # MMR tier (Supersonic Radiant when holding rank 1)
-            tier = rank_of(mmr_value, is_rank_one=(position == 1))
+            # MMR tier (Supersonic Radiant when holding rank 1). Players who
+            # have not played this season have no tier, matching their lack
+            # of a rank role (issue #159).
+            tier = tier_for_player(
+                mmr_value, position=position, matches_played=matches_played
+            )
             tier_line = f"Tier: {tier}" if tier else "Tier: none (play a match!)"
 
             await ctx.send(

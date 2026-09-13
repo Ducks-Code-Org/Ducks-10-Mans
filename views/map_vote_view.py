@@ -263,7 +263,9 @@ class MapVoteView(discord.ui.View):
         # Assign 2 captains randomly from the top 5 MMR players, with a decreasing bias for lower MMR
         sorted_players = sorted(
             self.bot.queue,
-            key=lambda p: self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", DEFAULT_MMR),
+            key=lambda p: self.bot.player_mmr.get(str(p["id"]), {}).get(
+                "mmr", DEFAULT_MMR
+            ),
             reverse=True,
         )
 

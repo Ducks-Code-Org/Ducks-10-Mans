@@ -35,6 +35,17 @@ def rank_of(mmr: int, is_rank_one: bool = False) -> str | None:
     return None
 
 
+def tier_for_player(mmr: int, *, position: int, matches_played: int) -> str | None:
+    """Rank tier for a player, or None if they haven't played this season.
+
+    Unplayed players have no rank role, so they must show no tier either
+    (issue #159).
+    """
+    if matches_played <= 0:
+        return None
+    return rank_of(mmr, is_rank_one=(position == 1))
+
+
 def help_menu_text() -> str:
     """Rank tier listing for the !help embed."""
     lines = []
@@ -58,7 +69,9 @@ async def _role_for(guild: discord.Guild, name: str, color_hex: str):
         return None
 
 
-async def sync_player_rank(bot, guild: discord.Guild, discord_id: str, mmr: int, is_rank_one: bool = False) -> None:
+async def sync_player_rank(
+    bot, guild: discord.Guild, discord_id: str, mmr: int, is_rank_one: bool = False
+) -> None:
     """Ensure the member has exactly the role their MMR calls for."""
     member = guild.get_member(int(discord_id))
     if member is None:

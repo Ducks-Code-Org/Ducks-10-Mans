@@ -451,9 +451,10 @@ class ReportCommand(BotCommands):
             stats = pre_update_mmr.get(pid)
             if not isinstance(stats, dict):
                 return True
-            return stats.get("matches_played", 0) == 0 and (
-                stats.get("wins", 0) + stats.get("losses", 0)
-            ) == 0
+            return (
+                stats.get("matches_played", 0) == 0
+                and (stats.get("wins", 0) + stats.get("losses", 0)) == 0
+            )
 
         def _effective_mmr(pid):
             if not _is_new(pid):
@@ -463,8 +464,16 @@ class ReportCommand(BotCommands):
                 return max(0, round(100.0 * float(rating)))
             return 0
 
-        team1_avg = sum(_effective_mmr(pid) for pid in team1_ids) / len(team1_ids) if team1_ids else 0
-        team2_avg = sum(_effective_mmr(pid) for pid in team2_ids) / len(team2_ids) if team2_ids else 0
+        team1_avg = (
+            sum(_effective_mmr(pid) for pid in team1_ids) / len(team1_ids)
+            if team1_ids
+            else 0
+        )
+        team2_avg = (
+            sum(_effective_mmr(pid) for pid in team2_ids) / len(team2_ids)
+            if team2_ids
+            else 0
+        )
 
         # discord id -> API team color ("red"/"blue")
         discord_to_api_color = {}
@@ -516,16 +525,10 @@ class ReportCommand(BotCommands):
                 self.bot.player_mmr,
                 self.bot.player_names,
                 discord_id=p_discord_id,
-                team_avg_mmr=(
-                    team1_avg if team_label == "team1" else team2_avg
-                ),
+                team_avg_mmr=(team1_avg if team_label == "team1" else team2_avg),
                 opp_avg_mmr=team2_avg if team_label == "team1" else team1_avg,
-                our_rounds=(
-                    team1_rounds if team_label == "team1" else team2_rounds
-                ),
-                opp_rounds=(
-                    team2_rounds if team_label == "team1" else team1_rounds
-                ),
+                our_rounds=(team1_rounds if team_label == "team1" else team2_rounds),
+                opp_rounds=(team2_rounds if team_label == "team1" else team1_rounds),
                 rating=rating_info.get("rating"),
             )
         print("[DEBUG] Basic stats updated")

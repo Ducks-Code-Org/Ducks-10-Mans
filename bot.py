@@ -8,7 +8,6 @@ from discord.ext import commands
 from views.signup_view import SignupView
 from commands.leaderboard import LeaderboardCommand
 from database import mmr_collection, users, seasons
-from ranks import remove_all_rank_roles
 from stats_helper import DEFAULT_MMR
 
 

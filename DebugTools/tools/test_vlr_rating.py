@@ -283,8 +283,15 @@ def main():
 
     # Veteran losing hard cannot go below 0 (e.g. someone at 10 MMR whose
     # delta is -22 must land at 0, not negative)
-    store6 = {"6": {"mmr": 10, "matches_played": 5, "wins": 2, "losses": 3,
-                    "total_rounds_played": 100}}
+    store6 = {
+        "6": {
+            "mmr": 10,
+            "matches_played": 5,
+            "wins": 2,
+            "losses": 3,
+            "total_rounds_played": 100,
+        }
+    }
     stats_helper.update_stats(
         {"stats": {"score": 100, "kills": 2, "deaths": 15}},
         15,
@@ -330,6 +337,15 @@ def main():
     # Thresholds strictly ascending when listed low-to-high
     thresholds = sorted(t for t, _, _ in RANKS)
     assert thresholds == [0, 100, 200, 300, 400, 500, 750]
+
+    # Unplayed players (0 matches) get no tier even at position 1, matching
+    # the rank-role sync which only ranks players who played (issue #159).
+    from ranks import tier_for_player
+
+    assert tier_for_player(1200, position=1, matches_played=0) is None
+    assert tier_for_player(1200, position=1, matches_played=3) == "Supersonic Radiant"
+    assert tier_for_player(0, position=5, matches_played=0) is None
+    assert tier_for_player(0, position=5, matches_played=1) == "Wood Rank"
 
     print("vlr_rating self-check OK")
 
