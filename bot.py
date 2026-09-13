@@ -8,6 +8,8 @@ from discord.ext import commands
 from views.signup_view import SignupView
 from commands.leaderboard import LeaderboardCommand
 from database import mmr_collection, users, seasons
+from ranks import remove_all_rank_roles
+from stats_helper import DEFAULT_MMR
 
 
 class CustomBot(commands.Bot):
@@ -102,14 +104,13 @@ class CustomBot(commands.Bot):
         Hard reset of everyone’s per‑season stats and MMR in the correct collections.
         Also resets in-memory caches so commands reflect the reset immediately.
         """
-        BASE_MMR = 1000
-
-        # Reset core 10-mans stats in db
+        # Reset core 10-mans stats in db. MMR starts at 0 and is re-seeded
+        # (100×VLR) after each player's first reported match of the season.
         mmr_collection.update_many(
             {},
             {
                 "$set": {
-                    "mmr": BASE_MMR,
+                    "mmr": DEFAULT_MMR,
                     "wins": 0,
                     "losses": 0,
                     "total_combat_score": 0,
@@ -122,6 +123,8 @@ class CustomBot(commands.Bot):
                     "total_rating_points": 0.0,
                     "total_rating_rounds": 0,
                     "avg_rating": None,
+                    "previous_rank": None,
+                    "current_rank": None,
                 }
             },
         )
@@ -130,7 +133,7 @@ class CustomBot(commands.Bot):
         for _pid, stats in list(self.player_mmr.items()):
             stats.update(
                 {
-                    "mmr": BASE_MMR,
+                    "mmr": DEFAULT_MMR,
                     "wins": 0,
                     "losses": 0,
                     "total_combat_score": 0,
@@ -158,7 +161,7 @@ class CustomBot(commands.Bot):
         for doc in mmr_collection.find():
             player_id = doc["player_id"]
             entry = {
-                "mmr": doc.get("mmr", 1000),
+                "mmr": doc.get("mmr", DEFAULT_MMR),
                 "wins": doc.get("wins", 0),
                 "losses": doc.get("losses", 0),
                 "total_combat_score": doc.get("total_combat_score", 0),
@@ -228,7 +231,7 @@ class CustomBot(commands.Bot):
 
     def _init_player_mmr_entry(self, player_id):
         self.player_mmr[player_id] = {
-            "mmr": 1000,
+            "mmr": DEFAULT_MMR,
             "wins": 0,
             "losses": 0,
             "total_combat_score": 0,

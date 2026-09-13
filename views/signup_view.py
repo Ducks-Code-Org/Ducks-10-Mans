@@ -9,6 +9,7 @@ from discord.ui import Button
 from database import users
 from riot_api import verify_riot_account_async
 from recent_queue import remember_recent_queue
+from stats_helper import DEFAULT_MMR
 from tracker_links import tracker_link
 from views import safe_reply
 from views.mode_vote_view import ModeVoteView
@@ -274,7 +275,7 @@ class SignupView(discord.ui.View):
         self.bot.queue.append({"id": user_id, "name": interaction.user.name})
         if user_id not in self.bot.player_mmr:
             self.bot.player_mmr[user_id] = {
-                "mmr": 1000,
+                "mmr": DEFAULT_MMR,
                 "wins": 0,
                 "losses": 0,
             }

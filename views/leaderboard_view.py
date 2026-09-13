@@ -140,7 +140,7 @@ class LeaderboardView(View):
 
             rank = _rank_display(player_data, self.sort_by, idx + start_index)
 
-            mmr = player_data.get("mmr", 1000)
+            mmr = player_data.get("mmr", DEFAULT_MMR)
             wins = player_data.get("wins", 0)
             losses = player_data.get("losses", 0)
             avg_rating = avg_rating_of(player_data)

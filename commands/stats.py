@@ -3,7 +3,8 @@
 from discord.ext import commands
 from commands import BotCommands
 from database import users
-from stats_helper import avg_rating_of
+from ranks import rank_of
+from stats_helper import DEFAULT_MMR, avg_rating_of
 from tracker_links import tracker_link
 
 
@@ -36,7 +37,7 @@ class StatsCommand(BotCommands):
 
         if player_id in self.bot.player_mmr:
             stats_data = self.bot.player_mmr[player_id]
-            mmr_value = stats_data.get("mmr", 1000)
+            mmr_value = stats_data.get("mmr", DEFAULT_MMR)
             wins = stats_data.get("wins", 0)
             losses = stats_data.get("losses", 0)
             matches_played = stats_data.get("matches_played", wins + losses)
@@ -81,9 +82,14 @@ class StatsCommand(BotCommands):
             else:
                 rank_line = f"Rank: {position}/{total_players}"
 
+            # MMR tier (Supersonic Radiant when holding rank 1)
+            tier = rank_of(mmr_value, is_rank_one=(position == 1))
+            tier_line = f"Tier: {tier}" if tier else "Tier: none (play a match!)"
+
             await ctx.send(
                 f"**{player_name}'s Stats:** {tracker_link(riot_name, riot_tag)}\n"
                 f"MMR: {mmr_value}\n"
+                f"{tier_line}\n"
                 f"{rank_line}\n"
                 f"Wins: {wins}\n"
                 f"Losses: {losses}\n"

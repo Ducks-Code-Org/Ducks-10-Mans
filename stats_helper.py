@@ -2,6 +2,14 @@
 
 from database import mmr_collection
 
+# ΔMMR coefficients (issue #159): rounds-diff, team-MMR expectation,
+# VLR-skill-curve, and "carry" corner-bonus terms.
+A, B, C, E = 20 / 7, 60 / 7, 20 / 7, 30 / 7
+
+# ponytail: DEFAULT_MMR 0 is the new-player display fallback; first report
+# seeds real MMR from 100*VLR rating.
+DEFAULT_MMR = 0
+
 
 # Round-weighted VLR rating accumulation helpers -----------------------------
 # "avg_rating" is the round-weighted mean of every recorded per-match rating:
@@ -47,45 +55,46 @@ def avg_rating_of(player_data: dict) -> float | None:
     return player_data.get("total_rating_points", 0.0) / rounds
 
 
-def _calc_mmr_delta(
-    *, won: bool, team_sum_mmr: float, opp_sum_mmr: float, acs: float, round_diff: int
-) -> int:
-    team_sum_mmr = float(team_sum_mmr or 0)
-    opp_sum_mmr = float(opp_sum_mmr or 0)
-    if team_sum_mmr <= 0 or opp_sum_mmr <= 0:
-        return 0
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
 
-    if won:
-        ratio = opp_sum_mmr / team_sum_mmr
-        base = (ratio * 16) + (((ratio * acs) // 100) - 2)
-        # RDBonus (win)
-        if round_diff < 4:
-            rd = 0
-        elif round_diff < 7:
-            rd = 1 * ratio
-        elif round_diff < 10:
-            rd = 2 * ratio
-        elif round_diff < 13:
-            rd = 3 * ratio
-        else:  # 13
-            rd = 4 * ratio
-    else:
-        ratio = team_sum_mmr / opp_sum_mmr
-        base = (ratio * -16) + (((ratio * acs) // 100) - 2)
-        # RDBonus (loss)
-        if round_diff < 4:
-            rd = 0
-        elif round_diff < 7:
-            rd = -1 * ratio
-        elif round_diff < 10:
-            rd = -2 * ratio
-        elif round_diff < 13:
-            rd = -3 * ratio
-        else:  # 13
-            rd = -4 * ratio
 
-    delta = int((base + rd) // 1)
-    return delta
+def _h(v: float) -> float:
+    """VLR skill curve through (0.5,0) (0.7,1) (1.0,4) (1.3,5)."""
+    if v <= 0.5:
+        return 0.0
+    if v < 0.7:
+        return 5.0 * (v - 0.5)
+    if v < 1.0:
+        return 1.0 + 10.0 * (v - 0.7)
+    return 4.0 + (v - 1.0) / 0.3
+
+
+def delta_mmr(
+    our_rounds: float, opp_rounds: float, our_mmr: float, opp_mmr: float, vlr: float
+) -> float:
+    """ΔMMR = alpha + beta.
+
+    alpha = (20/7)·r + (60/7)·(2 - m)
+      r = round differential / 4.3, clamped to ±1
+      m = team-MMR expectation: sqrt(ratio) if underdog, ratio^0.75 if
+          favorite, clamped [0.33, 5]
+    beta = (20/7)·(h(vlr) - 4) + (30/7)·r⁺·(vlr-1)/0.3
+      h = piecewise VLR curve (uncapped above 1.3)
+      corner bonus fires only on a round lead AND vlr > 1.0
+    """
+    r = _clamp((our_rounds - opp_rounds) / 4.3, -1.0, 1.0)
+    ratio = _clamp(our_mmr / max(opp_mmr, 1e-9), 0.33, 5.0)
+    m = ratio**0.5 if ratio < 1.0 else ratio**0.75
+    bonus = max(0.0, r) * max(0.0, (vlr - 1.0) / 0.3)
+    return A * r + B * (2.0 - m) + C * (_h(vlr) - 4.0) + E * bonus
+
+
+def _seed_mmr(rating) -> float:
+    """First-match MMR seed: 100× this match's estimated VLR rating."""
+    if isinstance(rating, (int, float)) and rating == rating:  # NaN check
+        return 100.0 * float(rating)
+    return float(DEFAULT_MMR)
 
 
 # Update stats
@@ -96,10 +105,10 @@ def update_stats(
     player_names,
     *,
     discord_id=None,
-    team_sum_mmr=None,
-    opp_sum_mmr=None,
-    team_won=None,
-    round_diff=None,
+    team_avg_mmr=None,
+    opp_avg_mmr=None,
+    our_rounds=None,
+    opp_rounds=None,
     rating=None,
 ):
     """Update player stats with proper initialization and error handling"""
@@ -128,6 +137,7 @@ def update_stats(
         player_data.setdefault("total_rounds_played", 0)
         player_data.setdefault("total_rating_points", 0.0)
         player_data.setdefault("total_rating_rounds", 0)
+        player_data.setdefault("mmr", DEFAULT_MMR)
 
         # Update stats
         total_matches = player_data["matches_played"] + 1
@@ -158,27 +168,32 @@ def update_stats(
             }
         )
 
-        if (
-            team_sum_mmr is not None
-            and opp_sum_mmr is not None
-            and team_won is not None
-            and round_diff is not None
-        ):
-
-            acs_this_match = (score / total_rounds) if total_rounds > 0 else 0.0
-            old_mmr = int(player_data.get("mmr", 1000))
-            delta = _calc_mmr_delta(
-                won=bool(team_won),
-                team_sum_mmr=float(team_sum_mmr),
-                opp_sum_mmr=float(opp_sum_mmr),
-                acs=float(acs_this_match),
-                round_diff=int(round_diff),
+        won = (
+            our_rounds is not None
+            and opp_rounds is not None
+            and our_rounds > opp_rounds
+        )
+        if team_avg_mmr is not None and opp_avg_mmr is not None:
+            first_match = (
+                player_data["matches_played"] == 1
+                and (player_data.get("wins", 0) + player_data.get("losses", 0)) == 0
             )
-            new_mmr = old_mmr + delta
+            # First match this season: MMR starts at 100× this match's VLR
+            # rating (the same estimate the performance-based delta uses);
+            # veterans just accumulate the delta on top of current MMR.
+            base = _seed_mmr(rating) if first_match else float(player_data["mmr"])
+            delta = delta_mmr(
+                our_rounds=our_rounds or 0,
+                opp_rounds=opp_rounds or 0,
+                our_mmr=float(team_avg_mmr),
+                opp_mmr=float(opp_avg_mmr),
+                vlr=float(rating) if isinstance(rating, (int, float)) else 1.0,
+            )
+            new_mmr = max(0, round(base + delta))
             player_mmr[discord_id]["mmr"] = new_mmr
 
             # Wins/Losses total
-            if team_won:
+            if won:
                 player_mmr[discord_id]["wins"] = (
                     player_mmr[discord_id].get("wins", 0) + 1
                 )
@@ -192,7 +207,7 @@ def update_stats(
             {"player_id": discord_id},
             {
                 "$set": {
-                    "mmr": player_mmr[discord_id].get("mmr", 1000),
+                    "mmr": player_mmr[discord_id].get("mmr", DEFAULT_MMR),
                     "wins": player_mmr[discord_id].get("wins", 0),
                     "losses": player_mmr[discord_id].get("losses", 0),
                     "total_combat_score": total_combat_score,
@@ -224,7 +239,7 @@ def update_stats(
         )
 
         player_mmr[discord_id] = {
-            "mmr": 1000,
+            "mmr": DEFAULT_MMR,
             "wins": 0,
             "losses": 0,
             "total_combat_score": total_combat_score,
@@ -242,25 +257,24 @@ def update_stats(
         player_names[discord_id] = riot_name
 
         if (
-            team_sum_mmr is not None
-            and opp_sum_mmr is not None
-            and team_won is not None
-            and round_diff is not None
+            team_avg_mmr is not None
+            and opp_avg_mmr is not None
+            and our_rounds is not None
+            and opp_rounds is not None
         ):
-
-            acs_this_match = (
-                (score / total_rounds_played) if total_rounds_played > 0 else 0.0
+            # First match this season: MMR starts at 100× this match's VLR
+            # rating, then the standard delta is applied on top.
+            won = our_rounds > opp_rounds
+            seed = _seed_mmr(rating)
+            delta = delta_mmr(
+                our_rounds=our_rounds,
+                opp_rounds=opp_rounds,
+                our_mmr=float(team_avg_mmr),
+                opp_mmr=float(opp_avg_mmr),
+                vlr=float(rating) if isinstance(rating, (int, float)) else 1.0,
             )
-            old_mmr = 1000
-            delta = _calc_mmr_delta(
-                won=bool(team_won),
-                team_sum_mmr=float(team_sum_mmr),
-                opp_sum_mmr=float(opp_sum_mmr),
-                acs=float(acs_this_match),
-                round_diff=int(round_diff),
-            )
-            player_mmr[discord_id]["mmr"] = old_mmr + delta
-            if team_won:
+            player_mmr[discord_id]["mmr"] = max(0, round(seed + delta))
+            if won:
                 player_mmr[discord_id]["wins"] = 1
                 player_mmr[discord_id]["losses"] = 0
             else:
