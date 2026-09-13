@@ -192,6 +192,87 @@ def demo():
 
         # A 10 minute lobby window is the documented requirement.
         assert LOBBY_WAIT_SECONDS == 600
+
+        # Case/whitespace-insensitive detection for all three channels.
+        weird_lobby = FakeChannel(20, "  LOBBY ")
+        guild = FakeGuild([FakeMember(1, weird_lobby)], [weird_lobby])
+        assert missing_lobby_players(guild, [{"id": "1"}]) == []
+        weird_atk = FakeChannel(21, "attackers")
+        weird_def = FakeChannel(22, "DEFENDERS ")
+        guild = FakeGuild([], [weird_atk, weird_def])
+        m1, m2 = FakeMemberMovable(1, lobby), FakeMemberMovable(2, lobby)
+        guild._members = {1: m1, 2: m2}
+        asyncio.run(move_teams_to_voice(guild, [{"id": "1"}], [{"id": "2"}]))
+        assert m1.moves == [weird_atk], "case-insensitive Attackers lookup failed"
+        assert m2.moves == [weird_def], "case-insensitive Defenders lookup failed"
+        assert guild.created == [], "existing channels must not be recreated"
+
+        # Detection failure: guild exposes no voice_channels -> fail open
+        # (skip the wait) instead of hanging or cancelling the match.
+        class GuildWithBrokenChannels:
+            @property
+            def voice_channels(self):
+                raise RuntimeError("cache unavailable")
+
+        assert (
+            missing_lobby_players(GuildWithBrokenChannels(), [{"id": "1"}]) == []
+        ), "uninspectable voice channels must not be reported as missing"
+        assert asyncio.run(
+            wait_for_lobby(
+                GuildWithBrokenChannels(),
+                [{"id": "1"}],
+                send,
+                lambda: False,
+                poll_seconds=0.01,
+            )
+        ), "wait_for_lobby must fail open when channels are uninspectable"
+        asyncio.run(move_teams_to_voice(GuildWithBrokenChannels(), [{"id": "1"}], []))
+
+        # No voice channels at all -> nothing to wait for; team channels are
+        # created on first use.
+        empty_guild = FakeGuild([], [])
+        assert missing_lobby_players(empty_guild, [{"id": "1"}]) == []
+        assert asyncio.run(
+            wait_for_lobby(empty_guild, [{"id": "1"}], send, lambda: False)
+        )
+        asyncio.run(move_teams_to_voice(empty_guild, [{"id": "1"}], []))
+        assert sorted(empty_guild.created) == ["Attackers", "Defenders"]
+
+        # Malformed queue/team entries and missing members are skipped
+        # without crashing the presence check or the team move.
+        malformed = [{"nope": "x"}, "not-a-dict", {"id": "abc"}, {"id": "1"}]
+        guild = FakeGuild([FakeMember(1, lobby)], [lobby])
+        assert missing_lobby_players(guild, malformed) == []
+        guild = FakeGuild([], [lobby])
+        asyncio.run(move_teams_to_voice(guild, malformed, [{"id": "404"}]))
+        assert sorted(guild.created) == ["Attackers", "Defenders"]
+
+        # Team-channel creation failure is logged and skipped; other
+        # permissions failures must not raise out of the move.
+        class GuildCreateForbidden(FakeGuild):
+            async def create_voice_channel(self, name):
+                raise discord.Forbidden(
+                    types.SimpleNamespace(status=403, reason="Forbidden"), "nope"
+                )
+
+        guild = GuildCreateForbidden([], [FakeChannel(30, "Attackers")])
+        asyncio.run(move_teams_to_voice(guild, [], [{"id": "1"}]))
+        assert guild.created == [], "failed channel creation must not be recorded"
+
+        # A member whose voice state raises is skipped, not fatal, and is
+        # not reported as missing (inspection error must never block a match).
+        class BrokenVoiceMember(FakeMember):
+            @property
+            def voice(self):
+                raise RuntimeError("voice state unavailable")
+
+        class GuildBrokenMember(FakeGuild):
+            def get_member(self, uid):
+                return BrokenVoiceMember(uid)
+
+        guild = GuildBrokenMember([], [lobby])
+        assert missing_lobby_players(guild, [{"id": "1"}]) == []
+        asyncio.run(move_teams_to_voice(guild, [{"id": "1"}], []))
     finally:
         globals.BOT_FEATURES = original
 

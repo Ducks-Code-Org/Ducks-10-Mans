@@ -6,6 +6,11 @@ When the flag is enabled:
   minutes if someone never joins.
 - When the match is set to start, players already connected to a voice
   channel are moved to their team channel (Attackers/Defenders).
+
+Channel lookup is case-insensitive and whitespace-tolerant. Every helper
+fails open: when voice state or channels cannot be inspected (no guild,
+missing channels, cache/API errors), the match continues rather than
+hanging or being cancelled.
 """
 
 import asyncio
@@ -20,6 +25,9 @@ DEFENDERS_CHANNEL_NAME = "Defenders"
 LOBBY_WAIT_SECONDS = 600  # 10 minutes to join the lobby
 POLL_SECONDS = 15
 
+# Sentinel: voice state could not be inspected, so presence is unknown.
+_UNKNOWN = object()
+
 
 def voice_presence_enabled() -> bool:
     """Whether the voice_presence [features] flag in bot.ini is on."""
@@ -27,26 +35,75 @@ def voice_presence_enabled() -> bool:
 
 
 def _find_channel(channels, name):
-    return next((c for c in channels if c.name.lower() == name.lower()), None)
+    """Find a channel by name, case-insensitively and whitespace-tolerantly."""
+    if not channels or not isinstance(name, str):
+        return None
+    target = name.strip().casefold()
+    for channel in channels:
+        channel_name = getattr(channel, "name", None)
+        if isinstance(channel_name, str) and channel_name.strip().casefold() == target:
+            return channel
+    return None
+
+
+def _guild_voice_channels(guild):
+    """The guild's voice channels, or None when they can't be inspected."""
+    if guild is None:
+        return None
+    try:
+        return list(guild.voice_channels)
+    except Exception as e:  # fail open: presence checks must never break setup
+        print(f"[voice] Could not list voice channels: {e!r}")
+        return None
+
+
+def _player_id(player) -> int | None:
+    """Parse a queue entry's discord id, or None when the entry is malformed."""
+    if not isinstance(player, dict):
+        return None
+    try:
+        return int(player.get("id"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _voice_channel_of(guild, player_id: int):
+    """Channel a player is connected to, None if not connected, or _UNKNOWN.
+
+    _UNKNOWN means the voice state could not be read, which callers must
+    not treat as absence (fail open).
+    """
+    try:
+        member = guild.get_member(player_id)
+        return member.voice.channel if member and member.voice else None
+    except Exception as e:  # fail open: an unreadable voice state is not "absent"
+        print(f"[voice] Could not read voice state for {player_id}: {e!r}")
+        return _UNKNOWN
 
 
 def missing_lobby_players(guild, queue) -> list[str]:
     """Queued player ids not connected to the lobby voice channel.
 
-    If the guild has no voice channel named "lobby", any voice
-    channel counts as present.
+    Returns [] (nobody missing) when voice state can't be inspected, and
+    falls back to "any voice channel" when the guild has no #lobby.
     """
-    lobby = _find_channel(guild.voice_channels, LOBBY_CHANNEL_NAME) if guild else None
+    channels = _guild_voice_channels(guild)
+    if not channels:
+        print("[voice] No inspectable voice channels; skipping presence check")
+        return []
+    lobby = _find_channel(channels, LOBBY_CHANNEL_NAME)
+
     missing = []
-    for player in queue:
-        member = None
-        try:
-            member = guild.get_member(int(player["id"])) if guild else None
-        except (TypeError, ValueError):
-            pass
-        channel = member.voice.channel if member and member.voice else None
+    for player in queue or []:
+        player_id = _player_id(player)
+        if player_id is None:
+            print(f"[voice] Skipping malformed queue entry: {player!r}")
+            continue
+        channel = _voice_channel_of(guild, player_id)
+        if channel is _UNKNOWN:
+            continue  # can't tell; never block a match on an inspection error
         if channel is None or (lobby is not None and channel.id != lobby.id):
-            missing.append(str(player["id"]))
+            missing.append(str(player_id))
     return missing
 
 
@@ -60,18 +117,27 @@ async def wait_for_lobby(
 ) -> bool:
     """Wait until every queued player has joined the lobby voice channel.
 
-    Returns True once everyone is connected, False if the wait timed out
-    or the match setup was cancelled (e.g. !cancel). Progress messages go
-    through `send`.
+    Returns True once everyone is connected, or when presence cannot be
+    checked at all. Returns False if the wait timed out or setup was
+    cancelled (e.g. !cancel). Progress messages go through `send`.
     """
+    channels = _guild_voice_channels(guild)
+    if not channels:
+        print("[voice] No voice channels to monitor; skipping lobby wait")
+        return True
+
     missing = missing_lobby_players(guild, queue)
     if not missing:
         return True
 
+    room = (
+        "**#lobby**"
+        if _find_channel(channels, LOBBY_CHANNEL_NAME) is not None
+        else "a **voice channel**"
+    )
     try:
         await send(
-            "Waiting for everyone to join the **#lobby** voice channel before match "
-            "setup: "
+            f"Waiting for everyone to join {room} before match setup: "
             + " ".join(f"<@{pid}>" for pid in missing)
             + f" — you have {timeout_seconds // 60} minutes or the match is cancelled."
         )
@@ -95,29 +161,39 @@ async def wait_for_lobby(
 async def move_teams_to_voice(guild, team1, team2) -> None:
     """Move voice-connected players into their team channel at match start.
 
-    Team channels are found by name or created once and persist between
-    matches. Players not connected to any voice channel are left alone.
+    Team channels are matched case-insensitively or created once and then
+    persist between matches. Missing permissions, API errors and malformed
+    queue entries are logged and skipped so match start never crashes.
     """
-    if guild is None:
+    channels = _guild_voice_channels(guild)
+    if channels is None:
+        print("[voice] Could not inspect voice channels; skipping team move")
         return
+
     for name, team in (
         (ATTACKERS_CHANNEL_NAME, team1),
         (DEFENDERS_CHANNEL_NAME, team2),
     ):
-        channel = _find_channel(guild.voice_channels, name)
+        channel = _find_channel(channels, name)
         if channel is None:
             try:
                 channel = await guild.create_voice_channel(name)
-            except (discord.Forbidden, discord.HTTPException):
+                channels.append(channel)
+            except (discord.HTTPException, asyncio.TimeoutError) as e:
+                print(f"[voice] Could not create '{name}' voice channel: {e}")
                 continue
-        for player in team:
+
+        for player in team or []:
+            player_id = _player_id(player)
+            if player_id is None:
+                print(f"[voice] Skipping malformed team entry: {player!r}")
+                continue
             try:
-                member = guild.get_member(int(player["id"]))
-            except (TypeError, ValueError):
-                continue
-            if not member or not member.voice or member.voice.channel == channel:
-                continue
-            try:
+                member = guild.get_member(player_id)
+                if not member or not member.voice or member.voice.channel == channel:
+                    continue
                 await member.move_to(channel)
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+            except (discord.HTTPException, asyncio.TimeoutError) as e:
+                print(f"[voice] Could not move {player_id} to '{name}': {e}")
+            except (AttributeError, TypeError) as e:
+                print(f"[voice] Could not inspect member {player_id}: {e}")
