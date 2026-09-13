@@ -6,6 +6,7 @@ import discord
 from discord.ui import Select
 
 from database import users
+from stats_helper import DEFAULT_MMR
 from tracker_links import tracker_link
 from voice_presence import move_teams_to_voice, voice_presence_enabled
 
@@ -360,7 +361,7 @@ class CaptainsDraftingView(discord.ui.View):
             mmr = (
                 getattr(self.bot, "player_mmr", {})
                 .get(str(p["id"]), {})
-                .get("mmr", 1000)
+                .get("mmr", DEFAULT_MMR)
             )
             if ud:
                 attackers.append(
@@ -375,7 +376,7 @@ class CaptainsDraftingView(discord.ui.View):
             mmr = (
                 getattr(self.bot, "player_mmr", {})
                 .get(str(p["id"]), {})
-                .get("mmr", 1000)
+                .get("mmr", DEFAULT_MMR)
             )
             if ud:
                 defenders.append(
@@ -624,7 +625,7 @@ class CaptainsDraftingView(discord.ui.View):
         return self.bot.setup_generation != self.setup_generation
 
     def _player_mmr(self, player) -> int:
-        return self.bot.player_mmr.get(str(player["id"]), {}).get("mmr", 1000)
+        return self.bot.player_mmr.get(str(player["id"]), {}).get("mmr", DEFAULT_MMR)
 
     async def send_current_draft_view(self):
         if self.draft_finished:

@@ -7,7 +7,9 @@ from commands import BotCommands
 from commands.report import cleanup_match_resources
 from commands.signup import cancel_background_purge
 from database import mmr_collection
+from ranks import remove_all_rank_roles
 from recent_queue import get_recent_queue, remember_recent_queue
+from stats_helper import DEFAULT_MMR
 from views.signup_view import SignupView
 from views.mode_vote_view import ModeVoteView
 
@@ -41,6 +43,12 @@ class AdminCommands(BotCommands):
             return
 
         doc = self.bot.create_new_season(reset_player_stats=reset, winner=winner_doc)
+
+        # Strip every rank role — fresh season means fresh ranks.
+        try:
+            await remove_all_rank_roles(ctx.guild)
+        except Exception as e:
+            print(f"[newseason] Could not remove rank roles: {e}")
 
         # Assign SSR Rank to winner
         ssr_role = await ctx.guild.create_role(
@@ -109,7 +117,7 @@ class AdminCommands(BotCommands):
         for player in queue:
             if player["id"] not in self.bot.player_mmr:
                 self.bot.player_mmr[player["id"]] = {
-                    "mmr": 1000,
+                    "mmr": DEFAULT_MMR,
                     "wins": 0,
                     "losses": 0,
                 }

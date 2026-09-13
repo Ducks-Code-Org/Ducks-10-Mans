@@ -10,6 +10,7 @@ from discord.ext import commands
 from commands import BotCommands
 from database import users, mmr_collection, seasons, all_matches
 from globals import feature_enabled
+from ranks import sync_player_rank
 from recent_queue import remember_recent_queue
 from riot_api import RiotApiInconclusive, get_recent_matches_async
 from stats_helper import update_stats
@@ -405,7 +406,7 @@ class ReportCommand(BotCommands):
                 if stats["mmr"] == top_mmr_before
             ]
         else:
-            top_mmr_before = 1000
+            top_mmr_before = 0
             top_players_before = []
 
         # Helper: discord id -> team label (the discord id is the persistent
@@ -422,11 +423,57 @@ class ReportCommand(BotCommands):
         def _mmr_of(pid):
             d = pre_update_mmr.get(pid)
             if isinstance(d, dict):
-                return int(d.get("mmr", 1000))
-            return 1000
+                return int(d.get("mmr", 0))
+            return 0
 
-        self.team1_mmr = sum(_mmr_of(pid) for pid in team1_ids)
-        self.team2_mmr = sum(_mmr_of(pid) for pid in team2_ids)
+        # Estimated VLR Rating 2.0 per player (puuid-keyed). Best effort: a
+        # missing/unusable kill timeline just means no ratings this match.
+        try:
+            match_ratings = estimate_ratings_v4(match)
+        except Exception as e:
+            print(f"[DEBUG] VLR rating estimation failed, skipping: {e}")
+            match_ratings = {}
+
+        # Per-team MMR averages feed the new ΔMMR expectation term. New
+        # players count as 0 for team selection, but once the match is
+        # reported their seed (100×VLR) is assigned first and included in
+        # the team average before deltas are applied (issue #159).
+        team1_api_by_id = {
+            _resolve_api_player(p): p for p in match_players if _resolve_api_player(p)
+        }
+
+        def _rating_of(pid):
+            p = team1_api_by_id.get(pid)
+            puuid = (p.get("puuid") or "").strip().lower() if p else ""
+            return (match_ratings.get(puuid) or {}).get("rating")
+
+        def _is_new(pid):
+            stats = pre_update_mmr.get(pid)
+            if not isinstance(stats, dict):
+                return True
+            return (
+                stats.get("matches_played", 0) == 0
+                and (stats.get("wins", 0) + stats.get("losses", 0)) == 0
+            )
+
+        def _effective_mmr(pid):
+            if not _is_new(pid):
+                return _mmr_of(pid)
+            rating = _rating_of(pid)
+            if isinstance(rating, (int, float)) and rating == rating:
+                return max(0, round(100.0 * float(rating)))
+            return 0
+
+        team1_avg = (
+            sum(_effective_mmr(pid) for pid in team1_ids) / len(team1_ids)
+            if team1_ids
+            else 0
+        )
+        team2_avg = (
+            sum(_effective_mmr(pid) for pid in team2_ids) / len(team2_ids)
+            if team2_ids
+            else 0
+        )
 
         # discord id -> API team color ("red"/"blue")
         discord_to_api_color = {}
@@ -453,20 +500,8 @@ class ReportCommand(BotCommands):
             rw = rounds_to_int(rw_raw)
             api_rounds[tid] = rw
 
-        self.team1_rounds = int(api_rounds.get(team1_api_color, 0))
-        self.team2_rounds = int(api_rounds.get(team2_api_color, 0))
-        round_diff_val = abs(self.team1_rounds - self.team2_rounds)
-        self.winning_team = (
-            "team1" if winning_match_team_ids == team1_ids_set else "team2"
-        )
-
-        # Estimated VLR Rating 2.0 per player (puuid-keyed). Best effort: a
-        # missing/unusable kill timeline just means no ratings this match.
-        try:
-            match_ratings = estimate_ratings_v4(match)
-        except Exception as e:
-            print(f"[DEBUG] VLR rating estimation failed, skipping: {e}")
-            match_ratings = {}
+        team1_rounds = int(api_rounds.get(team1_api_color, 0))
+        team2_rounds = int(api_rounds.get(team2_api_color, 0))
 
         # Update stats for each player
         for player_stats in match_players:
@@ -490,12 +525,10 @@ class ReportCommand(BotCommands):
                 self.bot.player_mmr,
                 self.bot.player_names,
                 discord_id=p_discord_id,
-                team_sum_mmr=(
-                    self.team1_mmr if team_label == "team1" else self.team2_mmr
-                ),
-                opp_sum_mmr=self.team2_mmr if team_label == "team1" else self.team1_mmr,
-                team_won=(self.winning_team == team_label),
-                round_diff=round_diff_val,
+                team_avg_mmr=(team1_avg if team_label == "team1" else team2_avg),
+                opp_avg_mmr=team2_avg if team_label == "team1" else team1_avg,
+                our_rounds=(team1_rounds if team_label == "team1" else team2_rounds),
+                opp_rounds=(team2_rounds if team_label == "team1" else team1_rounds),
                 rating=rating_info.get("rating"),
             )
         print("[DEBUG] Basic stats updated")
@@ -511,8 +544,8 @@ class ReportCommand(BotCommands):
             entries = []
             for p in team:
                 pid = str(p["id"])
-                old = pre_update_mmr.get(pid, {}).get("mmr", 1000)
-                new = self.bot.player_mmr.get(pid, {}).get("mmr", 1000)
+                old = pre_update_mmr.get(pid, {}).get("mmr", 0)
+                new = self.bot.player_mmr.get(pid, {}).get("mmr", 0)
                 delta = new - old
                 u = users.find_one({"discord_id": pid})
                 name = (
@@ -565,7 +598,7 @@ class ReportCommand(BotCommands):
                         for pid, stats in self.bot.player_mmr.items()
                         if pid in played_ids
                     ),
-                    key=lambda x: x[1].get("mmr", 1000),
+                    key=lambda x: x[1].get("mmr", 0),
                     reverse=True,
                 ),
                 start=1,
@@ -614,6 +647,27 @@ class ReportCommand(BotCommands):
                         await announcement_channel.send(message)
                     else:
                         await ctx.send(message)
+
+        # Sync each player's rank role to their new MMR (no rank role until
+        # the first match of the season; rank 1 overall is Supersonic Radiant).
+        if ctx.guild:
+            played_sorted = [
+                (pid, stats)
+                for pid, stats in sorted_mmr_after
+                if stats.get("matches_played", 0) > 0
+                or (stats.get("wins", 0) + stats.get("losses", 0)) > 0
+            ]
+            for position, (pid, stats) in enumerate(played_sorted):
+                try:
+                    await sync_player_rank(
+                        self.bot,
+                        ctx.guild,
+                        pid,
+                        stats.get("mmr", 0),
+                        is_rank_one=(position == 0),
+                    )
+                except Exception as e:
+                    print(f"[ranks] Rank sync failed for {pid}: {e}")
 
         # Record every match played in a new collection
         all_matches.insert_one(match)

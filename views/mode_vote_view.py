@@ -5,6 +5,7 @@ from functools import partial
 import discord
 from discord.ui import Button
 
+from stats_helper import DEFAULT_MMR
 from views import safe_reply
 from views.map_type_vote_view import MapTypeVoteView
 
@@ -242,7 +243,7 @@ class ModeVoteView(discord.ui.View):
 
         def mmr_of(p):
             pid = str(p["id"])
-            return self.bot.player_mmr.get(pid, {}).get("mmr", 1000)
+            return self.bot.player_mmr.get(pid, {}).get("mmr", DEFAULT_MMR)
 
         players.sort(key=lambda p: mmr_of(p), reverse=True)
 

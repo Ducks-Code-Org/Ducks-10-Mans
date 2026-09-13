@@ -5,6 +5,7 @@ import discord
 from discord.ui import Button
 
 from database import users
+from stats_helper import DEFAULT_MMR
 from tracker_links import tracker_link
 from views.captains_drafting_view import SecondCaptainChoiceView
 from views import safe_reply
@@ -262,7 +263,9 @@ class MapVoteView(discord.ui.View):
         # Assign 2 captains randomly from the top 5 MMR players, with a decreasing bias for lower MMR
         sorted_players = sorted(
             self.bot.queue,
-            key=lambda p: self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", 1000),
+            key=lambda p: self.bot.player_mmr.get(str(p["id"]), {}).get(
+                "mmr", DEFAULT_MMR
+            ),
             reverse=True,
         )
 
@@ -312,7 +315,7 @@ class MapVoteView(discord.ui.View):
         attackers = []
         for p in self.bot.team1:
             ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", 1000)
+            mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", DEFAULT_MMR)
             if ud:
                 attackers.append(
                     f"{tracker_link(ud.get('name', 'Unknown'), ud.get('tag', 'Unknown'))} (MMR:{mmr})"
@@ -323,7 +326,7 @@ class MapVoteView(discord.ui.View):
         defenders = []
         for p in self.bot.team2:
             ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", 1000)
+            mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", DEFAULT_MMR)
             if ud:
                 defenders.append(
                     f"{tracker_link(ud.get('name', 'Unknown'), ud.get('tag', 'Unknown'))} (MMR:{mmr})"

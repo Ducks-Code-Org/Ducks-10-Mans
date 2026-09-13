@@ -244,6 +244,109 @@ def main():
     )
     assert abs(store3["3"]["avg_rating"] - 1.1) < 1e-9, store3["3"]
 
+    # --- issue #159: delta_mmr math --------------------------------------
+    d = stats_helper.delta_mmr
+    # Equal MMR, even rounds, 1.0 VLR → the +8.57 baseline
+    assert abs(d(13, 13, 500, 500, 1.0) - 60 / 7) < 1e-9
+    # Calibration curve points: h(0.5)=0, h(0.7)=1, h(1.0)=4, h(1.3)=5
+    h = stats_helper._h
+    assert h(0.5) == 0.0 and h(0.7) == 1.0 and h(1.0) == 4.0 and h(1.3) == 5.0
+    # r saturates at ±1 (i.e. ±4.3 round diff)
+    assert abs(d(20, 5, 500, 500, 1.0) - d(17.3, 13, 500, 500, 1.0)) < 1e-9
+    # Big favorite (5x) winning evenly at 1.0 VLR: expectation term is
+    # negative (m = 5^0.75); equal-MMR even result is the +8.57 baseline.
+    assert d(13, 13, 2500, 500, 1.0) < 0 < d(13, 13, 500, 500, 1.0)
+    # Underdog (1/5) winning: sqrt-damped, +12.2 max on expectation term
+    assert d(13, 13, 500, 2500, 1.0) > 60 / 7
+    # Corner bonus: only fires on round lead AND vlr > 1.0
+    no_lead = d(10, 13, 500, 500, 1.3) - d(10, 13, 500, 500, 1.0)
+    with_lead = d(13, 10, 500, 500, 1.3) - d(13, 10, 500, 500, 1.0)
+    assert no_lead > 0 and with_lead > no_lead
+
+    # --- issue #159: first-match seeding + 0 floor ------------------------
+    # First match: MMR seeded to 100*VLR then delta applied (always > 0 seed)
+    store5 = {}
+    stats_helper.update_stats(
+        {"stats": {"score": 900, "kills": 8, "deaths": 4}},
+        20,
+        store5,
+        {},
+        discord_id="5",
+        team_avg_mmr=400,
+        opp_avg_mmr=400,
+        our_rounds=13,
+        opp_rounds=5,
+        rating=1.4,
+    )
+    assert store5["5"]["mmr"] > 100, store5["5"]  # seed 140 + positive delta
+    assert store5["5"]["wins"] == 1 and store5["5"]["losses"] == 0
+
+    # Veteran losing hard cannot go below 0 (e.g. someone at 10 MMR whose
+    # delta is -22 must land at 0, not negative)
+    store6 = {
+        "6": {
+            "mmr": 10,
+            "matches_played": 5,
+            "wins": 2,
+            "losses": 3,
+            "total_rounds_played": 100,
+        }
+    }
+    stats_helper.update_stats(
+        {"stats": {"score": 100, "kills": 2, "deaths": 15}},
+        15,
+        store6,
+        {},
+        discord_id="6",
+        team_avg_mmr=800,
+        opp_avg_mmr=100,
+        our_rounds=3,
+        opp_rounds=13,
+        rating=0.7,
+    )
+    assert store6["6"]["mmr"] == 0, store6["6"]
+    assert store6["6"]["losses"] == 4
+
+    # No rating data → vlr defaults to 1.0 in the delta (no crash, seed 0)
+    store7 = {}
+    stats_helper.update_stats(
+        {"stats": {"score": 500, "kills": 5, "deaths": 10}},
+        15,
+        store7,
+        {},
+        discord_id="7",
+        team_avg_mmr=0,
+        opp_avg_mmr=300,
+        our_rounds=5,
+        opp_rounds=13,
+        rating=None,
+    )
+    assert store7["7"]["mmr"] >= 0, store7["7"]
+
+    # --- ranks: tier thresholds and ordering ------------------------------
+    from ranks import RANKS, rank_of
+
+    assert rank_of(0) == "Wood Rank"
+    assert rank_of(99) == "Wood Rank"
+    assert rank_of(100) == "Stone Rank"
+    assert rank_of(299) == "Iron Rank"
+    assert rank_of(750) == "Mother-Ducker Rank"
+    assert rank_of(10000) == "Mother-Ducker Rank"
+    assert rank_of(500, is_rank_one=True) == "Supersonic Radiant"
+    assert rank_of(-5) is None  # unplayed players get no tier
+    # Thresholds strictly ascending when listed low-to-high
+    thresholds = sorted(t for t, _, _ in RANKS)
+    assert thresholds == [0, 100, 200, 300, 400, 500, 750]
+
+    # Unplayed players (0 matches) get no tier even at position 1, matching
+    # the rank-role sync which only ranks players who played (issue #159).
+    from ranks import tier_for_player
+
+    assert tier_for_player(1200, position=1, matches_played=0) is None
+    assert tier_for_player(1200, position=1, matches_played=3) == "Supersonic Radiant"
+    assert tier_for_player(0, position=5, matches_played=0) is None
+    assert tier_for_player(0, position=5, matches_played=1) == "Wood Rank"
+
     print("vlr_rating self-check OK")
 
 

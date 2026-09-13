@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
 
+from ranks import help_menu_text
+
 
 async def setup(bot):
     await bot.add_cog(HelpCommand(bot))
@@ -30,6 +32,13 @@ class HelpCommand(commands.Cog):
                 "**!leaderboard <type>** - View the leaderboard\n"
                 "↪ _Available types: `mmr` (default), `wins`, `losses`, `kd`, `acs`_\n"
             ),
+            inline=False,
+        )
+
+        # Rank tiers and their MMR thresholds
+        help_embed.add_field(
+            name="Ranks",
+            value=help_menu_text(),
             inline=False,
         )
 
