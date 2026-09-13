@@ -185,15 +185,16 @@ class MapTypeVoteView(discord.ui.View):
                 await self.close_vote(chosen_map_type)
                 return
 
-            # Check for timeout winner
-            if self.timeout:
+            # Check for timeout winner, or once every player has voted
+            if self.timeout or len(self.voters) >= len(self.bot.queue):
                 self.voting_phase_ended = True
+                result = "timeout" if self.timeout else "final vote"
                 if competitive_votes > all_votes:
-                    await self.ctx.send("Competitive Maps wins by timeout!")
+                    await self.ctx.send(f"Competitive Maps wins by {result}!")
                     chosen_map_type = "Competitive"
                     await self.close_vote(chosen_map_type)
                 elif all_votes > competitive_votes:
-                    await self.ctx.send("All Maps wins by timeout!")
+                    await self.ctx.send(f"All Maps wins by {result}!")
                     chosen_map_type = "All"
                     await self.close_vote(chosen_map_type)
                 else:

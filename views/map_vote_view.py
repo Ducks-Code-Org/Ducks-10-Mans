@@ -191,9 +191,10 @@ class MapVoteView(discord.ui.View):
                 await self.close_vote(winning_map)
                 return
 
-            # Check for timeout winner
-            if self.timeout:
+            # Check for timeout winner, or once every player has voted
+            if self.timeout or len(self.voters) >= len(self.bot.queue):
                 self.voting_phase_ended = True
+                result = "timeout" if self.timeout else "final vote"
                 # Collect all maps that have the highest number of votes (handles ties)
                 winners = []
                 for map_name, vote_count in self.map_votes.items():
@@ -205,7 +206,7 @@ class MapVoteView(discord.ui.View):
                     await self.ctx.send(message)
                     print(message)
                 else:
-                    message = f"{winning_map} wins by timeout!"
+                    message = f"{winning_map} wins by {result}!"
                     await self.ctx.send(message)
                     print(message)
                 await self.close_vote(winning_map)

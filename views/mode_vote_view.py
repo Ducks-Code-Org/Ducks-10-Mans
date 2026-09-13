@@ -179,16 +179,17 @@ class ModeVoteView(discord.ui.View):
                 await self.close_vote()
                 return
 
-            # Check for a winner by timeout
-            if self.timeout:
+            # Check for a winner by timeout, or once every player has voted
+            if self.timeout or len(self.voters) >= len(self.bot.queue):
                 self.voting_phase_ended = True
+                result = "timeout" if self.timeout else "final vote"
                 if balanced_votes > captains_votes:
-                    await self.ctx.send("Balanced wins by timeout!")
+                    await self.ctx.send(f"Balanced wins by {result}!")
                     self.bot.chosen_mode = "Balanced"
                     self.setup_balanced_teams()
                     await self.close_vote()
                 elif captains_votes > balanced_votes:
-                    await self.ctx.send("Captains wins by timeout!")
+                    await self.ctx.send(f"Captains wins by {result}!")
                     self.bot.chosen_mode = "Captains"
                     await self.close_vote()
                 else:
