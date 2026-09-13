@@ -12,6 +12,7 @@ from recent_queue import remember_recent_queue
 from tracker_links import tracker_link
 from views import safe_reply
 from views.mode_vote_view import ModeVoteView
+from voice_presence import voice_presence_enabled, wait_for_lobby
 
 
 class SignupView(discord.ui.View):
@@ -324,6 +325,26 @@ class SignupView(discord.ui.View):
         await interaction.channel.send(
             "__Players:__ " + " ".join([f"<@{p['id']}>" for p in self.bot.queue])
         )
+
+        # Wait for everyone to join the lobby voice channel before setup
+        # (feature-flagged in bot.ini).
+        if voice_presence_enabled():
+            ready = await wait_for_lobby(
+                self.ctx.guild,
+                self.bot.queue,
+                send=interaction.channel.send,
+                is_cancelled=lambda: self.bot is None
+                or self.bot.setup_generation != self.setup_generation,
+            )
+            if not ready:
+                if (
+                    self.bot is not None
+                    and self.bot.setup_generation == self.setup_generation
+                ):
+                    await self.cancel_signup(
+                        "Players did not join the lobby voice channel in time."
+                    )
+                return
 
         self.bot.signup_active = False
         self.ctx.channel = self.bot.match_channel
