@@ -21,3 +21,19 @@ def get_recent_queue() -> tuple[list[str], bool]:
     if not doc:
         return [], True
     return doc.get("player_ids", []), doc.get("cancelled", True)
+
+
+def pingrecent_message(player_ids, cancelled: bool) -> str:
+    """The !pingrecent message, worded for how the last queue ended."""
+    pings = " ".join(f"<@{pid}>" for pid in player_ids)
+    if cancelled:
+        return (
+            "The most recent queue was cancelled. "
+            + pings
+            + " — a new queue may be starting if you're up for a game!"
+        )
+    return (
+        "A new queue has started! "
+        + pings
+        + " — we're pinging recent players to see if they're up for another game!"
+    )

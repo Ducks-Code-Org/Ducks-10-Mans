@@ -8,7 +8,7 @@ from commands.report import cleanup_match_resources
 from commands.signup import cancel_background_purge
 from database import mmr_collection
 from ranks import remove_all_rank_roles
-from recent_queue import get_recent_queue, remember_recent_queue
+from recent_queue import get_recent_queue, pingrecent_message, remember_recent_queue
 from stats_helper import DEFAULT_MMR
 from views.signup_view import SignupView
 from views.mode_vote_view import ModeVoteView
@@ -244,16 +244,4 @@ class AdminCommands(BotCommands):
         if not recent_ids:
             await ctx.send("No recent queue found to ping.")
             return
-        if cancelled:
-            message = (
-                "The most recent queue was cancelled. "
-                + " ".join(f"<@{pid}>" for pid in recent_ids)
-                + " — a new queue may be starting if you're up for a game!"
-            )
-        else:
-            message = (
-                "A new queue has started! "
-                + " ".join(f"<@{pid}>" for pid in recent_ids)
-                + " — we're pinging recent players to see if they're up for another game!"
-            )
-        await ctx.send(message)
+        await ctx.send(pingrecent_message(recent_ids, cancelled))

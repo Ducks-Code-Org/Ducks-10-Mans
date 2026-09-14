@@ -56,9 +56,7 @@ class StatsCommand(BotCommands):
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
                 riot_tag = user_data.get("tag", "Unknown")
-                player_name = f"{riot_name}#{riot_tag}"
             else:
-                player_name = ctx.author.name
                 riot_name, riot_tag = ctx.author.name, ""
 
             total_players = len(self.bot.player_mmr)

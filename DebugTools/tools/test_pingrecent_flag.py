@@ -5,7 +5,6 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-import asyncio  # noqa: E402
 import types  # noqa: E402
 from unittest.mock import MagicMock  # noqa: E402
 
@@ -60,33 +59,18 @@ def test_cancelled_flag():
 
 
 def test_pingrecent_messages():
-    # Importing admin_commands needs several stubs; build the cog class via
-    # a minimal fake bot object instead.
     cancelled_ids, _ = recent_queue.get_recent_queue()
     assert cancelled_ids == ["1", "2"]
 
-    def build_message(ids, cancelled):
-        if cancelled:
-            return (
-                "The most recent queue was cancelled. "
-                + " ".join(f"<@{pid}>" for pid in ids)
-                + " — a new queue may be starting if you're up for a game!"
-            )
-        return (
-            "A new queue has started! "
-            + " ".join(f"<@{pid}>" for pid in ids)
-            + " — we're pinging recent players to see if they're up for another game!"
-        )
-
     recent_queue.remember_recent_queue([{"id": 5}], cancelled=False)
     ids, cancelled = recent_queue.get_recent_queue()
-    msg = build_message(ids, cancelled)
+    msg = recent_queue.pingrecent_message(ids, cancelled)
     assert "A new queue has started!" in msg, msg
     assert "<@5>" in msg
 
     recent_queue.remember_recent_queue([{"id": 5}], cancelled=True)
     ids, cancelled = recent_queue.get_recent_queue()
-    msg = build_message(ids, cancelled)
+    msg = recent_queue.pingrecent_message(ids, cancelled)
     assert "was cancelled" in msg, msg
 
     print("test_pingrecent_messages: OK")

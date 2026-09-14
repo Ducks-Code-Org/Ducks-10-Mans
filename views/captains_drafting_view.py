@@ -7,6 +7,7 @@ from discord.ui import Select
 
 from database import users
 from stats_helper import DEFAULT_MMR
+from tracker_links import tracker_link
 from voice_presence import move_teams_to_voice, voice_presence_enabled
 
 DECISION_TIMEOUT_SECONDS = 120
