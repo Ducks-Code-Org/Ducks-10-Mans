@@ -165,29 +165,66 @@ def demo():
     finally:
         mc.users = original_users
 
-    # Quack Coins are per-season: every reset path zeroes them. The shared
-    # SEASON_STAT_DEFAULTS feeds !resetplayer and !resetseason, while
-    # !newseason zeroes coins in create_new_season (even with noreset).
+    # Quack Coins are per-season. SEASON_STAT_DEFAULTS feeds !resetplayer
+    # and !resetseason; !newseason resets coins only when it resets stats,
+    # so `noreset` preserves balances, while per-match coin state is always
+    # dropped when the season turns over.
     assert (
         mc.SEASON_STAT_DEFAULTS.get("quack_coins") == 0
     ), "season stat defaults must zero quack_coins"
-    newseason_src = open(
-        os.path.join(
-            os.path.dirname(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            ),
-            "bot.py",
-        )
-    ).read()
-    create_block = newseason_src.split("def create_new_season")[1].split(
-        "def _reset_all_players_for_new_season"
-    )[0]
+
+    import ast
+
+    bot_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "bot.py",
+    )
+    tree = ast.parse(open(bot_path).read())
+    create_fn = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "create_new_season"
+    )
+
+    def calls_in(nodes):
+        """All function names called anywhere under these statements."""
+        names = []
+        for node in nodes:
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call):
+                    names.append(ast.unparse(sub.func))
+        return names
+
+    # Everything at the function's top level except the reset_player_stats
+    # branch: coin balances may only be zeroed inside that branch.
+    unconditional = [
+        n
+        for n in create_fn.body
+        if not (isinstance(n, ast.If) and ast.unparse(n.test) == "reset_player_stats")
+    ]
+    assert "reset_all_coins" not in calls_in(
+        unconditional
+    ), "noreset must preserve coin balances"
+    # The stats-reset branch zeroes coins and resets stats together.
+    reset_branch = [
+        n
+        for n in create_fn.body
+        if isinstance(n, ast.If) and ast.unparse(n.test) == "reset_player_stats"
+    ]
+    assert reset_branch, "create_new_season must branch on reset_player_stats"
+    branch_calls = calls_in(reset_branch)
     assert (
-        "reset_all_coins()" in create_block
-    ), "!newseason must zero quack_coins (even with noreset)"
+        "reset_all_coins" in branch_calls
+    ), "newseason with reset must zero quack_coins"
     assert (
-        "clear_season_coin_state(self)" in create_block
-    ), "!newseason must drop per-match coin state"
+        "self._reset_all_players_for_new_season" in branch_calls
+    ), "stats reset must stay in the same branch"
+    # Per-match state is dropped unconditionally (season turns over either
+    # way), so it must appear outside the reset branch.
+    assert "clear_season_coin_state" in calls_in(
+        unconditional
+    ), "newseason must always drop per-match coin state"
+
     resetseason_src = open(
         os.path.join(
             os.path.dirname(
