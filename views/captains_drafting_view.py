@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import math
 import random
 
@@ -9,6 +10,8 @@ from database import users
 from stats_helper import DEFAULT_MMR
 from tracker_links import tracker_link
 from voice_presence import move_teams_to_voice, voice_presence_enabled
+
+log = logging.getLogger(__name__)
 
 DECISION_TIMEOUT_SECONDS = 120
 PICK_TIMEOUT_SECONDS = 120
@@ -94,6 +97,7 @@ class SecondCaptainChoiceView(discord.ui.View):
         if not await self._validate_second_captain(interaction):
             return
 
+        log.info("Draft type chosen by %s: First Pick", interaction.user)
         self.cancel_timeout_timer()
         self.decision_finished = True
         self.first_pick_button.disabled = True
@@ -107,6 +111,7 @@ class SecondCaptainChoiceView(discord.ui.View):
         if not await self._validate_second_captain(interaction):
             return
 
+        log.info("Draft type chosen by %s: 2nd + 3rd Pick", interaction.user)
         self.cancel_timeout_timer()
         self.decision_finished = True
         self.first_pick_button.disabled = True
@@ -123,6 +128,7 @@ class SecondCaptainChoiceView(discord.ui.View):
         if self.is_setup_cancelled():
             return
         mode_name = "Single Pick" if single_pick else "Double Pick"
+        log.info("Starting captains draft (%s)", mode_name)
         await self.ctx.send(f"**{mode_name}** chosen! Starting draft phase...")
 
         drafting_view = CaptainsDraftingView(
@@ -181,6 +187,10 @@ class SecondCaptainChoiceView(discord.ui.View):
         # Randomly decide the draft type instead of cancelling the match.
         self.decision_finished = True
         single_pick = random.choice([True, False])
+        log.warning(
+            "Second captain did not choose a draft type in time; randomly selected %s",
+            "First Pick" if single_pick else "2nd + 3rd Pick",
+        )
         try:
             await self.ctx.send(
                 "The captain took too long to choose a draft type. "
@@ -316,6 +326,7 @@ class CaptainsDraftingView(discord.ui.View):
         # If the match setup was cancelled externally (e.g. !cancel), skip
         # finalization entirely.
         if self.is_setup_cancelled():
+            log.info("Draft finalization skipped: match setup was cancelled")
             return
 
         if self.draft_timer_task:
@@ -393,6 +404,11 @@ class CaptainsDraftingView(discord.ui.View):
             name="**Defenders:**", value="\n".join(defenders) or "—", inline=False
         )
 
+        log.info(
+            "Captains draft finalized: Attackers=%s Defenders=%s",
+            [p.get("name") for p in self.bot.team1],
+            [p.get("name") for p in self.bot.team2],
+        )
         await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match and use `!report` to finalize results.")
 
@@ -477,6 +493,7 @@ class CaptainsDraftingView(discord.ui.View):
             self.bot.team1.append(player_dict)
         else:
             self.bot.team2.append(player_dict)
+        log.info("Draft pick by %s: %s", interaction.user, player_dict.get("name"))
 
         self.pick_count += 1
         try:
@@ -601,6 +618,11 @@ class CaptainsDraftingView(discord.ui.View):
                 self.bot.team1.append(player_dict)
             else:
                 self.bot.team2.append(player_dict)
+            log.warning(
+                "Draft pick timeout for %s; randomly selected %s",
+                captain_name,
+                player_dict.get("name"),
+            )
 
             self.pick_count += 1
             try:

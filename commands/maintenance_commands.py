@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import io
 import json
+import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -34,6 +35,8 @@ from riot_api import (
 from stats_helper import DEFAULT_MMR, update_stats
 from vlr_rating import estimate_ratings_v4
 from voice_presence import move_teams_to_voice, voice_presence_enabled
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
@@ -236,6 +239,7 @@ class MaintenanceCommands(BotCommands):
     @commands.has_permissions(administrator=True)
     async def rollback(self, ctx):
         """Revert the database to a snapshot from before the most recent match."""
+        log.info("Rollback requested by %s", ctx.author)
         warning = (
             "⚠️ A match is currently active; rolling back the last *reported* match.\n"
             if self.bot.match_ongoing
@@ -259,10 +263,12 @@ class MaintenanceCommands(BotCommands):
         out = buf.getvalue().strip()
         if error:
             msg = f"Rollback failed: {error}"
+            log.error("Rollback failed: %s", error)
             if out:
                 msg += f"\n```\n{out[-1500:]}\n```"
             await ctx.send(msg)
             return
+        log.info("Rollback completed by %s", ctx.author)
         self.bot.load_mmr_data()
         await ctx.send(
             f"{warning}Rolled back the most recent match and resynced stats.```\n{out[-1700:]}\n```"
@@ -310,6 +316,7 @@ class MaintenanceCommands(BotCommands):
         )
         if field == "mmr":
             sync_ranks(self.bot)
+        log.info("%s set %s = %s for %s", ctx.author, field, amount, pid)
         await ctx.send(f"Set `{field}` = {amount} for <@{pid}>.")
 
     async def _relink_riot(self, ctx, pid: str, value: str) -> None:
@@ -346,9 +353,11 @@ class MaintenanceCommands(BotCommands):
             if str(stale.get("discord_id")) != pid:
                 users.delete_one({"_id": stale["_id"]})
                 mmr_collection.delete_one({"player_id": stale.get("discord_id")})
-                print(
-                    f"[editplayer] Removed stale Riot ID link {riot_name}#{riot_tag} "
-                    f"from discord id {stale.get('discord_id')}"
+                log.info(
+                    "Removed stale Riot ID link %s#%s from discord id %s",
+                    riot_name,
+                    riot_tag,
+                    stale.get("discord_id"),
                 )
 
         set_fields = {"name": riot_name.lower(), "tag": riot_tag.lower()}
@@ -361,6 +370,7 @@ class MaintenanceCommands(BotCommands):
             {"$set": {"name": f"{riot_name}#{riot_tag}"}},
             upsert=False,
         )
+        log.info("%s relinked %s to %s#%s", ctx.author, pid, riot_name, riot_tag)
         await ctx.send(f"Relinked <@{pid}> to `{riot_name}#{riot_tag}`.")
 
     @commands.command(name="substitute")
@@ -475,9 +485,16 @@ class MaintenanceCommands(BotCommands):
             try:
                 await move_teams_to_voice(ctx.guild, self.bot.team1, self.bot.team2)
             except Exception as e:
-                print(f"[substitute] Voice move failed: {e}")
+                log.warning("Voice move failed: %s", e)
 
         side = "Attackers" if team is self.bot.team1 else "Defenders"
+        log.info(
+            "Substitute by %s: %s in for %s (%s)",
+            ctx.author,
+            in_pid,
+            out_pid,
+            side,
+        )
         await ctx.send(
             f"Substituted <@{in_pid}> in for <@{out_pid}> ({side}). "
             "Report with `!report` as usual once the game is done."
@@ -506,6 +523,7 @@ class MaintenanceCommands(BotCommands):
             return
         old = self.bot.selected_map
         self.bot.selected_map = canonical
+        log.info("%s set the match map from %s to %s", ctx.author, old, canonical)
         await ctx.send(f"Map for the current match set to **{canonical}** (was {old}).")
 
     @commands.command(name="setconfig")
@@ -521,6 +539,7 @@ class MaintenanceCommands(BotCommands):
         BOT_CONFIG.read(BOT_INI_PATH)
         if BOT_CONFIG.has_section("features"):
             globals_mod.BOT_FEATURES = BOT_CONFIG["features"]
+        log.info("%s set bot.ini [features] %s = %s", ctx.author, key, value)
         await ctx.send(f"Set [features] `{key}` = `{value}` (applied immediately).")
 
     @commands.command(name="showconfig")
@@ -621,6 +640,7 @@ class MaintenanceCommands(BotCommands):
             )
             return
         add_coins(pid, amount)
+        log.info("%s adjusted %s's coins by %s", ctx.author, pid, amount)
         await ctx.send(f"<@{pid}> now has {coins_of(pid)} {quack_emote(self.bot)}.")
 
     @commands.command(name="resetplayer")
@@ -645,6 +665,7 @@ class MaintenanceCommands(BotCommands):
         if self.bot.map_override_last_by == pid:
             self.bot.map_override_last = 0
             self.bot.map_override_last_by = None
+        log.info("%s reset season stats for %s", ctx.author, pid)
         await ctx.send(f"Reset season stats and MMR for <@{pid}>.")
 
     @commands.command(name="forcereport")
@@ -664,6 +685,7 @@ class MaintenanceCommands(BotCommands):
                 "`!forcereport https://tracker.gg/valorant/match/<id>`"
             )
             return
+        log.info("%s requested a force report of %s", ctx.author, match_id)
 
         if all_matches.find_one({"metadata.match_id": match_id}):
             await ctx.send("That match has already been reported.")
@@ -713,7 +735,7 @@ class MaintenanceCommands(BotCommands):
             try:
                 ratings = estimate_ratings_v4(match)
             except Exception as e:
-                print(f"[forcereport] VLR rating estimation failed: {e}")
+                log.warning("VLR rating estimation failed: %s", e)
                 ratings = {}
             wtid = next(
                 (t["team_id"].lower() for t in match.get("teams", []) if t.get("won")),
@@ -795,7 +817,7 @@ class MaintenanceCommands(BotCommands):
                 f"Reported match `{match_id}` "
                 f"({match['metadata'].get('map', {}).get('name', '?')}).\n{summary[:1800]}"
             )
-            print(f"[forcereport] Reported {match_id}")
+            log.info("Reported match %s", match_id)
 
     @staticmethod
     async def _fetch_match_by_id(session, match_id: str):
@@ -843,6 +865,7 @@ class MaintenanceCommands(BotCommands):
             )
             return
 
+        log.warning("%s is wiping all season stats", ctx.author)
         from DebugTools.revert_last_match import _jsonify
 
         # Snapshot every player doc + the current season doc to a backup file
@@ -879,4 +902,4 @@ class MaintenanceCommands(BotCommands):
             f"Backup: `{backup_path.name}` (restorable via "
             "`python DebugTools/revert_last_match.py --restore`)."
         )
-        print(f"[resetseason] Season stats wiped; backup {backup_path.name}")
+        log.info("Season stats wiped; backup %s", backup_path.name)

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import random
 from functools import partial
 
@@ -8,6 +9,8 @@ from discord.ui import Button
 from maps_service import get_competitive_maps, get_standard_maps
 from views import safe_reply
 from views.map_vote_view import MapVoteView
+
+log = logging.getLogger(__name__)
 
 
 class MapTypeVoteView(discord.ui.View):
@@ -54,11 +57,11 @@ class MapTypeVoteView(discord.ui.View):
         self.vote_lock = asyncio.Lock()
         self.vote_time_remaining = 25
 
-        print("Starting new map type vote...")
+        log.info("Starting new map type vote...")
 
     async def send_view(self):
         if self.is_setup_cancelled():
-            print("Map type vote not sent because match setup was cancelled.")
+            log.info("Map type vote not sent because match setup was cancelled.")
             self.voting_phase_ended = True
             self.stop()
             self.cancel_interaction_queue_task()
@@ -92,7 +95,9 @@ class MapTypeVoteView(discord.ui.View):
                 await self.handle_map_type_vote(interaction, mode)
             except Exception as e:
                 # Keep the queue alive so later interactions still work
-                print(f"[DEBUG] Error processing map type vote interaction: {e}")
+                log.error(
+                    "Error processing map type vote interaction: %s", e, exc_info=e
+                )
             finally:
                 # Ensure the waiting coroutine is notified, even if an error occurs
                 if not fut.done():
@@ -146,7 +151,7 @@ class MapTypeVoteView(discord.ui.View):
         await interaction.message.edit(view=self)
 
         # Reply and check for vote finish
-        print(f"Recorded new vote. Current state: {self.map_pool_votes}")
+        log.info("Recorded new vote. Current state: %s", self.map_pool_votes)
         await safe_reply(interaction, f"Voted {map_type} Maps!", ephemeral=True)
         await self.check_for_winner()
 
@@ -206,7 +211,7 @@ class MapTypeVoteView(discord.ui.View):
 
     async def close_vote(self, chosen_map_type):
         if self.is_setup_cancelled():
-            print("Map type vote skipping close because match setup was cancelled.")
+            log.info("Map type vote skipping close because match setup was cancelled.")
             self.voting_phase_ended = True
             self.stop()
             self.cancel_interaction_queue_task()
@@ -214,9 +219,9 @@ class MapTypeVoteView(discord.ui.View):
             return
 
         if self.timeout:
-            print("Map type vote ended by timeout.")
+            log.info("Map type vote ended by timeout.")
         else:
-            print("Map type vote ended by majority.")
+            log.info("Map type vote ended by majority.")
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True

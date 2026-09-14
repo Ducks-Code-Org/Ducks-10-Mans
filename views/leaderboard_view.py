@@ -1,14 +1,18 @@
 """This view allows users to see a stats leaderboard of all the users currently in the database."""
 
+import logging
 import math
 
 import discord
-from discord.ui import View, Button
-from table2ascii import table2ascii as t2a, PresetStyle
 import wcwidth
+from discord.ui import Button, View
+from table2ascii import PresetStyle
+from table2ascii import table2ascii as t2a
 
-from database import users, mmr_collection
+from database import mmr_collection, users
 from stats_helper import DEFAULT_MMR, avg_rating_of
+
+log = logging.getLogger(__name__)
 
 
 def _has_played(doc: dict) -> bool:
@@ -101,8 +105,11 @@ class LeaderboardView(View):
         self.add_item(self.refresh_button)
         self.add_item(self.next_button)
 
-        print(
-            f"[LB] items={len(self.sorted_data)} per_page={self.players_per_page} pages={self.total_pages}"
+        log.info(
+            "Leaderboard rendered: items=%d per_page=%d pages=%d",
+            len(self.sorted_data),
+            self.players_per_page,
+            self.total_pages,
         )
 
     def make_content(self, data, page_count):
@@ -204,11 +211,23 @@ class LeaderboardView(View):
     async def on_previous(self, interaction: discord.Interaction):
         if self.current_page > 0:
             self.current_page -= 1
+        log.debug(
+            "Leaderboard page %s/%s by %s",
+            self.current_page + 1,
+            self.total_pages,
+            interaction.user,
+        )
         await self.update_message(interaction)
 
     async def on_next(self, interaction: discord.Interaction):
         if self.current_page < self.total_pages - 1:
             self.current_page += 1
+        log.debug(
+            "Leaderboard page %s/%s by %s",
+            self.current_page + 1,
+            self.total_pages,
+            interaction.user,
+        )
         await self.update_message(interaction)
 
     async def on_refresh(self, interaction: discord.Interaction):
@@ -220,4 +239,10 @@ class LeaderboardView(View):
         self.total_pages = math.ceil(len(self.sorted_data) / self.players_per_page)
         if self.current_page >= self.total_pages:
             self.current_page = max(0, self.total_pages - 1)
+        log.info(
+            "Leaderboard (%s) refreshed by %s: %s players",
+            self.sort_by,
+            interaction.user,
+            len(self.sorted_data),
+        )
         await self.update_message(interaction)

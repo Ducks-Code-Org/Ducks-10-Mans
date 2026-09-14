@@ -1,8 +1,12 @@
 # database.py
+import logging
+
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 
 from globals import URI_KEY
+
+log = logging.getLogger(__name__)
 
 client = MongoClient(
     URI_KEY,
@@ -14,7 +18,7 @@ client = MongoClient(
 
 try:
     client.admin.command("ping")
-    print("[DB] Mongo ping OK")
+    log.info("Mongo ping OK")
 except Exception as e:
     raise SystemExit(f"[DB] Mongo connection failed: {e}")
 

@@ -1,5 +1,7 @@
 "Commands related to displaying leaderboards."
 
+import logging
+
 from discord.ext import commands
 
 from commands import BotCommands
@@ -7,6 +9,8 @@ from database import mmr_collection
 from views.leaderboard_view import (
     LeaderboardView,
 )
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
@@ -29,6 +33,7 @@ class LeaderboardCommand(BotCommands):
 
         sort_by = sort_by.lower()
         if sort_by not in valid_sort_map:
+            log.warning("Invalid leaderboard type requested: %r", sort_by)
             return None, "Invalid leaderboard type.", None
 
         sort_by_internal = valid_sort_map[sort_by]

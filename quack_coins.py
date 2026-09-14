@@ -1,12 +1,15 @@
 """Quack Coins currency: awarding, betting, doubledown, and map overrides (issue #34)."""
 
 import asyncio
+import logging
 
 import discord
 
 from database import mmr_collection
 from globals import feature_enabled
 from maps_service import get_standard_maps
+
+log = logging.getLogger(__name__)
 
 BET_WINDOW_SECONDS = 300
 DOUBLEDOWN_COST = 5
@@ -70,6 +73,8 @@ def clear_season_coin_state(bot) -> None:
     bot.bet_session = None
     if session and session.get("task"):
         session["task"].cancel()
+    if session:
+        log.info("Cleared open bet window for the season reset")
     bot.double_downs = set()
     bot.map_override_last = 0
     bot.map_override_last_by = None
@@ -83,6 +88,8 @@ def reset_all_coins() -> None:
 def award_match_coins(player_ids) -> None:
     for pid in player_ids:
         add_coins(pid, 1)
+    if player_ids:
+        log.info("Awarded 1 Quack Coin to %s match players", len(player_ids))
 
 
 def insufficient(bot, balance: int, needed: int) -> str:
@@ -128,6 +135,7 @@ async def on_teams_announced(bot, ctx) -> None:
     """Open the 5-minute betting/doubledown window after teams are posted."""
     if not quack_coins_enabled() or ctx is None:
         return
+    log.info("Opening %ss Quack Coin bet window", BET_WINDOW_SECONDS)
     session = {
         "open": True,
         "bets": {"attackers": {}, "defenders": {}},
@@ -160,6 +168,7 @@ async def _bet_window_countdown(bot, session) -> None:
             remaining = BET_WINDOW_SECONDS - elapsed
             if remaining <= 0:
                 session["open"] = False
+                log.info("Quack Coin bet window closed")
                 await _edit_window(session, _announcement(bot, 0))
                 return
             if not session["open"]:
@@ -190,6 +199,13 @@ def place_bet(bot, user_id: str, side: str, amount: int) -> str:
     )
     e = quack_emote(bot)
     pool = sum(session["bets"][side].values())
+    log.info(
+        "Bet placed by %s: %s coins on %s (pool: %s)",
+        user_id,
+        amount,
+        _side_name(side),
+        pool,
+    )
     return f"Bet placed: {amount} {e} on {_side_name(side)} (pool: {pool} {e})."
 
 
@@ -201,9 +217,12 @@ def refund_open_bets(bot) -> None:
         return
     if session.get("task"):
         session["task"].cancel()
+    refunded = 0
     for side_bets in session["bets"].values():
         for pid, amount in side_bets.items():
             add_coins(pid, amount)
+            refunded += 1
+    log.info("Refunded %s open bet(s)", refunded)
 
 
 async def settle_bets(bot, channel, winner: str) -> None:
@@ -221,6 +240,7 @@ async def settle_bets(bot, channel, winner: str) -> None:
     total = pool + sum(bets[loser_side].values())
     e = quack_emote(bot)
     if not winners:
+        log.info("No winning bets on %s; %s coin pool unclaimed", winner, total)
         await channel.send(
             f"No one bet on {winner} — the {total} {e} pool goes unclaimed."
         )
@@ -230,6 +250,7 @@ async def settle_bets(bot, channel, winner: str) -> None:
         payout = amount * total // pool
         add_coins(pid, payout)
         lines.append(f"<@{pid}> bet {amount} → wins **{payout}** {e}")
+    log.info("Settled %s bets on %s (%s coin pool)", len(winners), winner, total)
     embed = discord.Embed(
         title=f"{_side_name(winner)} won! ({total} {e} pool)",
         description="\n".join(lines),
@@ -255,6 +276,7 @@ def doubledown(bot, user_id: str) -> str:
     add_coins(user_id, -DOUBLEDOWN_COST)
     bot.double_downs.add(str(user_id))
     e = quack_emote(bot)
+    log.info("Doubledown purchased by %s for %s coins", user_id, DOUBLEDOWN_COST)
     return f"Paid {DOUBLEDOWN_COST} {e} — your MMR change for this match is doubled!"
 
 
@@ -287,4 +309,5 @@ def setmap_override(bot, user_id: str, map_name: str) -> str:
     bot.map_override_last = cost
     bot.map_override_last_by = str(user_id)
     e = quack_emote(bot)
+    log.info("%s paid %s coins to override the map to %s", user_id, cost, canonical)
     return f"<@{user_id}> paid {cost} {e} — the map is now **{canonical}**!"

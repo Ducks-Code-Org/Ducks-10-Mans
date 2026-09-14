@@ -1,7 +1,12 @@
 # identity.py
+import logging
+
 import aiohttp
+
 from database import users
 from riot_api import RiotApiInconclusive, get_account_by_puuid, get_account_by_riot_id
+
+log = logging.getLogger(__name__)
 
 
 async def ensure_current_riot_identity(discord_id: int):
@@ -34,8 +39,8 @@ async def ensure_current_riot_identity(discord_id: int):
         except RiotApiInconclusive:
             # Rate limits / API problems are inconclusive, never failures.
             # Skip the refresh silently so signup isn't blocked or crashed.
-            print(
-                "[identity] Riot lookup inconclusive (rate limited or API error); skipping identity refresh"
+            log.warning(
+                "Riot lookup inconclusive (rate limited or API error); skipping identity refresh"
             )
             return (True, "", doc)
 
@@ -58,7 +63,7 @@ async def ensure_current_riot_identity(discord_id: int):
         if new_tag and new_tag != tag:
             updates["tag"] = new_tag.lower().strip()
 
-        print(f"[DEBUG]: Updating database for: {new_name}#{new_tag}")
+        log.info("Updating database for: %s#%s", new_name, new_tag)
         if updates:
             users.update_one({"_id": doc["_id"]}, {"$set": updates})
             doc.update(updates)

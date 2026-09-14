@@ -29,6 +29,12 @@ Finally, a leaderboard with all players' statistics may be viewed with the `!lea
 
 **Tech used:** Python, MongoDB, Henrikdev Valorant API
 
+### Logging & Error Handling
+
+All bot events are logged with Python's built-in `logging` module — never `print()`. Log output includes a timestamp and level, and the active level is set by the `level` key in the `[logging]` section of `bot.ini` (e.g. `info`, `warning`, `error`). If `log_to_discord = true` in that section (the default), every `WARNING`-and-above record is also mirrored into a `#bot-logs` channel, when one exists.
+
+**Requirement for new features:** every new event-based feature (commands, button/interaction handlers, background tasks) must log its lifecycle events through a module-level `log = logging.getLogger(__name__)` and handle errors with `log.error(..., exc_info=e)` inside a `try/except` rather than letting exceptions bubble up and kill the event-loop task. Never use bare `print()` for diagnostics.
+
 > I decided to make this bot because I had been searching for one and couldn't find anything that looked compatible with what I wanted. So, why not make one myself? I designed the base functionality, and some friends decided to help out with other unique functions like formatting, updates to the stats commands, introducting classes, etc. I had never actually used an API like this one before, and I also wanted to learn how to use databases before some of the classes start teaching it so I could be ahead. It was a bit intimidating at first, trying to learn all the syntax and the discord API, but if you can get past that, it gets 10x easier. Challenges are the key to learning.
 >
 > — *Colton (Duck)*

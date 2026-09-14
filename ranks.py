@@ -6,7 +6,11 @@ created automatically with the tier color when missing. `!newseason` strips
 them all.
 """
 
+import logging
+
 import discord
+
+log = logging.getLogger(__name__)
 
 # (threshold, role name, color hex) — checked high-to-low.
 RANKS = [
@@ -65,7 +69,7 @@ async def _role_for(guild: discord.Guild, name: str, color_hex: str):
             name=name, color=discord.Colour.from_str(color_hex)
         )
     except (discord.Forbidden, discord.HTTPException) as e:
-        print(f"[ranks] Could not create role {name}: {e}")
+        log.warning("Could not create role %s: %s", name, e)
         return None
 
 
@@ -85,7 +89,7 @@ async def sync_player_rank(
             try:
                 await member.remove_roles(role)
             except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
-                print(f"[ranks] Could not remove {role.name} from {discord_id}: {e}")
+                log.warning("Could not remove %s from %s: %s", role.name, discord_id, e)
 
     if target is None:
         return
@@ -96,7 +100,7 @@ async def sync_player_rank(
         try:
             await member.add_roles(role)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
-            print(f"[ranks] Could not grant {target} to {discord_id}: {e}")
+            log.warning("Could not grant %s to %s: %s", target, discord_id, e)
 
 
 async def remove_all_rank_roles(guild: discord.Guild) -> None:
@@ -112,4 +116,4 @@ async def remove_all_rank_roles(guild: discord.Guild) -> None:
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     pass
         except (discord.Forbidden, discord.HTTPException) as e:
-            print(f"[ranks] Could not clear {role.name}: {e}")
+            log.warning("Could not clear %s: %s", role.name, e)

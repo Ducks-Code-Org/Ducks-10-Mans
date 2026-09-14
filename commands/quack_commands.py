@@ -1,10 +1,14 @@
 """Slash commands for Quack Coins: betting, doubledown, and map overrides (issue #34)."""
 
+import logging
+
 import discord
 from discord import app_commands
 
 from commands import BotCommands
 from quack_coins import command_available, doubledown, place_bet, setmap_override
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
@@ -65,6 +69,11 @@ class QuackCommands(BotCommands):
             self.bot, requires_running_match=requires_running_match
         )
         if rejection:
+            log.warning(
+                "Quack Coins command rejected for %s: %s",
+                interaction.user,
+                rejection,
+            )
             await interaction.response.send_message(rejection, ephemeral=True)
             return
         await interaction.response.send_message(message_factory(), ephemeral=ephemeral)

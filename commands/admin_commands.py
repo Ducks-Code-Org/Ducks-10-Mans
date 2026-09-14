@@ -1,5 +1,7 @@
 "Admin commands for managing the bot and server."
 
+import logging
+
 import discord
 from discord.ext import commands
 
@@ -11,8 +13,10 @@ from quack_coins import refund_open_bets
 from ranks import remove_all_rank_roles
 from recent_queue import get_recent_queue, pingrecent_message, remember_recent_queue
 from stats_helper import DEFAULT_MMR
-from views.signup_view import SignupView
 from views.mode_vote_view import ModeVoteView
+from views.signup_view import SignupView
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
@@ -22,7 +26,7 @@ async def setup(bot):
 class AdminCommands(BotCommands):
     @commands.command(name="newseason")
     @commands.has_permissions(administrator=True)
-    async def new_season(self, ctx, *, no_reset: str = None):
+    async def new_season(self, ctx, *, no_reset: str | None = None):
         """
         Creates a new season, saving seasons stats, and assigning SSR rank.
         By default, resets everyone’s MMR + stats. If you pass 'noreset', it will keep stats.
@@ -44,12 +48,18 @@ class AdminCommands(BotCommands):
             return
 
         doc = self.bot.create_new_season(reset_player_stats=reset, winner=winner_doc)
+        log.info(
+            "New season %s created (reset=%s, winner=%s)",
+            doc["season_number"],
+            reset,
+            winner_doc.get("player_id"),
+        )
 
         # Strip every rank role — fresh season means fresh ranks.
         try:
             await remove_all_rank_roles(ctx.guild)
         except Exception as e:
-            print(f"[newseason] Could not remove rank roles: {e}")
+            log.warning("Could not remove rank roles: %s", e)
 
         # Assign SSR Rank to winner
         ssr_role = await ctx.guild.create_role(
@@ -61,9 +71,9 @@ class AdminCommands(BotCommands):
         if winner_member:
             await winner_member.add_roles(ssr_role)
         else:
-            print(
-                f"[newseason] Winner {winner_doc.get('player_id')} is not in this guild; "
-                "SSR role created but not assigned."
+            log.warning(
+                "Winner %s is not in this guild; SSR role created but not assigned.",
+                winner_doc.get("player_id"),
             )
 
         # Try to send to 'announcements' channel if it exists
@@ -88,6 +98,11 @@ class AdminCommands(BotCommands):
     @commands.has_role("Owner")
     async def initialize_rounds(self, ctx):
         result = mmr_collection.update_many({}, {"$set": {"total_rounds_played": 0}})
+        log.info(
+            "%s reset total_rounds_played for %s players",
+            ctx.author,
+            result.modified_count,
+        )
         await ctx.send(
             f"Initialized total_rounds_played for {result.modified_count} players."
         )
@@ -95,6 +110,7 @@ class AdminCommands(BotCommands):
     @commands.command()
     @commands.has_permissions(administrator=True)
     async def simulate_queue(self, ctx):
+        log.info("Simulated queue started by %s", ctx.author)
         # Start a new setup cycle: invalidate any stale views first.
         self.bot.setup_generation += 1
 
@@ -139,6 +155,11 @@ class AdminCommands(BotCommands):
     @commands.command()
     @commands.has_role("blood")
     async def toggledev(self, ctx):
+        log.info(
+            "Developer mode %s by %s",
+            "disabled" if self.dev_mode else "enabled",
+            ctx.author,
+        )
         if not self.dev_mode:
             self.dev_mode = True
             await ctx.send("Developer Mode Enabled")
@@ -202,7 +223,7 @@ class AdminCommands(BotCommands):
             await ctx.send(
                 "Canceled active signup. Feel free to start a new one with `!signup`."
             )
-            print("Cancelling signup...")
+            log.info("Cancelling signup...")
 
             await cleanup_match_resources(self.bot, cancelled=True)
         # Handle a match that is already in progress
@@ -225,7 +246,7 @@ class AdminCommands(BotCommands):
                 "Cancelled active match. Feel free to start a new one with `!signup`."
             )
             await cleanup_match_resources(self.bot, cancelled=True)
-            print("Cancelling active match...")
+            log.info("Cancelling active match...")
         # Handle a signup whose queue already filled (match setup phase:
         # team-mode vote, map-pool vote, map vote, or captains draft)
         elif self.bot.match_channel:
@@ -247,7 +268,7 @@ class AdminCommands(BotCommands):
                 "Cancelled match setup. Feel free to start a new one with `!signup`."
             )
             await cleanup_match_resources(self.bot, cancelled=True)
-            print("Cancelling match setup...")
+            log.info("Cancelling match setup...")
         else:
             await ctx.send("No active signup or match to cancel.")
 
@@ -259,4 +280,5 @@ class AdminCommands(BotCommands):
         if not recent_ids:
             await ctx.send("No recent queue found to ping.")
             return
+        log.info("%s pinged %s recent queue player(s)", ctx.author, len(recent_ids))
         await ctx.send(pingrecent_message(recent_ids, cancelled))

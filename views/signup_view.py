@@ -1,19 +1,22 @@
 """This view creates and maintains a signup interaction, contained within its own channel."""
 
 import asyncio
+import logging
 
 import aiohttp
 import discord
 from discord.ui import Button
 
 from database import users
-from riot_api import verify_riot_account_async
 from recent_queue import remember_recent_queue
+from riot_api import verify_riot_account_async
 from stats_helper import DEFAULT_MMR
 from tracker_links import tracker_link
 from views import safe_reply
 from views.mode_vote_view import ModeVoteView
 from voice_presence import voice_presence_enabled, wait_for_lobby
+
+log = logging.getLogger(__name__)
 
 
 class SignupView(discord.ui.View):
@@ -50,10 +53,10 @@ class SignupView(discord.ui.View):
         self.sign_up_button.callback = self.sign_up_callback
         self.leave_queue_button.callback = self.leave_queue_callback
 
-        print("Starting new signup...")
+        log.info("Starting new signup...")
 
     async def sign_up_callback(self, interaction: discord.Interaction):
-        print(f"Sign up requested by: {interaction.user.name}")
+        log.info("Sign up requested by: %s", interaction.user.name)
 
         # Defer the interaction if not already done, to allow time for processing
         if not interaction.response.is_done():
@@ -70,7 +73,7 @@ class SignupView(discord.ui.View):
         await fut  # Wait until this request is processed
 
     async def leave_queue_callback(self, interaction: discord.Interaction):
-        print(f"Leave queue requested by: {interaction.user.name}")
+        log.info("Leave queue requested by: %s", interaction.user.name)
 
         # Defer the interaction if not already done, to allow time for processing
         if not interaction.response.is_done():
@@ -95,7 +98,7 @@ class SignupView(discord.ui.View):
             if player["id"] != player_id:
                 new_queue.append(player)
         self.bot.queue = new_queue
-        print(f"{interaction.user.name} left the queue successfully")
+        log.info("%s left the queue successfully", interaction.user.name)
 
         # Update last activity
         self.last_activity_time = asyncio.get_event_loop().time()
@@ -129,7 +132,7 @@ class SignupView(discord.ui.View):
                 await self.handle_signup(interaction)
             except Exception as e:
                 # Keep the queue alive so later signups still work
-                print(f"[DEBUG] Error processing signup interaction: {e}")
+                log.error("Error processing signup interaction: %s", e, exc_info=e)
             finally:
                 # Ensure the waiting coroutine is notified, even if an error occurs
                 if not fut.done():
@@ -171,10 +174,10 @@ class SignupView(discord.ui.View):
             self.timeout_monitor_task = None
 
     async def cancel_signup(self, reason):
+        log.info("Signup cancelled: %s", reason)
         # Send message to original channel
         try:
             await self.ctx.send(f"Signup cancelled: {reason}")
-            print(f"Signup cancelled: {reason}")
         except discord.HTTPException:
             pass  # In case channel is deleted or something
 
@@ -287,7 +290,7 @@ class SignupView(discord.ui.View):
                 "losses": 0,
             }
         self.bot.player_names[user_id] = interaction.user.name
-        print(f"{interaction.user.name} joined the queue successfully.")
+        log.info("%s joined the queue successfully.", interaction.user.name)
 
         # Update last activity
         self.last_activity_time = asyncio.get_event_loop().time()
@@ -317,9 +320,10 @@ class SignupView(discord.ui.View):
     async def finalize_signup(self, interaction: discord.Interaction):
         # If this signup was cancelled (e.g. by !cancel), don't start match setup.
         if self.bot.setup_generation != self.setup_generation:
-            print("Skipping signup finalization because signup was cancelled.")
+            log.info("Skipping signup finalization because signup was cancelled.")
             return
 
+        log.info("Signup full (%s players); starting match setup", len(self.bot.queue))
         await interaction.channel.send(
             "The queue is now full, proceeding to the voting stage."
         )
@@ -448,9 +452,9 @@ class SignupView(discord.ui.View):
                 if self.bot.match_channel.name != new_channel_name:
                     try:
                         await self.bot.match_channel.edit(name=new_channel_name)
-                        print(f"Renamed channel to {new_channel_name}")
+                        log.info("Renamed channel to %s", new_channel_name)
                     except discord.HTTPException:
-                        print(f"Failed to rename channel {self.bot.match_name}")
+                        log.warning("Failed to rename channel %s", self.bot.match_name)
                     await asyncio.sleep(720)
                 else:
                     await asyncio.sleep(10)  # small delay to avoid busy loop

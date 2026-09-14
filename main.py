@@ -2,8 +2,14 @@
 
 import discord
 
-from bot import CustomBot
 from globals import BOT_TOKEN
+from logging_setup import setup_logging
+
+# Set up logging (level from bot.ini) before importing bot/database so their
+# import-time logs (e.g. the Mongo ping) reach the configured handlers.
+discord_logger = setup_logging()
+
+from bot import CustomBot
 
 # Set up bot
 intents = discord.Intents.default()
@@ -17,6 +23,7 @@ bot = CustomBot(
     intents=intents,
     help_command=None,
 )
+bot.discord_log_handler = discord_logger
 
 # Run the bot
 bot.run(BOT_TOKEN)

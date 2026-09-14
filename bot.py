@@ -1,14 +1,17 @@
 """Hold various general functions of the bot."""
 
+import logging
 from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
 
-from views.signup_view import SignupView
 from commands.leaderboard import LeaderboardCommand
-from database import mmr_collection, users, seasons
+from database import mmr_collection, seasons, users
 from stats_helper import DEFAULT_MMR
+from views.signup_view import SignupView
+
+log = logging.getLogger(__name__)
 
 
 class CustomBot(commands.Bot):
@@ -38,6 +41,9 @@ class CustomBot(commands.Bot):
         # Setup views capture the current value and treat any change as
         # "this setup was cancelled or superseded" (e.g. by !cancel).
         self.setup_generation = 0
+
+        # Discord log mirror flush task (started in on_ready).
+        self.mirror_flush_loop = None
 
         # Quack Coins (issue #34)
         self.bet_session: dict | None = None
@@ -271,11 +277,89 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.stats")
         await self.load_extension("commands.bug")
         await self.load_extension("commands.quack_commands")
+        self.tree.on_error = self._on_app_command_error
         await self.tree.sync()
-        print("Bot is ready and cogs are loaded.")
+        log.info("Bot is ready and cogs are loaded.")
+
+    async def on_ready(self):
+        log.info("Bot connected as %s.", self.user)
+
+        # Start flushing WARNING+ records into #bot-logs now that guilds
+        # are cached (the handler is created in main.py before run()).
+        handler = getattr(self, "discord_log_handler", None)
+        if handler is not None:
+            # Attach the bot so the handler can resolve #bot-logs; without
+            # this every queued record is silently dropped.
+            handler.bot = self
+            # on_ready can fire again after a reconnect; keep one flush task.
+            if self.mirror_flush_loop is None or self.mirror_flush_loop.done():
+                self.mirror_flush_loop = self.loop.create_task(
+                    self._flush_discord_logs(handler)
+                )
+
+        await self.purge_old_match_roles()
+        await self.purge_old_match_channels()
+        await self.send_new_leaderboard()
+
+    async def _flush_discord_logs(self, handler):
+        """Periodically drain queued log records into #bot-logs."""
+        import asyncio
+
+        try:
+            while True:
+                await asyncio.sleep(5)
+                await handler.flush_pending()
+        except asyncio.CancelledError:
+            pass
+
+    async def on_command(self, ctx):
+        log.info(
+            "Command !%s invoked by %s in #%s", ctx.command, ctx.author, ctx.channel
+        )
+
+    async def on_app_command_completion(self, interaction, command):
+        log.info(
+            "Slash command /%s invoked by %s in #%s",
+            getattr(command, "qualified_name", command),
+            interaction.user,
+            interaction.channel,
+        )
+
+    async def _on_app_command_error(self, interaction, error):
+        log.error(
+            "Error in slash command /%s by %s: %r",
+            getattr(interaction.command, "qualified_name", interaction.command),
+            interaction.user,
+            error,
+            exc_info=error,
+        )
+
+    async def on_error(self, event_method, /, *args, **kwargs):
+        # Last-resort handler for any event not covered by a specific
+        # try/except (e.g. on_ready startup tasks).
+        log.error("Unhandled exception in event %s", event_method, exc_info=True)
+
+    async def on_command_error(self, ctx, error):
+        if isinstance(error, commands.CommandNotFound):
+            log.debug("Unknown command from %s: %s", ctx.author, ctx.message.content)
+            return
+        if isinstance(error, commands.MissingPermissions):
+            log.warning("%s lacks permissions for !%s", ctx.author, ctx.command)
+        elif isinstance(error, (commands.MissingRole, commands.MissingAnyRole)):
+            log.warning("%s lacks role for !%s", ctx.author, ctx.command)
+        elif isinstance(error, commands.CheckFailure):
+            log.warning("Check failed for !%s by %s", ctx.command, ctx.author)
+        else:
+            log.error(
+                "Unhandled error in !%s by %s: %r",
+                ctx.command,
+                ctx.author,
+                error,
+                exc_info=error,
+            )
 
     async def purge_old_match_roles(self):
-        print("Checking for old match roles to delete...")
+        log.info("Checking for old match roles to delete...")
         found_any = False
         for guild in self.guilds:
             # Find roles with 'match' in the name (case-insensitive)
@@ -283,8 +367,9 @@ class CustomBot(commands.Bot):
             if not old_roles:
                 continue
             found_any = True
-            print(
-                f"Deleting roles in guild '{guild.name}':",
+            log.info(
+                "Deleting roles in guild '%s': %s",
+                guild.name,
                 [role.name for role in old_roles],
             )
             for role in old_roles:
@@ -293,10 +378,10 @@ class CustomBot(commands.Bot):
                 except discord.HTTPException:
                     pass
         if not found_any:
-            print("No old roles found.")
+            log.info("No old roles found.")
 
     async def purge_old_match_channels(self):
-        print("Checking for old match channels to delete...")
+        log.info("Checking for old match channels to delete...")
         found_any = False
         for guild in self.guilds:
             # Find channels with 'match' in the name (case-insensitive)
@@ -304,8 +389,9 @@ class CustomBot(commands.Bot):
             if not old_channels:
                 continue
             found_any = True
-            print(
-                f"Deleting channels in guild '{guild.name}':",
+            log.info(
+                "Deleting channels in guild '%s': %s",
+                guild.name,
                 [channel.name for channel in old_channels],
             )
             for channel in old_channels:
@@ -314,12 +400,12 @@ class CustomBot(commands.Bot):
                 except discord.HTTPException:
                     pass
         if not found_any:
-            print("No old channels found.")
+            log.info("No old channels found.")
 
     async def send_new_leaderboard(self):
         # If there is a channel named #leaderboard in any guild, send a new leaderboard
         # Leaderboard matches the response from the `!leaderboard` command
-        print("Sending new leaderboard to all #leaderboard channels...")
+        log.info("Sending new leaderboard to all #leaderboard channels...")
 
         for guild in self.guilds:
             leaderboard_channel = discord.utils.get(
@@ -348,10 +434,4 @@ class CustomBot(commands.Bot):
                             content=content, view=leaderboard_view, silent=True
                         )
                 except Exception as e:
-                    print(f"Failed to send leaderboard: {e}")
-
-    async def on_ready(self):
-        print(f"Bot connected as {self.user}.")
-        await self.purge_old_match_roles()
-        await self.purge_old_match_channels()
-        await self.send_new_leaderboard()
+                    log.error("Failed to send leaderboard: %s", e)

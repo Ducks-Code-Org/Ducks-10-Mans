@@ -1,6 +1,10 @@
 """This file provides functions for updating players stats."""
 
+import logging
+
 from database import mmr_collection
+
+log = logging.getLogger(__name__)
 
 # ΔMMR coefficients (issue #159): rounds-diff, team-MMR expectation,
 # VLR-skill-curve, and "carry" corner-bonus terms.
@@ -17,9 +21,7 @@ DEFAULT_MMR = 0
 # each new match just adds its rating and rounds; N/A is represented by
 # total_rating_rounds == 0 (or a missing field for pre-existing players).
 def _apply_rating(player_data: dict, rating: float, rounds: int) -> None:
-    if (
-        rounds <= 0 or not isinstance(rating, (int, float)) or rating != rating
-    ):  # noqa: PLR0124 (NaN check)
+    if rounds <= 0 or not isinstance(rating, (int, float)) or rating != rating:
         return
     player_data["total_rating_points"] = (
         player_data.get("total_rating_points", 0.0) + float(rating) * rounds
@@ -114,9 +116,10 @@ def update_stats(
 ):
     """Update player stats with proper initialization and error handling"""
     if discord_id is None:
-        print(
-            f"Player {player_stats.get('name', '')}#{player_stats.get('tag', '')} "
-            "could not be resolved to a Discord account."
+        log.warning(
+            "Player %s#%s could not be resolved to a Discord account.",
+            player_stats.get("name", ""),
+            player_stats.get("tag", ""),
         )
         return
 

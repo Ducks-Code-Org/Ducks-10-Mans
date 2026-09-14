@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import deque
-from typing import Any, Dict, Optional
+from typing import Any
 from urllib.parse import quote
 
 import aiohttp
 
 from globals import API_KEY
+
+log = logging.getLogger(__name__)
 
 # Base API
 HENRIK_BASE = "https://api.henrikdev.xyz/valorant"
@@ -68,6 +71,9 @@ async def _reserve_rate_slot(*, priority: bool = False) -> None:
             # slot falls out of it.
             wait_for = HENRIK_RATE_WINDOW - (now - _rate_slots[0])
         if loop.time() >= deadline:
+            log.warning(
+                "Interactive Riot API caller gave up waiting for a rate-limit slot"
+            )
             raise RiotApiInconclusive(
                 "interactive caller could not get a rate-limit slot in time"
             )
@@ -112,7 +118,7 @@ async def _henrik_get_json(
     timeout: int = 10,
     retries: int = 2,
     priority: bool = False,
-) -> tuple[int, Optional[Dict[str, Any]]]:
+) -> tuple[int, dict[str, Any] | None]:
     """GET a HenrikDev endpoint through the shared 30 req/min rate limiter.
 
     Returns (status, parsed_json): (200, data) on success, (404, None) when
@@ -136,22 +142,33 @@ async def _henrik_get_json(
                     return (404, None)
                 if r.status == 429:
                     if attempt < retries:
+                        log.warning(
+                            "Riot API 429 (attempt %s/%s); retrying %s",
+                            attempt + 1,
+                            retries + 1,
+                            url,
+                        )
                         await asyncio.sleep(_retry_delay(r.headers, attempt))
                         continue
+                    log.warning("Riot API 429 rate limit persisted for %s", url)
                     raise RiotApiInconclusive(f"429 rate limit persisted for {url}")
+                log.warning(
+                    "Riot API returned unexpected status %s for %s", r.status, url
+                )
                 return (r.status, None)
-        except (aiohttp.ClientError, asyncio.TimeoutError):
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            log.warning("Riot API request failed for %s: %r", url, e)
             return (0, None)
     # Defensive: the loop above either returns or raises.
     raise RiotApiInconclusive(f"429 rate limit persisted for {url}")
 
 
-def _headers() -> Dict[str, str]:
+def _headers() -> dict[str, str]:
     """Return auth headers if API key is present, else empty dict."""
     return {"Authorization": API_KEY} if API_KEY else {}
 
 
-def _normalize_account_payload(payload: Dict[str, Any]) -> Dict[str, Optional[str]]:
+def _normalize_account_payload(payload: dict[str, Any]) -> dict[str, str | None]:
     """
     Normalize Henrik account payloads into a consistent shape.
 
@@ -186,7 +203,7 @@ async def get_account_by_riot_id(
     timeout: int = 10,
     retries: int = 2,
     priority: bool = False,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     safe_name = quote((name or "").strip(), safe="")
     safe_tag = quote((tag or "").strip(), safe="")
     url = f"{HENRIK_BASE}/v1/account/{safe_name}/{safe_tag}"
@@ -206,7 +223,7 @@ async def get_account_by_puuid(
     timeout: int = 10,
     retries: int = 2,
     priority: bool = False,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
 
     puuid = (puuid or "").strip()
     url = f"{HENRIK_BASE}/v1/by-puuid/account/{puuid}"
@@ -313,7 +330,7 @@ async def get_recent_matches_async(
     timeout: int = 30,
     retries: int = 2,
     priority: bool = False,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """GET the most recent matches for a Riot ID through the shared
     30 req/min rate limiter.
 
@@ -346,7 +363,7 @@ async def get_match_by_id_async(
     timeout: int = 30,
     retries: int = 2,
     priority: bool = False,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """GET one match by its id through the shared 30 req/min rate limiter.
 
     Returns the match payload for HTTP 200, None when the match is not found
