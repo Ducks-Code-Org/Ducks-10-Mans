@@ -301,6 +301,9 @@ class MapVoteView(discord.ui.View):
             )
         self.bot.captain1 = captain1
         self.bot.captain2 = captain2
+        log.info(
+            "Captains chosen: %s and %s", captain1.get("name"), captain2.get("name")
+        )
         return True
 
     async def finalize_match_setup(self):
@@ -344,6 +347,12 @@ class MapVoteView(discord.ui.View):
             name="**Defenders:**", value="\n".join(defenders), inline=False
         )
 
+        log.info(
+            "Match setup finalized: map=%s Attackers=%s Defenders=%s",
+            self.winning_map,
+            [p.get("name") for p in self.bot.team1],
+            [p.get("name") for p in self.bot.team2],
+        )
         await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match, then `!report` to finalize results.")
 

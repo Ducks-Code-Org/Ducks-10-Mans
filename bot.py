@@ -277,6 +277,7 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.stats")
         await self.load_extension("commands.bug")
         await self.load_extension("commands.quack_commands")
+        self.tree.on_error = self._on_app_command_error
         await self.tree.sync()
         log.info("Bot is ready and cogs are loaded.")
 
@@ -284,12 +285,17 @@ class CustomBot(commands.Bot):
         log.info("Bot connected as %s.", self.user)
 
         # Start flushing WARNING+ records into #bot-logs now that guilds
-        # are cached (the handler is attached in main.py before run()).
+        # are cached (the handler is created in main.py before run()).
         handler = getattr(self, "discord_log_handler", None)
         if handler is not None:
-            self.mirror_flush_loop = self.loop.create_task(
-                self._flush_discord_logs(handler)
-            )
+            # Attach the bot so the handler can resolve #bot-logs; without
+            # this every queued record is silently dropped.
+            handler.bot = self
+            # on_ready can fire again after a reconnect; keep one flush task.
+            if self.mirror_flush_loop is None or self.mirror_flush_loop.done():
+                self.mirror_flush_loop = self.loop.create_task(
+                    self._flush_discord_logs(handler)
+                )
 
         await self.purge_old_match_roles()
         await self.purge_old_match_channels()
@@ -310,6 +316,28 @@ class CustomBot(commands.Bot):
         log.info(
             "Command !%s invoked by %s in #%s", ctx.command, ctx.author, ctx.channel
         )
+
+    async def on_app_command_completion(self, interaction, command):
+        log.info(
+            "Slash command /%s invoked by %s in #%s",
+            getattr(command, "qualified_name", command),
+            interaction.user,
+            interaction.channel,
+        )
+
+    async def _on_app_command_error(self, interaction, error):
+        log.error(
+            "Error in slash command /%s by %s: %r",
+            getattr(interaction.command, "qualified_name", interaction.command),
+            interaction.user,
+            error,
+            exc_info=error,
+        )
+
+    async def on_error(self, event_method, /, *args, **kwargs):
+        # Last-resort handler for any event not covered by a specific
+        # try/except (e.g. on_ready startup tasks).
+        log.error("Unhandled exception in event %s", event_method, exc_info=True)
 
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.CommandNotFound):

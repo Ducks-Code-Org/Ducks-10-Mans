@@ -58,6 +58,7 @@ async def purge_invalid_riot_ids(bot=None) -> list[str]:
     if not docs:
         return []
 
+    log.info("Checking %s linked Riot ID(s) for validity", len(docs))
     removed: list[str] = []
     async with aiohttp.ClientSession() as session:
         # One shared semaphore caps concurrent API calls so we don't hit rate limits.

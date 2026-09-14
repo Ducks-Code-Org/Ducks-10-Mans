@@ -174,10 +174,10 @@ class SignupView(discord.ui.View):
             self.timeout_monitor_task = None
 
     async def cancel_signup(self, reason):
+        log.info("Signup cancelled: %s", reason)
         # Send message to original channel
         try:
             await self.ctx.send(f"Signup cancelled: {reason}")
-            log.info("Signup cancelled: %s", reason)
         except discord.HTTPException:
             pass  # In case channel is deleted or something
 
@@ -323,6 +323,7 @@ class SignupView(discord.ui.View):
             log.info("Skipping signup finalization because signup was cancelled.")
             return
 
+        log.info("Signup full (%s players); starting match setup", len(self.bot.queue))
         await interaction.channel.send(
             "The queue is now full, proceeding to the voting stage."
         )

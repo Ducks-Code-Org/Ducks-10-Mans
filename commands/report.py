@@ -140,6 +140,7 @@ async def grant_season_roles(guild, players) -> None:
 class ReportCommand(BotCommands):
     @commands.command()
     async def report(self, ctx):
+        log.info("Match report requested by %s", ctx.author)
         # ---------------------------------------------------------
         # Acquire report_lock to prevent concurrent double-reporting.
         # Only one !report command may run at a time.  We additionally
@@ -214,6 +215,7 @@ class ReportCommand(BotCommands):
                     priority=True,
                 )
         except (RiotApiInconclusive, aiohttp.ClientError, asyncio.TimeoutError) as e:
+            log.error("Network error fetching recent matches: %s", e, exc_info=e)
             await ctx.send(f"Network error reaching HenrikDev API: {e}")
             return
 
@@ -235,6 +237,11 @@ class ReportCommand(BotCommands):
             api_map = _norm_map(map_field or "")
 
         if _norm_map(self.bot.selected_map) != api_map:
+            log.warning(
+                "Report rejected: selected map %s does not match API map %s",
+                self.bot.selected_map,
+                api_map,
+            )
             await ctx.send(
                 "Map doesn't match your most recent match. Unable to report it."
             )
@@ -304,6 +311,10 @@ class ReportCommand(BotCommands):
         if not queue_riot_ids.issubset(match_player_names):
             # Find which players don't match
             missing_players = queue_riot_ids - match_player_names
+            log.warning(
+                "Report rejected: API match is missing queue players %s",
+                sorted(missing_players),
+            )
             mismatch_message = (
                 "The most recent match does not match the 10-man's match.\n\n"
             )
@@ -558,6 +569,12 @@ class ReportCommand(BotCommands):
         log.info("Basic stats updated for all players")
 
         await ctx.send("Match stats and MMR updated!")
+        log.info(
+            "Match %s reported by %s (winner: %s)",
+            metadata.get("match_id", "?"),
+            ctx.author,
+            winning_team_id,
+        )
 
         # ------------------------------------------------------------
         # Quack Coins: betting payout and +1 coin per match played

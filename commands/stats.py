@@ -1,5 +1,7 @@
 "Lookup and display MMR and stats for a player."
 
+import logging
+
 from discord.ext import commands
 
 from commands import BotCommands
@@ -7,6 +9,8 @@ from database import users
 from ranks import tier_for_player
 from stats_helper import DEFAULT_MMR, avg_rating_of
 from tracker_links import tracker_link
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
@@ -29,6 +33,7 @@ class StatsCommand(BotCommands):
             if player_data:
                 player_id = str(player_data.get("discord_id"))
             else:
+                log.info("Stats lookup failed: no player matches %s", riot_input)
                 await ctx.send(
                     "Could not find this player. Please check the name and tag and ensure they have played at least one match."
                 )

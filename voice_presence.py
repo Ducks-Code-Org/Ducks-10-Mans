@@ -133,6 +133,11 @@ async def wait_for_lobby(
     if not missing:
         return True
 
+    log.info(
+        "Waiting up to %ss for %s player(s) to join the lobby",
+        timeout_seconds,
+        len(missing),
+    )
     room = (
         "**#lobby**"
         if _find_channel(channels, LOBBY_CHANNEL_NAME) is not None
@@ -150,10 +155,14 @@ async def wait_for_lobby(
     deadline = asyncio.get_event_loop().time() + timeout_seconds
     while True:
         await asyncio.sleep(poll_seconds)
-        if is_cancelled() or asyncio.get_event_loop().time() >= deadline:
+        if is_cancelled():
+            return False
+        if asyncio.get_event_loop().time() >= deadline:
+            log.warning("Lobby wait timed out with players still missing")
             return False
         missing = missing_lobby_players(guild, queue)
         if not missing:
+            log.info("Everyone joined the lobby; starting match setup")
             try:
                 await send("Everyone is in the lobby! Starting match setup...")
             except discord.HTTPException:
@@ -173,6 +182,7 @@ async def move_teams_to_voice(guild, team1, team2) -> None:
         log.warning("Could not inspect voice channels; skipping team move")
         return
 
+    log.info("Moving teams into their voice channels")
     for name, team in (
         (ATTACKERS_CHANNEL_NAME, team1),
         (DEFENDERS_CHANNEL_NAME, team2),
@@ -182,6 +192,7 @@ async def move_teams_to_voice(guild, team1, team2) -> None:
             try:
                 channel = await guild.create_voice_channel(name)
                 channels.append(channel)
+                log.info("Created '%s' voice channel", name)
             except (discord.HTTPException, asyncio.TimeoutError) as e:
                 log.warning("Could not create '%s' voice channel: %s", name, e)
                 continue

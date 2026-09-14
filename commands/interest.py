@@ -1,5 +1,6 @@
 "Plans a time to run Duck's 10 Mans and open a Join/Leave interest view."
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import discord
@@ -10,6 +11,8 @@ from commands import BotCommands
 from database import interests
 from globals import TIME_ZONE_CST
 from views.interest_view import InterestView
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
@@ -83,6 +86,7 @@ class InterestCommand(BotCommands):
             return_document=ReturnDocument.AFTER,
         )
 
+        log.info("Interest slot %s created/joined by %s", rounded, ctx.author)
         view = InterestView(rounded, timeout=None)
         embed = discord.Embed(
             description="Creating interest slot…", color=discord.Color.green()

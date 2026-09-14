@@ -34,11 +34,15 @@ class LinkRiotCommand(BotCommands):
                     session, riot_name, riot_tag, priority=True
                 )
         except (RiotApiInconclusive, aiohttp.ClientError, asyncio.TimeoutError) as e:
+            log.error("Network error linking Riot ID: %s", e, exc_info=e)
             await ctx.send(f"Network error reaching HenrikDev API: {e}")
             return
 
         # fully document API outcomes
         if payload is None or not payload.get("_raw"):
+            log.warning(
+                "Link rejected: Riot account %s#%s not found", riot_name, riot_tag
+            )
             await ctx.send(
                 "Could not find that Riot account. Double-check the name and tag."
             )

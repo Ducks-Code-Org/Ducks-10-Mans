@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import deque
 from typing import Any
 from urllib.parse import quote
@@ -10,6 +11,8 @@ from urllib.parse import quote
 import aiohttp
 
 from globals import API_KEY
+
+log = logging.getLogger(__name__)
 
 # Base API
 HENRIK_BASE = "https://api.henrikdev.xyz/valorant"
@@ -68,6 +71,9 @@ async def _reserve_rate_slot(*, priority: bool = False) -> None:
             # slot falls out of it.
             wait_for = HENRIK_RATE_WINDOW - (now - _rate_slots[0])
         if loop.time() >= deadline:
+            log.warning(
+                "Interactive Riot API caller gave up waiting for a rate-limit slot"
+            )
             raise RiotApiInconclusive(
                 "interactive caller could not get a rate-limit slot in time"
             )
@@ -136,11 +142,22 @@ async def _henrik_get_json(
                     return (404, None)
                 if r.status == 429:
                     if attempt < retries:
+                        log.warning(
+                            "Riot API 429 (attempt %s/%s); retrying %s",
+                            attempt + 1,
+                            retries + 1,
+                            url,
+                        )
                         await asyncio.sleep(_retry_delay(r.headers, attempt))
                         continue
+                    log.warning("Riot API 429 rate limit persisted for %s", url)
                     raise RiotApiInconclusive(f"429 rate limit persisted for {url}")
+                log.warning(
+                    "Riot API returned unexpected status %s for %s", r.status, url
+                )
                 return (r.status, None)
-        except (aiohttp.ClientError, asyncio.TimeoutError):
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            log.warning("Riot API request failed for %s: %r", url, e)
             return (0, None)
     # Defensive: the loop above either returns or raises.
     raise RiotApiInconclusive(f"429 rate limit persisted for {url}")

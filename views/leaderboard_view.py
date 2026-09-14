@@ -211,11 +211,23 @@ class LeaderboardView(View):
     async def on_previous(self, interaction: discord.Interaction):
         if self.current_page > 0:
             self.current_page -= 1
+        log.debug(
+            "Leaderboard page %s/%s by %s",
+            self.current_page + 1,
+            self.total_pages,
+            interaction.user,
+        )
         await self.update_message(interaction)
 
     async def on_next(self, interaction: discord.Interaction):
         if self.current_page < self.total_pages - 1:
             self.current_page += 1
+        log.debug(
+            "Leaderboard page %s/%s by %s",
+            self.current_page + 1,
+            self.total_pages,
+            interaction.user,
+        )
         await self.update_message(interaction)
 
     async def on_refresh(self, interaction: discord.Interaction):
@@ -227,4 +239,10 @@ class LeaderboardView(View):
         self.total_pages = math.ceil(len(self.sorted_data) / self.players_per_page)
         if self.current_page >= self.total_pages:
             self.current_page = max(0, self.total_pages - 1)
+        log.info(
+            "Leaderboard (%s) refreshed by %s: %s players",
+            self.sort_by,
+            interaction.user,
+            len(self.sorted_data),
+        )
         await self.update_message(interaction)

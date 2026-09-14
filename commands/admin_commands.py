@@ -98,6 +98,11 @@ class AdminCommands(BotCommands):
     @commands.has_role("Owner")
     async def initialize_rounds(self, ctx):
         result = mmr_collection.update_many({}, {"$set": {"total_rounds_played": 0}})
+        log.info(
+            "%s reset total_rounds_played for %s players",
+            ctx.author,
+            result.modified_count,
+        )
         await ctx.send(
             f"Initialized total_rounds_played for {result.modified_count} players."
         )
@@ -105,6 +110,7 @@ class AdminCommands(BotCommands):
     @commands.command()
     @commands.has_permissions(administrator=True)
     async def simulate_queue(self, ctx):
+        log.info("Simulated queue started by %s", ctx.author)
         # Start a new setup cycle: invalidate any stale views first.
         self.bot.setup_generation += 1
 
@@ -149,6 +155,11 @@ class AdminCommands(BotCommands):
     @commands.command()
     @commands.has_role("blood")
     async def toggledev(self, ctx):
+        log.info(
+            "Developer mode %s by %s",
+            "disabled" if self.dev_mode else "enabled",
+            ctx.author,
+        )
         if not self.dev_mode:
             self.dev_mode = True
             await ctx.send("Developer Mode Enabled")
@@ -269,4 +280,5 @@ class AdminCommands(BotCommands):
         if not recent_ids:
             await ctx.send("No recent queue found to ping.")
             return
+        log.info("%s pinged %s recent queue player(s)", ctx.author, len(recent_ids))
         await ctx.send(pingrecent_message(recent_ids, cancelled))
