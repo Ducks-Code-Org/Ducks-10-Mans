@@ -1,10 +1,12 @@
 import asyncio
-import io
 import json
 import os
 import sys
+import tempfile
 import types
 from datetime import datetime, timezone
+from pathlib import Path
+
 from bson import ObjectId
 
 sys.path.insert(
@@ -153,14 +155,25 @@ def make_cog():
 
 def demo():
     season_num = 7
+    # Keep the command's on-disk safety backup out of the repo working tree.
+    tmpdir = tempfile.TemporaryDirectory()
+    mc.globals_mod = types.SimpleNamespace(
+        __file__=str(Path(tmpdir.name) / "globals.py")
+    )
     oid_hex = "6512f8a4f3e2b1a0c9d8e7f6"
     oid = ObjectId(oid_hex)
     match_doc = {
         "_id": oid,
         "season_number": season_num,
-        "metadata": {"match_id": "abc-123", "started_at": datetime(2026, 9, 1, tzinfo=timezone.utc)},
+        "metadata": {
+            "match_id": "abc-123",
+            "started_at": datetime(2026, 9, 1, tzinfo=timezone.utc),
+        },
     }
-    legacy_match = {"_id": "legacy", "metadata": {"match_id": "old"}}  # no season_number
+    legacy_match = {
+        "_id": "legacy",
+        "metadata": {"match_id": "old"},
+    }  # no season_number
     other_season_match = {"_id": "other", "season_number": 6}
     mmr_doc = {
         "_id": oid,
@@ -184,8 +197,9 @@ def demo():
     ctx = FakeCtx(FakeMessage([]))
     asyncio.run(cog.snapshotseason(ctx, arg=""))
     assert ctx.sent, "snapshotseason sent nothing"
-    (msg, kw) = ctx.sent[0]
-    assert "7 match" not in msg and "2 match" not in msg
+    msg, kw = ctx.sent[0][0][0], ctx.sent[0][1]
+    assert f"Season {season_num} snapshot: 2 match(es)" in msg, msg
+    assert "1 player doc(s)" in msg, msg
     payload = kw["file"].fp.getvalue()
     backup = json.loads(payload)
     assert backup["format"] == "season-snapshot"
@@ -193,7 +207,10 @@ def demo():
     cols = backup["collections"]
     # current season + legacy (no season_number) matches; not other seasons
     assert len(cols["matches"]) == 2
-    assert {str(d["_id"]["$oid"]) if isinstance(d["_id"], dict) else d["_id"] for d in cols["matches"]} == {oid_hex, "legacy"}
+    assert {
+        str(d["_id"]["$oid"]) if isinstance(d["_id"], dict) else d["_id"]
+        for d in cols["matches"]
+    } == {oid_hex, "legacy"}
     assert len(cols["mmr_data"]) == 1
     assert cols["seasons"][0]["_id"] == "current"
     assert "users" not in cols, "users only included with `full`"
@@ -227,7 +244,9 @@ def demo():
     asyncio.run(cog.recoverseason(ctx5, arg="confirm"))
     assert "json" in ctx5.sent[0][0][0].lower()
 
-    ctx6 = FakeCtx(FakeMessage([FakeAttachment("x.json", json.dumps({"foo": 1}).encode())]))
+    ctx6 = FakeCtx(
+        FakeMessage([FakeAttachment("x.json", json.dumps({"foo": 1}).encode())])
+    )
     asyncio.run(cog.recoverseason(ctx6, arg="confirm"))
     assert "invalid" in ctx6.sent[0][0][0].lower()
 
@@ -239,6 +258,9 @@ def demo():
     mc.mmr_collection.docs[0]["mmr"] = 0.0
     mc.seasons.docs[0]["matches_played"] = 99
 
+    # Snapshot the live (drifted) state before recovery so the on-disk safety
+    # backup can be checked after the command runs.
+    safety_dir = Path(mc.globals_mod.__file__).parent / "backups"
     ctx7 = FakeCtx(FakeMessage([FakeAttachment("snap.json", payload)]))
     asyncio.run(cog.recoverseason(ctx7, arg="confirm"))
     # matches: snapshot's 2 restored; the drifted extra deleted; other season kept
@@ -253,8 +275,15 @@ def demo():
     assert mc.mmr_collection.docs[0]["quack_coins"] == 9
     # season doc fully replaced (matches_played back to 2, not merged)
     assert mc.seasons.find_one({"_id": "current"})["matches_played"] == 2
-    # archived seasons survive
-    assert "user" in ctx7.sent[0][0][0].lower() or True
+    # The success reply names the safety backup that was written.
+    assert "safety backup" in ctx7.sent[0][0][0].lower(), ctx7.sent[0][0][0]
+    safety_files = list(safety_dir.glob("season_pre_recovery_*.json"))
+    assert len(safety_files) == 1, safety_files
+    # The safety backup captured the pre-recovery drift (mmr 0.0, counter 99).
+    safety = json.loads(safety_files[0].read_text())
+    assert safety["collections"]["mmr_data"][0]["mmr"] == 0.0
+    assert safety["collections"]["seasons"][0]["matches_played"] == 99
+    tmpdir.cleanup()
     print("snapshot/recover season self-checks passed")
 
 

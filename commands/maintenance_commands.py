@@ -57,9 +57,9 @@ def _season_match_filter(season_num: int) -> dict:
     most match docs have no season_number field; those belong to the current
     (only active) season."""
     return {
-        "$or": [{"season_number": season_num},
-                {"season_number": {"$exists": False}}]
+        "$or": [{"season_number": season_num}, {"season_number": {"$exists": False}}]
     }
+
 
 # Season stat fields wiped by !resetplayer / !resetseason (matches the
 # new-season reset in bot.py). Quack Coins are per-season, so they reset too.
@@ -955,13 +955,21 @@ class MaintenanceCommands(BotCommands):
         await ctx.send(
             f"Season {season_num} snapshot: {len(matches)} match(es), "
             f"{len(mmr_docs)} player doc(s)"
-            + (f", {len(backup['collections']['users'])} users" if include_users else "")
+            + (
+                f", {len(backup['collections']['users'])} users"
+                if include_users
+                else ""
+            )
             + ".",
             file=discord.File(io.BytesIO(payload), filename=filename),
         )
         log.info(
             "%s snapshotted season %s (%s matches, %s player docs) to %s",
-            ctx.author, season_num, len(matches), len(mmr_docs), filename,
+            ctx.author,
+            season_num,
+            len(matches),
+            len(mmr_docs),
+            filename,
         )
 
     @commands.command(name="recoverseason")
@@ -1006,7 +1014,9 @@ class MaintenanceCommands(BotCommands):
         season_doc = seasons.find_one({"_id": "current"})
         log.warning(
             "%s is recovering season data from %s (snapshot season: %s)",
-            ctx.author, attachment.filename, backup.get("season_number"),
+            ctx.author,
+            attachment.filename,
+            backup.get("season_number"),
         )
         counts = {}
         safety_path = None
@@ -1031,7 +1041,8 @@ class MaintenanceCommands(BotCommands):
                     },
                 }
                 safety_path = (
-                    Path(globals_mod.__file__).parent / "backups"
+                    Path(globals_mod.__file__).parent
+                    / "backups"
                     / f"season_pre_recovery_{stamp}.json"
                 )
                 safety_path.parent.mkdir(parents=True, exist_ok=True)
