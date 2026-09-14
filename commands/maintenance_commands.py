@@ -3,7 +3,9 @@
 import asyncio
 import contextlib
 import io
+import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import aiohttp
@@ -12,7 +14,7 @@ from discord.ext import commands
 
 import globals as globals_mod
 from commands import BotCommands
-from database import client, mmr_collection, users
+from database import client, mmr_collection, seasons, users
 from globals import BOT_CONFIG
 from quack_coins import (
     DOUBLEDOWN_COST,
@@ -41,6 +43,26 @@ BOT_INI_PATH = Path(globals_mod.__file__).parent / "bot.ini"
 
 EDITABLE_FIELDS = {"mmr", "wins", "losses", "riot"}
 _MENTION_RE = re.compile(r"<@!?(\d+)>$")
+
+# Season stat fields wiped by !resetplayer / !resetseason (matches the
+# new-season reset in bot.py).
+SEASON_STAT_DEFAULTS = {
+    "mmr": DEFAULT_MMR,
+    "wins": 0,
+    "losses": 0,
+    "total_combat_score": 0,
+    "total_kills": 0,
+    "total_deaths": 0,
+    "matches_played": 0,
+    "total_rounds_played": 0,
+    "average_combat_score": 0,
+    "kill_death_ratio": 0,
+    "total_rating_points": 0.0,
+    "total_rating_rounds": 0,
+    "avg_rating": None,
+    "previous_rank": None,
+    "current_rank": None,
+}
 
 
 def resolve_user_arg(arg: str, guild=None) -> str | None:
@@ -541,24 +563,52 @@ class MaintenanceCommands(BotCommands):
         if not pid:
             await ctx.send(f"Could not resolve player `{user_arg}`.")
             return
-        zeroed = {
-            "mmr": DEFAULT_MMR,
-            "wins": 0,
-            "losses": 0,
-            "total_combat_score": 0,
-            "total_kills": 0,
-            "total_deaths": 0,
-            "matches_played": 0,
-            "total_rounds_played": 0,
-            "average_combat_score": 0,
-            "kill_death_ratio": 0,
-            "total_rating_points": 0.0,
-            "total_rating_rounds": 0,
-            "avg_rating": None,
-            "previous_rank": None,
-            "current_rank": None,
-        }
+        zeroed = SEASON_STAT_DEFAULTS
         mmr_collection.update_one({"player_id": pid}, {"$set": zeroed}, upsert=True)
         if pid in self.bot.player_mmr:
             self.bot.player_mmr[pid].update(zeroed)
         await ctx.send(f"Reset season stats and MMR for <@{pid}>.")
+
+    @commands.command(name="resetseason")
+    @commands.has_permissions(administrator=True)
+    async def resetseason(self, ctx):
+        """
+        Wipe all stats for the current season, without ending it.
+        Reversible: snapshots every player doc and the season counter to a
+        backup file in the same format DebugTools revert backups use
+        ({"$oid": ...} ObjectIds), restorable via
+        `python DebugTools/revert_last_match.py --restore <file>`.
+        """
+        from DebugTools.revert_last_match import _jsonify
+
+        # Snapshot every player doc + the current season doc to a backup file
+        # (same layout the revert script's --restore reads).
+        docs = list(mmr_collection.find())
+        season_doc = seasons.find_one({"_id": "current"})
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        backup_path = (
+            Path(globals_mod.__file__).parent / "backups" / f"season_reset_{stamp}.json"
+        )
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        backup = {
+            "backup_created_at": backup_path.name,
+            "collections": {
+                # "matches" is required by the revert script's restore.
+                "matches": [],
+                "mmr_data": [_jsonify(d) for d in docs],
+                "seasons": [_jsonify(season_doc)] if season_doc else [],
+            },
+        }
+        backup_path.write_text(json.dumps(backup), encoding="utf-8")
+
+        # Wipe season stats for everyone; identity and quack_coins survive.
+        mmr_collection.update_many({}, {"$set": SEASON_STAT_DEFAULTS})
+        seasons.update_one(
+            {"_id": "current"}, {"$set": {"matches_played": 0}}, upsert=True
+        )
+        self.bot.load_mmr_data()
+        await ctx.send(
+            "Wiped season stats for all players. "
+            f"Backup: `{backup_path.name}` (restorable via "
+            "`python DebugTools/revert_last_match.py --restore`)."
+        )
