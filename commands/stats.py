@@ -59,6 +59,7 @@ class StatsCommand(BotCommands):
                 player_name = f"{riot_name}#{riot_tag}"
             else:
                 player_name = ctx.author.name
+                riot_name, riot_tag = ctx.author.name, ""
 
             total_players = len(self.bot.player_mmr)
             sorted_mmr = sorted(
@@ -91,7 +92,7 @@ class StatsCommand(BotCommands):
             tier_line = f"Tier: {tier}" if tier else "Tier: none (play a match!)"
 
             await ctx.send(
-                f"**{player_name}'s Stats:** {tracker_link(riot_name, riot_tag)}\n"
+                f"**{tracker_link(riot_name, riot_tag)}'s Stats:**\n"
                 f"MMR: {mmr_value}\n"
                 f"{tier_line}\n"
                 f"{rank_line}\n"

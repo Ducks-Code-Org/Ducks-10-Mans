@@ -7,7 +7,6 @@ from discord.ui import Select
 
 from database import users
 from stats_helper import DEFAULT_MMR
-from tracker_links import tracker_link
 from voice_presence import move_teams_to_voice, voice_presence_enabled
 
 DECISION_TIMEOUT_SECONDS = 120
@@ -267,13 +266,14 @@ class CaptainsDraftingView(discord.ui.View):
 
         c1_data = users.find_one({"discord_id": str(self.bot.captain1["id"])})
         c2_data = users.find_one({"discord_id": str(self.bot.captain2["id"])})
+        # Plain text, not links: embed field names don't render markdown links.
         self.captain1_name = (
-            tracker_link(c1_data.get("name", "Unknown"), c1_data.get("tag", "Unknown"))
+            f"{c1_data.get('name', 'Unknown')}#{c1_data.get('tag', 'Unknown')}"
             if c1_data
             else self.bot.captain1["name"]
         )
         self.captain2_name = (
-            tracker_link(c2_data.get("name", "Unknown"), c2_data.get("tag", "Unknown"))
+            f"{c2_data.get('name', 'Unknown')}#{c2_data.get('tag', 'Unknown')}"
             if c2_data
             else self.bot.captain2["name"]
         )
@@ -508,12 +508,12 @@ class CaptainsDraftingView(discord.ui.View):
             self.draft_timer_task.cancel()
             self.draft_timer_task = None
 
-    def _current_captain_name(self, tracker_link_name: bool = False) -> str | None:
+    def _current_captain_name(self) -> str | None:
         current_captain_id = str(self.pick_order[self.pick_count]["id"])
         ud = users.find_one({"discord_id": current_captain_id})
         if ud:
-            if tracker_link_name:
-                return tracker_link(ud.get("name", "Unknown"), ud.get("tag", "Unknown"))
+            # Plain text: these names go into embed field names, where
+            # markdown links don't render.
             return f"{ud.get('name', 'Unknown')}#{ud.get('tag', 'Unknown')}"
         captain1 = getattr(self.bot, "captain1", None)
         captain2 = getattr(self.bot, "captain2", None)
@@ -542,7 +542,7 @@ class CaptainsDraftingView(discord.ui.View):
             if display_time != last_shown:
                 last_shown = display_time
                 self.draft_time_remaining = display_time
-                curr_captain_name = self._current_captain_name(tracker_link_name=True)
+                curr_captain_name = self._current_captain_name()
                 if curr_captain_name is None:
                     # Captain state was cleared — stop.
                     self.draft_finished = True
@@ -560,7 +560,7 @@ class CaptainsDraftingView(discord.ui.View):
             self.draft_finished = True
             return
         self.draft_time_remaining = 0
-        curr_captain_name = self._current_captain_name(tracker_link_name=True)
+        curr_captain_name = self._current_captain_name()
         if curr_captain_name is None:
             # Captain state was cleared — stop.
             self.draft_finished = True
@@ -716,7 +716,7 @@ class CaptainsDraftingView(discord.ui.View):
 
         # Prompt for current captain
         current_captain_id = self.pick_order[self.pick_count]["id"]
-        curr_captain_name = self._current_captain_name(tracker_link_name=True)
+        curr_captain_name = self._current_captain_name()
         if curr_captain_name is None:
             # Captain state was cleared (e.g. by !cancel) — stop the draft quietly.
             self.draft_finished = True

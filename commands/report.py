@@ -59,12 +59,12 @@ async def _delete_signup_message_safely(message) -> None:
         pass
 
 
-async def cleanup_match_resources(bot):
+async def cleanup_match_resources(bot, cancelled: bool = False):
     """Delete the match channel/role and reset per-match state."""
     await bot.wait_until_ready()
     try:
         if bot.queue:
-            remember_recent_queue(bot.queue)
+            remember_recent_queue(bot.queue, cancelled=cancelled)
         if bot.match_channel:
             await _delete_channel_safely(bot.match_channel)
             bot.match_channel = None
