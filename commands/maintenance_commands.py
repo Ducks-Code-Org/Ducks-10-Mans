@@ -51,6 +51,16 @@ BOT_INI_PATH = Path(globals_mod.__file__).parent / "bot.ini"
 EDITABLE_FIELDS = {"mmr", "wins", "losses", "riot"}
 _MENTION_RE = re.compile(r"<@!?(\d+)>$")
 
+
+def _season_match_filter(season_num: int) -> dict:
+    """Matches belonging to a season. !report stores the raw API payload, so
+    most match docs have no season_number field; those belong to the current
+    (only active) season."""
+    return {
+        "$or": [{"season_number": season_num},
+                {"season_number": {"$exists": False}}]
+    }
+
 # Season stat fields wiped by !resetplayer / !resetseason (matches the
 # new-season reset in bot.py). Quack Coins are per-season, so they reset too.
 SEASON_STAT_DEFAULTS = {
@@ -903,3 +913,177 @@ class MaintenanceCommands(BotCommands):
             "`python DebugTools/revert_last_match.py --restore`)."
         )
         log.info("Season stats wiped; backup %s", backup_path.name)
+
+    @commands.command(name="snapshotseason")
+    @commands.has_permissions(administrator=True)
+    async def snapshotseason(self, ctx, *, arg: str = ""):
+        """
+        Export the current season's match + player data to a .json file.
+        Read-only: the bot's data is not modified. Add `full` to include the
+        persistent users (Riot link) collection. Restore with !recoverseason.
+        """
+        include_users = arg.strip().lower() == "full"
+        season_doc = seasons.find_one({"_id": "current"})
+        if not season_doc:
+            await ctx.send("No current season found; nothing to snapshot.")
+            return
+        season_num = int(season_doc.get("season_number", 0))
+
+        from DebugTools.revert_last_match import _jsonify
+
+        async with self.bot.report_lock:
+            matches = list(all_matches.find(_season_match_filter(season_num)))
+            mmr_docs = list(mmr_collection.find())
+        backup = {
+            "backup_created_at": datetime.now(timezone.utc).isoformat(),
+            "format": "season-snapshot",
+            "season_number": season_num,
+            "collections": {
+                "matches": [_jsonify(d) for d in matches],
+                "mmr_data": [_jsonify(d) for d in mmr_docs],
+                "seasons": [_jsonify(season_doc)],
+                **(
+                    {"users": [_jsonify(d) for d in users.find()]}
+                    if include_users
+                    else {}
+                ),
+            },
+        }
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        filename = f"season_snapshot_{season_num}_{stamp}.json"
+        payload = json.dumps(backup, default=str).encode("utf-8")
+        await ctx.send(
+            f"Season {season_num} snapshot: {len(matches)} match(es), "
+            f"{len(mmr_docs)} player doc(s)"
+            + (f", {len(backup['collections']['users'])} users" if include_users else "")
+            + ".",
+            file=discord.File(io.BytesIO(payload), filename=filename),
+        )
+        log.info(
+            "%s snapshotted season %s (%s matches, %s player docs) to %s",
+            ctx.author, season_num, len(matches), len(mmr_docs), filename,
+        )
+
+    @commands.command(name="recoverseason")
+    @commands.has_permissions(administrator=True)
+    async def recoverseason(self, ctx, *, arg: str = ""):
+        """
+        Overwrite the current season's data from a !snapshotseason .json file
+        attached to this message. Requires `!recoverseason confirm` (two-step,
+        no accidental overwrites). The attachment replaces all current-season
+        matches and player data; docs absent from the snapshot are deleted.
+        """
+        if arg.strip().lower() != "confirm":
+            await ctx.send(
+                "This **overwrites** the current season's matches and player "
+                "data with the attached snapshot. Attach the .json file and "
+                "run `!recoverseason confirm`."
+            )
+            return
+        if not ctx.message.attachments:
+            await ctx.send("Attach the snapshot .json file to this message.")
+            return
+
+        from DebugTools.revert_last_match import _dejsonify, _jsonify
+
+        attachment = ctx.message.attachments[0]
+        if not attachment.filename.lower().endswith(".json"):
+            await ctx.send("Snapshot must be a .json file.")
+            return
+        try:
+            backup = json.loads(await attachment.read())
+        except Exception as e:
+            await ctx.send(f"Could not read the attachment as JSON: {e}")
+            return
+        collections = backup.get("collections")
+        if not isinstance(collections, dict) or "mmr_data" not in collections:
+            await ctx.send(
+                "Invalid snapshot: expected a `!snapshotseason` file with a "
+                "`collections` section (mmr_data required)."
+            )
+            return
+
+        season_doc = seasons.find_one({"_id": "current"})
+        log.warning(
+            "%s is recovering season data from %s (snapshot season: %s)",
+            ctx.author, attachment.filename, backup.get("season_number"),
+        )
+        counts = {}
+        safety_path = None
+        async with self.bot.report_lock:
+            # Pre-recovery safety snapshot to disk (restorable via
+            # python DebugTools/revert_last_match.py --restore).
+            if season_doc:
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                safety = {
+                    "backup_created_at": stamp,
+                    "collections": {
+                        "matches": [
+                            _jsonify(d)
+                            for d in all_matches.find(
+                                _season_match_filter(
+                                    int(season_doc.get("season_number", 0))
+                                )
+                            )
+                        ],
+                        "mmr_data": [_jsonify(d) for d in mmr_collection.find()],
+                        "seasons": [_jsonify(season_doc)],
+                    },
+                }
+                safety_path = (
+                    Path(globals_mod.__file__).parent / "backups"
+                    / f"season_pre_recovery_{stamp}.json"
+                )
+                safety_path.parent.mkdir(parents=True, exist_ok=True)
+                safety_path.write_text(json.dumps(safety), encoding="utf-8")
+
+            try:
+                for name in ("matches", "mmr_data", "seasons"):
+                    docs = collections.get(name) or []
+                    coll = {
+                        "matches": all_matches,
+                        "mmr_data": mmr_collection,
+                        "seasons": seasons,
+                    }[name]
+                    # Complete overwrite: drop existing docs (matches scoped
+                    # to this season) then write exactly what the snapshot
+                    # contains. Seasons use replace_one so the "current" doc
+                    # is swapped in place (archived seasons never inserted
+                    # by snapshots can't collide on _id).
+                    if name == "matches":
+                        season_num = (
+                            int(season_doc.get("season_number", 0)) if season_doc else 0
+                        )
+                        coll.delete_many(_season_match_filter(season_num))
+                        for raw in docs:
+                            coll.insert_one(_dejsonify(raw))
+                    elif name == "mmr_data":
+                        coll.delete_many({})
+                        for raw in docs:
+                            coll.insert_one(_dejsonify(raw))
+                    else:
+                        for raw in docs:
+                            doc = _dejsonify(raw)
+                            coll.replace_one({"_id": doc["_id"]}, doc, upsert=True)
+                    counts[name] = len(docs)
+            except Exception as e:
+                log.error("Season recovery failed: %s", e, exc_info=True)
+                safety_note = (
+                    f" The safety backup `{safety_path.name}` can restore the "
+                    "pre-recovery state "
+                    "(`python DebugTools/revert_last_match.py --restore`)."
+                    if safety_path
+                    else ""
+                )
+                await ctx.send(f"Recovery failed partway ({e}).{safety_note}")
+                return
+
+            clear_season_coin_state(self.bot)
+            self.bot.load_mmr_data()
+
+        await ctx.send(
+            f"Recovered season data from `{attachment.filename}`: "
+            + ", ".join(f"{k}={v}" for k, v in counts.items())
+            + (f". Safety backup: `{safety_path.name}`" if season_doc else "")
+        )
+        log.info("Season recovered from %s; counts=%s", attachment.filename, counts)
