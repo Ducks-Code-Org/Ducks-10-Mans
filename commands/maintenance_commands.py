@@ -16,7 +16,7 @@ from discord.ext import commands
 import globals as globals_mod
 from commands import BotCommands
 from database import all_matches, client, mmr_collection, seasons, users
-from globals import API_KEY, BOT_CONFIG
+from globals import BOT_CONFIG
 from quack_coins import (
     DOUBLEDOWN_COST,
     add_coins,
@@ -27,6 +27,7 @@ from quack_coins import (
 from riot_api import (
     RiotApiInconclusive,
     get_account_by_riot_id,
+    get_match_by_id_async,
     verify_riot_account_async,
 )
 from stats_helper import DEFAULT_MMR, update_stats
@@ -201,6 +202,31 @@ def rounds_to_int(value: object) -> int:
         return int(value)
     except Exception:
         return 0
+
+
+def resolve_match_players(players) -> tuple[dict[int, str], list[str]]:
+    """Map each API player to a linked Discord id.
+
+    Returns ({id(player): discord_id}, [unlinked "Name#Tag", ...]). Keyed by
+    the player object's identity, not its name: two players sharing a game
+    name but different tags must not collide.
+    """
+    pid_of: dict[int, str] = {}
+    unlinked: list[str] = []
+    for p in players:
+        u = users.find_one({"puuid": (p.get("puuid") or "").strip().lower()})
+        if u is None:
+            u = users.find_one(
+                {
+                    "name": (p.get("name") or "").lower().strip(),
+                    "tag": (p.get("tag") or "").strip().lower(),
+                }
+            )
+        if u is None:
+            unlinked.append(f"{p.get('name')}#{p.get('tag')}")
+        else:
+            pid_of[id(p)] = str(u["discord_id"])
+    return pid_of, unlinked
 
 
 class MaintenanceCommands(BotCommands):
@@ -657,21 +683,7 @@ class MaintenanceCommands(BotCommands):
 
         # Every player must map to a linked Discord account (puuid first,
         # Riot name/tag fallback — same resolution order !report uses).
-        pid_of = {}
-        unlinked = []
-        for p in players:
-            u = users.find_one({"puuid": (p.get("puuid") or "").strip().lower()})
-            if u is None:
-                u = users.find_one(
-                    {
-                        "name": (p.get("name") or "").lower().strip(),
-                        "tag": (p.get("tag") or "").strip().lower(),
-                    }
-                )
-            if u is None:
-                unlinked.append(f"{p.get('name')}#{p.get('tag')}")
-            else:
-                pid_of[p["name"]] = str(u["discord_id"])
+        pid_of, unlinked = resolve_match_players(players)
         if unlinked:
             await ctx.send(
                 "These players have no linked Discord account; fix with "
@@ -714,34 +726,32 @@ class MaintenanceCommands(BotCommands):
             # report.py's flow relies on), then compute team averages: new
             # players seed at 100x their match rating (same rule !report
             # applies via _effective_mmr).
-            player_names = {}
-            for name, pid in pid_of.items():
-                self.bot.ensure_player_mmr(pid, player_names)
-                player_names[pid] = name
+            for p in players:
+                self.bot.ensure_player_mmr(pid_of[id(p)], self.bot.player_names)
             # Team averages: new players seed at 100x their match rating
             # (same rule !report applies via _effective_mmr).
             eff = {}
             for p in players:
-                pid = pid_of[p["name"]]
+                pid = pid_of[id(p)]
                 doc = mmr_collection.find_one({"player_id": pid})
                 played = doc and (
                     doc.get("matches_played", 0) > 0
                     or (doc.get("wins", 0) + doc.get("losses", 0)) > 0
                 )
                 if played:
-                    eff[p["name"]] = doc.get("mmr", 0)
+                    eff[id(p)] = doc.get("mmr", 0)
                 else:
                     r = ratings.get((p.get("puuid") or "").lower(), {}).get("rating")
-                    eff[p["name"]] = (
+                    eff[id(p)] = (
                         max(0, round(100.0 * r)) if isinstance(r, (int, float)) else 0
                     )
             sides = defaultdict(list)
             for p in players:
-                sides[p["team_id"].lower()].append(eff[p["name"]])
+                sides[p["team_id"].lower()].append(eff[id(p)])
             side_avg = {s: sum(v) / len(v) for s, v in sides.items() if v}
 
             for p in players:
-                pid = pid_of[p["name"]]
+                pid = pid_of[id(p)]
                 side = p["team_id"].lower()
                 won = side == wtid
                 r = ratings.get((p.get("puuid") or "").lower(), {}).get("rating")
@@ -768,9 +778,9 @@ class MaintenanceCommands(BotCommands):
 
             summary = "\n".join(
                 f"**{p['name']}**: "
-                f"{self.bot.player_mmr[pid_of[p['name']]]['mmr']} MMR "
-                f"({self.bot.player_mmr[pid_of[p['name']]]['wins']}W/"
-                f"{self.bot.player_mmr[pid_of[p['name']]]['losses']}L)"
+                f"{self.bot.player_mmr[pid_of[id(p)]]['mmr']} MMR "
+                f"({self.bot.player_mmr[pid_of[id(p)]]['wins']}W/"
+                f"{self.bot.player_mmr[pid_of[id(p)]]['losses']}L)"
                 for p in players
             )
             await ctx.send(
@@ -781,16 +791,8 @@ class MaintenanceCommands(BotCommands):
 
     @staticmethod
     async def _fetch_match_by_id(session, match_id: str):
-        """Fetch a match by id via the HenrikDev v4 by-id endpoint."""
-        url = f"https://api.henrikdev.xyz/valorant/v4/match/na/{match_id}"
-        headers = {"Authorization": API_KEY} if API_KEY else {}
-        async with session.get(url, headers=headers, timeout=30) as r:
-            if r.status == 404:
-                return None
-            if r.status != 200:
-                raise RiotApiInconclusive(f"Henrik API returned {r.status} for {url}")
-            data = await r.json()
-        return (data or {}).get("data")
+        """Fetch a match by id through the shared riot_api rate limiter."""
+        return await get_match_by_id_async(session, match_id, priority=True)
 
     def _rebuild_ranks(self) -> None:
         """Rewrite previous/current rank fields from the current MMR order

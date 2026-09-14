@@ -127,6 +127,44 @@ def demo():
     assert mc.rounds_to_int({}) == 0
     assert mc.rounds_to_int(None) == 0
 
+    # resolve_match_players: two players sharing a game name but different
+    # tags must both resolve (name-keyed maps silently dropped one).
+    class _UsersStub:
+        def __init__(self, by_puuid, by_name):
+            self._by_puuid, self._by_name = by_puuid, by_name
+
+        def find_one(self, q):
+            if "puuid" in q:
+                return self._by_puuid.get(q["puuid"])
+            return self._by_name.get((q.get("name"), q.get("tag")))
+
+    original_users = mc.users
+    try:
+        mc.users = _UsersStub(
+            by_puuid={},
+            by_name={
+                ("smurf", "na1"): {"discord_id": "111"},
+                ("smurf", "euw"): {"discord_id": "222"},
+            },
+        )
+        p1 = {"puuid": "", "name": "Smurf", "tag": "NA1"}
+        p2 = {"puuid": "", "name": "Smurf", "tag": "EUW"}
+        p3 = {"puuid": "", "name": "Ghost", "tag": "X"}
+        pid_of, unlinked = mc.resolve_match_players([p1, p2, p3])
+        assert pid_of == {id(p1): "111", id(p2): "222"}, pid_of
+        assert unlinked == ["Ghost#X"], unlinked
+
+        # puuid lookup wins over name/tag
+        mc.users = _UsersStub(
+            by_puuid={"abc-123": {"discord_id": "999"}},
+            by_name={("smurf", "na1"): {"discord_id": "111"}},
+        )
+        p4 = {"puuid": "abc-123", "name": "Smurf", "tag": "NA1"}
+        pid_of, unlinked = mc.resolve_match_players([p4])
+        assert pid_of == {id(p4): "999"} and not unlinked
+    finally:
+        mc.users = original_users
+
     print("all maintenance_commands self-checks passed")
 
 
