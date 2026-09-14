@@ -112,8 +112,10 @@ class LeaderboardView(View):
             "kill_death_ratio": "K/D",
             "wins": "Wins",
             "losses": "Losses",
+            "quack_coins": "Quack Coins",
         }
 
+        show_coins = True
         headers = [
             "Rank",
             "User",
@@ -124,10 +126,18 @@ class LeaderboardView(View):
             "Avg ACS",
             "K/D",
         ]
+        if show_coins:
+            headers.append("Quacks")
 
         leaderboard_data = []
         start_index = self.current_page * self.players_per_page
         end_index = min((self.current_page + 1) * self.players_per_page, len(data))
+
+        coin_emote = ""
+        if show_coins:
+            from quack_coins import quack_emote
+
+            coin_emote = quack_emote(self.bot)
 
         for idx, player_data in enumerate(data[start_index:end_index], start=1):
             player_id = str(player_data["player_id"])
@@ -150,18 +160,19 @@ class LeaderboardView(View):
             avg_cs = player_data.get("average_combat_score", 0)
             kd_ratio = player_data.get("kill_death_ratio", 0)
 
-            leaderboard_data.append(
-                [
-                    rank,
-                    name,
-                    mmr,
-                    wins,
-                    losses,
-                    avg_rating_display,
-                    f"{avg_cs:.2f}",
-                    f"{kd_ratio:.2f}",
-                ]
-            )
+            row = [
+                rank,
+                name,
+                mmr,
+                wins,
+                losses,
+                avg_rating_display,
+                f"{avg_cs:.2f}",
+                f"{kd_ratio:.2f}",
+            ]
+            if show_coins:
+                row.append(f"{player_data.get('quack_coins', 0)} {coin_emote}")
+            leaderboard_data.append(row)
 
         table_output = t2a(
             header=headers,

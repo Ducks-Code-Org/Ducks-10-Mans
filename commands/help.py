@@ -30,7 +30,10 @@ class HelpCommand(commands.Cog):
                 "**!interest** - Plan a time to play 10 mans\n"
                 "↪ _usage: `!interest <time>`_\n"
                 "**!leaderboard <type>** - View the leaderboard\n"
-                "↪ _Available types: `mmr` (default), `wins`, `losses`, `kd`, `acs`_\n"
+                "↪ _Available types: `mmr` (default), `wins`, `losses`, `kd`, `acs`, `quacks`_\n"
+                "**/bet attackers|defenders <amount>** - Bet Quack Coins on the match\n"
+                "**/doubledown** - Spend 5 Quack Coins to double your MMR change\n"
+                "**/setmap <map>** - Spend Quack Coins to override the chosen map\n"
             ),
             inline=False,
         )

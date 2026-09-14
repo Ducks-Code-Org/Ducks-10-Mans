@@ -110,6 +110,7 @@ def update_stats(
     our_rounds=None,
     opp_rounds=None,
     rating=None,
+    mmr_multiplier: int = 1,
 ):
     """Update player stats with proper initialization and error handling"""
     if discord_id is None:
@@ -189,7 +190,9 @@ def update_stats(
                 opp_mmr=float(opp_avg_mmr),
                 vlr=float(rating) if isinstance(rating, (int, float)) else 1.0,
             )
-            new_mmr = max(0, round(base + delta))
+            # The multiplier (e.g. doubledown) doubles only this match's
+            # delta, never the first-match seed.
+            new_mmr = max(0, round(base + delta * mmr_multiplier))
             player_mmr[discord_id]["mmr"] = new_mmr
 
             # Wins/Losses total
@@ -263,7 +266,8 @@ def update_stats(
             and opp_rounds is not None
         ):
             # First match this season: MMR starts at 100× this match's VLR
-            # rating, then the standard delta is applied on top.
+            # rating, then the standard delta is applied on top. The
+            # multiplier applies to the delta only.
             won = our_rounds > opp_rounds
             seed = _seed_mmr(rating)
             delta = delta_mmr(
@@ -273,7 +277,7 @@ def update_stats(
                 opp_mmr=float(opp_avg_mmr),
                 vlr=float(rating) if isinstance(rating, (int, float)) else 1.0,
             )
-            player_mmr[discord_id]["mmr"] = max(0, round(seed + delta))
+            player_mmr[discord_id]["mmr"] = max(0, round(seed + delta * mmr_multiplier))
             if won:
                 player_mmr[discord_id]["wins"] = 1
                 player_mmr[discord_id]["losses"] = 0

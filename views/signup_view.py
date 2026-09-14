@@ -193,6 +193,13 @@ class SignupView(discord.ui.View):
         self.bot.chosen_mode = None
         self.bot.selected_map = None
 
+        from quack_coins import refund_open_bets
+
+        refund_open_bets(self.bot)
+        self.bot.double_downs = set()
+        self.bot.map_override_last = 0
+        self.bot.map_override_last_by = None
+
         # Delete role and channel
         try:
             await self.bot.match_role.delete()
