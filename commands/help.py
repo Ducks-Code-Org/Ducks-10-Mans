@@ -23,17 +23,15 @@ class HelpCommand(commands.Cog):
             value=(
                 "**!signup** - Start a new 10 mans signup session\n"
                 "**!report** - Report match results and update MMR\n"
-                "**!stats** - Check a player's MMR and match statistics\n"
-                "↪ _usage: `!stats <Name#Tag>`_\n"
-                "**!linkriot** - Link your Riot account.\n"
-                "↪ _usage: `!linkriot <Name#Tag>`_\n"
-                "**!interest** - Plan a time to play 10 mans\n"
-                "↪ _usage: `!interest <time>`_\n"
+                "**!stats <Name#Tag>** - Check a player's MMR and match statistics\n"
+                "**!linkriot <Name#Tag>** - Link your Riot account\n"
+                "**!interest <time>** - Plan a time to play 10 mans (`!interest list` for upcoming)\n"
                 "**!leaderboard <type>** - View the leaderboard\n"
                 "↪ _Available types: `mmr` (default), `wins`, `losses`, `kd`, `acs`, `quacks`_\n"
                 "**/bet attackers|defenders <amount>** - Bet Quack Coins on the match\n"
                 "**/doubledown** - Spend 5 Quack Coins to double your MMR change\n"
                 "**/setmap <map>** - Spend Quack Coins to override the chosen map\n"
+                "**!bug** - Report a bug (pings the maintainers)\n"
             ),
             inline=False,
         )
@@ -45,19 +43,6 @@ class HelpCommand(commands.Cog):
             inline=False,
         )
 
-        # Only show Admin Commands if user has administrator permissions
-        if ctx.author.guild_permissions.administrator:
-            help_embed.add_field(
-                name="Admin Commands",
-                value=(
-                    # "**!setcaptain1** - Set Captain 1 using `Name#Tag`\n"
-                    # "**!setcaptain2** - Set Captain 2 using `Name#Tag`\n"
-                    "**!cancel** - Cancel current 10 mans signup or match\n"
-                    "**!pingrecent** - Ping players from the most recent queue\n"
-                    "**!toggledev** - Toggle Developer Mode\n"
-                    "**!newseason** - Resets stats and starts a new season\n"
-                ),
-                inline=False,
-            )
+        help_embed.set_footer(text="Admins: !adminhelp lists maintenance commands.")
 
         await ctx.send(embed=help_embed)

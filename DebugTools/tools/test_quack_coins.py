@@ -83,6 +83,10 @@ class FakeCollection:
     def find(self, *a, **k):
         return list(DB.values())
 
+    def update_many(self, q, update):
+        for doc in DB.values():
+            doc.update(update.get("$set", {}))
+
 
 quack_coins.mmr_collection = FakeCollection()
 
@@ -246,24 +250,6 @@ def demo():
     bot.match_ongoing = True
     assert command_available(bot) is None
 
-    # The /setmap call site must actually pass requires_running_match=False,
-    # otherwise the gate and the override window stay mutually exclusive.
-    command_src = open(
-        os.path.join(
-            os.path.dirname(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            ),
-            "commands",
-            "quack_commands.py",
-        )
-    ).read()
-    setmap_body = command_src.split("async def setmap_command")[1].split(
-        "async def _gated_reply"
-    )[0]
-    assert (
-        "requires_running_match=False" in setmap_body
-    ), "/setmap command must opt out of the running-match gate"
-
     # Doubledown doubles the match delta only, never the first-match seed.
     # stats_helper is imported separately with its own stub in test_vlr_rating,
     # but here we verify the multiplier plumbing with a tiny fake.
@@ -304,6 +290,45 @@ def demo():
     assert (
         abs((doubled - seed) - 2 * (plain - seed)) <= 1
     ), f"doubledown must double the delta only: plain={plain} doubled={doubled}"
+
+    # The /setmap call site must pass requires_running_match=False, otherwise
+    # the gate and the override window stay mutually exclusive.
+    command_src = open(
+        os.path.join(
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            ),
+            "commands",
+            "quack_commands.py",
+        )
+    ).read()
+    setmap_body = command_src.split("async def setmap_command")[1].split(
+        "async def _gated_reply"
+    )[0]
+    assert (
+        "requires_running_match=False" in setmap_body
+    ), "/setmap command must opt out of the running-match gate"
+
+    # Season resets drop per-match coin state and zero every balance (see
+    # test_maintenance_commands for the stat-defaults side of the reset).
+    from quack_coins import clear_season_coin_state, reset_all_coins
+
+    DB["1"] = {"player_id": "1", "quack_coins": 42}
+    DB["2"] = {"player_id": "2", "quack_coins": 7}
+    reset_all_coins()
+    assert coins_of("1") == 0 and coins_of("2") == 0, "reset must zero all coins"
+
+    bot.bet_session = None
+    open_window(bot)
+    bot.double_downs = {"1", "2"}
+    bot.map_override_last = 7
+    bot.map_override_last_by = "1"
+    clear_season_coin_state(bot)
+    assert bot.bet_session is None, "open bet session must be dropped on reset"
+    assert bot.double_downs == set(), "doubledowns must be cleared on reset"
+    assert (
+        bot.map_override_last == 0 and bot.map_override_last_by is None
+    ), "map-override escalation must reset"
 
     print("all quack coins self-checks passed")
 

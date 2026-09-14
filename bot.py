@@ -99,7 +99,15 @@ class CustomBot(commands.Bot):
             upsert=True,
         )
 
+        # Quack Coins are per-season currency: they reset with the stats
+        # reset, so `!newseason noreset` preserves coin balances too.
+        # Per-match coin state (bet escrow, doubledowns, map-override
+        # escalation) is per-match, not per-season, so it is always dropped.
+        from quack_coins import clear_season_coin_state, reset_all_coins
+
+        clear_season_coin_state(self)
         if reset_player_stats:
+            reset_all_coins()
             self._reset_all_players_for_new_season(next_num)
 
         return new_season_obj
@@ -111,6 +119,7 @@ class CustomBot(commands.Bot):
         """
         # Reset core 10-mans stats in db. MMR starts at 0 and is re-seeded
         # (100×VLR) after each player's first reported match of the season.
+        # (Quack Coins are zeroed by create_new_season alongside this reset.)
         mmr_collection.update_many(
             {},
             {
@@ -256,6 +265,7 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.interest")
         await self.load_extension("commands.leaderboard")
         await self.load_extension("commands.linkriot")
+        await self.load_extension("commands.maintenance_commands")
         await self.load_extension("commands.report")
         await self.load_extension("commands.signup")
         await self.load_extension("commands.stats")

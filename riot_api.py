@@ -336,3 +336,34 @@ async def get_recent_matches_async(
     if not isinstance(data, dict) or "data" not in data:
         raise RiotApiInconclusive(f"Henrik API returned malformed payload for {url}")
     return data
+
+
+async def get_match_by_id_async(
+    session: aiohttp.ClientSession,
+    match_id: str,
+    *,
+    region: str = "na",
+    timeout: int = 30,
+    retries: int = 2,
+    priority: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """GET one match by its id through the shared 30 req/min rate limiter.
+
+    Returns the match payload for HTTP 200, None when the match is not found
+    (404), and raises RiotApiInconclusive on network errors, persistent 429s
+    or unexpected statuses.
+    """
+    safe_id = quote((match_id or "").strip(), safe="")
+    url = f"{HENRIK_BASE}/v4/match/{region}/{safe_id}"
+
+    status, data = await _henrik_get_json(
+        session, url, timeout=timeout, retries=retries, priority=priority
+    )
+    if status == 404:
+        return None
+    if status != 200:
+        raise RiotApiInconclusive(f"Henrik API returned {status} for {url}")
+    match = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(match, dict):
+        raise RiotApiInconclusive(f"Henrik API returned malformed payload for {url}")
+    return match
