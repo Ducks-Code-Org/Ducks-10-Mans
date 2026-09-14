@@ -17,6 +17,20 @@ def quack_coins_enabled() -> bool:
     return feature_enabled("quack_coins")
 
 
+def command_available(bot, *, requires_running_match: bool = True) -> str | None:
+    """None when a Quack Coins command may run, else the rejection message.
+
+    `/setmap` overrides the map during the captains draft, i.e. *before* the
+    match is running, so it passes requires_running_match=False. `/bet` and
+    `/doubledown` only make sense while a match is in progress.
+    """
+    if not quack_coins_enabled():
+        return "Quack Coins features are disabled."
+    if requires_running_match and not bot.match_ongoing:
+        return "No match is running right now."
+    return None
+
+
 def quack_emote(bot) -> str:
     """The custom :quackcoin: emote, or a duck fallback when it can't be found."""
     try:

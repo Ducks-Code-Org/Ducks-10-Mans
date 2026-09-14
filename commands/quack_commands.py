@@ -4,7 +4,7 @@ import discord
 from discord import app_commands
 
 from commands import BotCommands
-from quack_coins import doubledown, place_bet, setmap_override
+from quack_coins import command_available, doubledown, place_bet, setmap_override
 
 
 async def setup(bot):
@@ -45,23 +45,26 @@ class QuackCommands(BotCommands):
     )
     @app_commands.describe(map_name="Map from the All Maps pool")
     async def setmap_command(self, interaction: discord.Interaction, map_name: str):
+        # Overrides must land after map voting and before teams are decided,
+        # i.e. during the captains draft — when no match is running yet.
         await self._gated_reply(
             interaction,
             lambda: setmap_override(self.bot, str(interaction.user.id), map_name),
             ephemeral=False,
+            requires_running_match=False,
         )
 
-    async def _gated_reply(self, interaction, message_factory, ephemeral: bool = True):
-        from globals import feature_enabled
-
-        if not feature_enabled("quack_coins"):
-            await interaction.response.send_message(
-                "Quack Coins features are disabled.", ephemeral=True
-            )
-            return
-        if not self.bot.match_ongoing:
-            await interaction.response.send_message(
-                "No match is running right now.", ephemeral=True
-            )
+    async def _gated_reply(
+        self,
+        interaction,
+        message_factory,
+        ephemeral: bool = True,
+        requires_running_match: bool = True,
+    ):
+        rejection = command_available(
+            self.bot, requires_running_match=requires_running_match
+        )
+        if rejection:
+            await interaction.response.send_message(rejection, ephemeral=True)
             return
         await interaction.response.send_message(message_factory(), ephemeral=ephemeral)

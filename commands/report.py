@@ -373,6 +373,14 @@ class ReportCommand(BotCommands):
         self.bot.player_mmr = {str(k): v for k, v in self.bot.player_mmr.items()}
         pre_update_mmr = copy.deepcopy(self.bot.player_mmr)
 
+        # Doubledown multipliers are snapshotted before any MMR changes so
+        # update_stats can apply them to the match delta only.
+        double_down_multipliers = (
+            {pid: doubledown_multiplier_of(self.bot, pid) for pid in playing_team_ids}
+            if quack_coins_enabled()
+            else {}
+        )
+
         # Snapshot each player's leaderboard rank before this match is applied
         pre_played_ids = {
             pid
@@ -537,33 +545,25 @@ class ReportCommand(BotCommands):
                 our_rounds=(team1_rounds if team_label == "team1" else team2_rounds),
                 opp_rounds=(team2_rounds if team_label == "team1" else team1_rounds),
                 rating=rating_info.get("rating"),
+                mmr_multiplier=(
+                    double_down_multipliers.get(p_discord_id, 1)
+                    if quack_coins_enabled()
+                    else 1
+                ),
             )
         print("[DEBUG] Basic stats updated")
 
         await ctx.send("Match stats and MMR updated!")
 
         # ------------------------------------------------------------
-        # Quack Coins: doubledown multipliers, betting payout, +1 per match
-        # (all feature-gated on the quack_coins flag in bot.ini).
+        # Quack Coins: betting payout and +1 coin per match played
+        # (feature-gated on the quack_coins flag in bot.ini). The
+        # doubledown multiplier was applied inside update_stats above.
         # ------------------------------------------------------------
         winner_side = (
             "attackers" if winning_match_team_ids == team1_ids_set else "defenders"
         )
         if quack_coins_enabled():
-            for pid in playing_team_ids:
-                mult = doubledown_multiplier_of(self.bot, pid)
-                if mult == 1:
-                    continue
-                entry = self.bot.player_mmr.get(pid)
-                if entry is None:
-                    continue
-                before = entry.get("mmr", 0)
-                if pid in pre_update_mmr:
-                    before = pre_update_mmr.get(pid, {}).get("mmr", before)
-                new = before + (entry.get("mmr", 0) - before) * mult
-                entry["mmr"] = max(0, round(new))
-            # Coins go to everyone who played; settle the spectator bets
-            # against the winning side.
             award_match_coins(playing_team_ids)
             try:
                 await settle_bets(self.bot, ctx.channel, winner_side)
