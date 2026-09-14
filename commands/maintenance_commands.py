@@ -5,6 +5,7 @@ import contextlib
 import io
 import json
 import re
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,8 +15,8 @@ from discord.ext import commands
 
 import globals as globals_mod
 from commands import BotCommands
-from database import client, mmr_collection, seasons, users
-from globals import BOT_CONFIG
+from database import all_matches, client, mmr_collection, seasons, users
+from globals import API_KEY, BOT_CONFIG
 from quack_coins import (
     DOUBLEDOWN_COST,
     add_coins,
@@ -28,7 +29,8 @@ from riot_api import (
     get_account_by_riot_id,
     verify_riot_account_async,
 )
-from stats_helper import DEFAULT_MMR
+from stats_helper import DEFAULT_MMR, update_stats
+from vlr_rating import estimate_ratings_v4
 from voice_presence import move_teams_to_voice, voice_presence_enabled
 
 
@@ -157,6 +159,48 @@ def sync_ranks(bot) -> None:
             {"$set": {"previous_rank": ranks.get(pid), "current_rank": ranks.get(pid)}},
             upsert=True,
         )
+
+
+_TRACKER_URL_RE = re.compile(
+    r"tracker\.gg/valorant/match/([0-9a-fA-F-]{36})", re.IGNORECASE
+)
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
+
+
+def _extract_match_id(ref: str) -> str | None:
+    """Match id from a bare id or a tracker.gg match URL."""
+    ref = (ref or "").strip()
+    m = _TRACKER_URL_RE.search(ref)
+    if m:
+        return m.group(1).lower()
+    if _UUID_RE.fullmatch(ref):
+        return ref.lower()
+    return None
+
+
+def rounds_to_int(value: object) -> int:
+    """Best-effort conversion of an API rounds field to a non-negative int."""
+    if isinstance(value, dict):
+        for key in ("won", "w", "value", "wins", "count"):
+            v = value.get(key)
+            if isinstance(v, (int, float, str)):
+                try:
+                    return int(v)
+                except Exception:
+                    pass
+        numeric_vals = [v for v in value.values() if isinstance(v, (int, float))]
+        return int(max(numeric_vals)) if numeric_vals else 0
+    if isinstance(value, (list, tuple)):
+        if value:
+            try:
+                return int(value[0])
+            except Exception:
+                return 0
+        return 0
+    try:
+        return int(value)
+    except Exception:
+        return 0
 
 
 class MaintenanceCommands(BotCommands):
@@ -568,6 +612,208 @@ class MaintenanceCommands(BotCommands):
         if pid in self.bot.player_mmr:
             self.bot.player_mmr[pid].update(zeroed)
         await ctx.send(f"Reset season stats and MMR for <@{pid}>.")
+
+    @commands.command(name="forcereport")
+    @commands.has_permissions(administrator=True)
+    async def forcereport(self, ctx, *, match_ref: str = ""):
+        """
+        Report a specific match by id, even when a normal !report fails.
+        Usage: !forcereport <match-id-or-tracker.gg-url>
+        e.g. !forcereport https://tracker.gg/valorant/match/2233f144-...
+        Every player must resolve to a linked Discord account, and the match
+        must not already be reported.
+        """
+        match_id = _extract_match_id(match_ref)
+        if not match_id:
+            await ctx.send(
+                "Pass a match id or tracker.gg URL: "
+                "`!forcereport https://tracker.gg/valorant/match/<id>`"
+            )
+            return
+
+        if all_matches.find_one({"metadata.match_id": match_id}):
+            await ctx.send("That match has already been reported.")
+            return
+
+        await ctx.send(f"Fetching match `{match_id}`...")
+        async with aiohttp.ClientSession() as session:
+            try:
+                match = await self._fetch_match_by_id(session, match_id)
+            except (
+                RiotApiInconclusive,
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+            ) as e:
+                await ctx.send(f"Network error reaching HenrikDev API: {e}")
+                return
+        if match is None:
+            await ctx.send(f"Could not find match `{match_id}` on the HenrikDev API.")
+            return
+
+        players = match.get("players") or []
+        if len(players) != 10:
+            await ctx.send(f"Match has {len(players)} players (expected 10); aborting.")
+            return
+
+        # Every player must map to a linked Discord account (puuid first,
+        # Riot name/tag fallback — same resolution order !report uses).
+        pid_of = {}
+        unlinked = []
+        for p in players:
+            u = users.find_one({"puuid": (p.get("puuid") or "").strip().lower()})
+            if u is None:
+                u = users.find_one(
+                    {
+                        "name": (p.get("name") or "").lower().strip(),
+                        "tag": (p.get("tag") or "").strip().lower(),
+                    }
+                )
+            if u is None:
+                unlinked.append(f"{p.get('name')}#{p.get('tag')}")
+            else:
+                pid_of[p["name"]] = str(u["discord_id"])
+        if unlinked:
+            await ctx.send(
+                "These players have no linked Discord account; fix with "
+                f"`!editplayer <user> riot Name#Tag` first: {', '.join(unlinked)}"
+            )
+            return
+
+        # Hold the report lock: a live !report must not race this.
+        async with self.bot.report_lock:
+            # Re-check after acquiring: a concurrent report may have landed.
+            if all_matches.find_one({"metadata.match_id": match_id}):
+                await ctx.send("That match has already been reported.")
+                return
+
+            total_rounds = len(match.get("rounds") or [])
+            if total_rounds <= 0:
+                await ctx.send("Match has no round data; aborting.")
+                return
+            try:
+                ratings = estimate_ratings_v4(match)
+            except Exception as e:
+                print(f"[forcereport] VLR rating estimation failed: {e}")
+                ratings = {}
+            wtid = next(
+                (t["team_id"].lower() for t in match.get("teams", []) if t.get("won")),
+                None,
+            )
+            if wtid not in ("red", "blue"):
+                await ctx.send("Could not determine the winning team; aborting.")
+                return
+            lose_tid = "blue" if wtid == "red" else "red"
+            rounds_by_side = {
+                t["team_id"].lower(): rounds_to_int(
+                    t.get("rounds_won", t.get("rounds", 0))
+                )
+                for t in match.get("teams", [])
+            }
+
+            # Initialize the bot's cache entries for every player (what
+            # report.py's flow relies on), then compute team averages: new
+            # players seed at 100x their match rating (same rule !report
+            # applies via _effective_mmr).
+            player_names = {}
+            for name, pid in pid_of.items():
+                self.bot.ensure_player_mmr(pid, player_names)
+                player_names[pid] = name
+            # Team averages: new players seed at 100x their match rating
+            # (same rule !report applies via _effective_mmr).
+            eff = {}
+            for p in players:
+                pid = pid_of[p["name"]]
+                doc = mmr_collection.find_one({"player_id": pid})
+                played = doc and (
+                    doc.get("matches_played", 0) > 0
+                    or (doc.get("wins", 0) + doc.get("losses", 0)) > 0
+                )
+                if played:
+                    eff[p["name"]] = doc.get("mmr", 0)
+                else:
+                    r = ratings.get((p.get("puuid") or "").lower(), {}).get("rating")
+                    eff[p["name"]] = (
+                        max(0, round(100.0 * r)) if isinstance(r, (int, float)) else 0
+                    )
+            sides = defaultdict(list)
+            for p in players:
+                sides[p["team_id"].lower()].append(eff[p["name"]])
+            side_avg = {s: sum(v) / len(v) for s, v in sides.items() if v}
+
+            for p in players:
+                pid = pid_of[p["name"]]
+                side = p["team_id"].lower()
+                won = side == wtid
+                r = ratings.get((p.get("puuid") or "").lower(), {}).get("rating")
+                update_stats(
+                    p,
+                    total_rounds,
+                    self.bot.player_mmr,
+                    self.bot.player_names,
+                    discord_id=pid,
+                    team_avg_mmr=side_avg[side],
+                    opp_avg_mmr=side_avg[lose_tid if won else wtid],
+                    our_rounds=rounds_by_side.get(side, 0),
+                    opp_rounds=rounds_by_side.get(lose_tid if won else wtid, 0),
+                    rating=r,
+                )
+
+            # Same tail as !report: ranks, match doc, season counter, cache flush.
+            self._rebuild_ranks()
+            all_matches.insert_one(match)
+            seasons.update_one(
+                {"_id": "current"}, {"$inc": {"matches_played": 1}}, upsert=True
+            )
+            self.bot.load_mmr_data()
+
+            summary = "\n".join(
+                f"**{p['name']}**: "
+                f"{self.bot.player_mmr[pid_of[p['name']]]['mmr']} MMR "
+                f"({self.bot.player_mmr[pid_of[p['name']]]['wins']}W/"
+                f"{self.bot.player_mmr[pid_of[p['name']]]['losses']}L)"
+                for p in players
+            )
+            await ctx.send(
+                f"Reported match `{match_id}` "
+                f"({match['metadata'].get('map', {}).get('name', '?')}).\n{summary[:1800]}"
+            )
+            print(f"[forcereport] Reported {match_id}")
+
+    @staticmethod
+    async def _fetch_match_by_id(session, match_id: str):
+        """Fetch a match by id via the HenrikDev v4 by-id endpoint."""
+        url = f"https://api.henrikdev.xyz/valorant/v4/match/na/{match_id}"
+        headers = {"Authorization": API_KEY} if API_KEY else {}
+        async with session.get(url, headers=headers, timeout=30) as r:
+            if r.status == 404:
+                return None
+            if r.status != 200:
+                raise RiotApiInconclusive(f"Henrik API returned {r.status} for {url}")
+            data = await r.json()
+        return (data or {}).get("data")
+
+    def _rebuild_ranks(self) -> None:
+        """Rewrite previous/current rank fields from the current MMR order
+        (mirrors the rank snapshot report.py writes after each match)."""
+        data = list(mmr_collection.find())
+        played = [
+            d
+            for d in data
+            if d.get("matches_played", 0) > 0
+            or (d.get("wins", 0) + d.get("losses", 0)) > 0
+        ]
+        played.sort(key=lambda x: x.get("mmr", 0), reverse=True)
+        previous = {d["player_id"]: d.get("current_rank") for d in data}
+        for pos, d in enumerate(played, 1):
+            mmr_collection.update_one(
+                {"player_id": d["player_id"]},
+                {
+                    "$set": {
+                        "previous_rank": previous.get(d["player_id"]),
+                        "current_rank": pos,
+                    }
+                },
+            )
 
     @commands.command(name="resetseason")
     @commands.has_permissions(administrator=True)

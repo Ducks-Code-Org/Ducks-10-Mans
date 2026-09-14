@@ -107,6 +107,26 @@ def demo():
     assert "[features]" in content and "second_section_flag = 1" in content
     os.remove(tmp)
 
+    # _extract_match_id: tracker.gg URLs, bare ids, rejects junk
+    mid = "2233f144-b849-42e2-8656-84417f639234"
+    assert mc._extract_match_id(f"https://tracker.gg/valorant/match/{mid}") == mid
+    assert (
+        mc._extract_match_id(f"https://tracker.gg/valorant/match/{mid}/?utm=x") == mid
+    )
+    assert mc._extract_match_id(mid) == mid
+    assert mc._extract_match_id(mid.upper()) == mid
+    assert mc._extract_match_id("") is None
+    assert mc._extract_match_id("not a match id") is None
+    assert mc._extract_match_id("https://tracker.gg/valorant/profile/foo") is None
+    assert mc._extract_match_id("abc123") is None
+
+    # rounds_to_int: dicts, numbers, garbage
+    assert mc.rounds_to_int({"won": 14}) == 14
+    assert mc.rounds_to_int(14) == 14
+    assert mc.rounds_to_int("14") == 14
+    assert mc.rounds_to_int({}) == 0
+    assert mc.rounds_to_int(None) == 0
+
     print("all maintenance_commands self-checks passed")
 
 
