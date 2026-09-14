@@ -256,6 +256,7 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.interest")
         await self.load_extension("commands.leaderboard")
         await self.load_extension("commands.linkriot")
+        await self.load_extension("commands.maintenance_commands")
         await self.load_extension("commands.report")
         await self.load_extension("commands.signup")
         await self.load_extension("commands.stats")

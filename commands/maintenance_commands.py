@@ -1,0 +1,551 @@
+"Admin maintenance commands (issue #166): rollback, editplayer, substitute, and friends."
+
+import asyncio
+import contextlib
+import io
+import re
+from pathlib import Path
+
+import aiohttp
+import discord
+from discord.ext import commands
+
+import globals as globals_mod
+from commands import BotCommands
+from database import client, mmr_collection, users
+from globals import BOT_CONFIG
+from quack_coins import (
+    DOUBLEDOWN_COST,
+    add_coins,
+    coins_of,
+    quack_coins_enabled,
+    quack_emote,
+)
+from riot_api import (
+    RiotApiInconclusive,
+    get_account_by_riot_id,
+    verify_riot_account_async,
+)
+from stats_helper import DEFAULT_MMR
+from voice_presence import move_teams_to_voice, voice_presence_enabled
+
+
+async def setup(bot):
+    # Shared with commands/report.py: whichever cog loads first creates it.
+    if not hasattr(bot, "report_lock"):
+        bot.report_lock = asyncio.Lock()
+    await bot.add_cog(MaintenanceCommands(bot))
+
+
+BOT_INI_PATH = Path(globals_mod.__file__).parent / "bot.ini"
+
+EDITABLE_FIELDS = {"mmr", "wins", "losses", "riot"}
+_MENTION_RE = re.compile(r"<@!?(\d+)>$")
+
+
+def resolve_user_arg(arg: str, guild=None) -> str | None:
+    """Discord id for a @mention, linked Name#Tag, or guild display name."""
+    arg = (arg or "").strip()
+    m = _MENTION_RE.match(arg)
+    if m:
+        return m.group(1)
+    if "#" in arg:
+        name, tag = arg.rsplit("#", 1)
+        u = users.find_one({"name": name.lower().strip(), "tag": tag.lower().strip()})
+        return str(u["discord_id"]) if u else None
+    if guild is not None:
+        target = arg.casefold()
+        for member in guild.members:
+            if (
+                member.display_name.casefold() == target
+                or member.name.casefold() == target
+            ):
+                return str(member.id)
+    return None
+
+
+def parse_edit_args(args: str):
+    """Split '!editplayer <user> <field> <value...>' allowing spaces in user/value.
+
+    Scans for the first token that is a known field name; everything before it
+    is the player (Riot IDs may contain spaces), everything after is the value.
+    Returns (user_arg, field, value) or (None, None, None).
+    """
+    tokens = (args or "").split()
+    for i, tok in enumerate(tokens):
+        if tok.lower() in EDITABLE_FIELDS:
+            return " ".join(tokens[:i]), tok.lower(), " ".join(tokens[i + 1 :])
+    return None, None, None
+
+
+def set_ini_value(path, section: str, key: str, value: str) -> None:
+    """Update one key in an ini file, preserving comments, order, and sections."""
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    out = []
+    in_section = False
+    seen_section = False
+    replaced = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_section and not replaced:
+                out.append(f"{key} = {value}")
+                replaced = True
+            in_section = stripped.lower() == f"[{section.lower()}]"
+            seen_section = seen_section or in_section
+        elif in_section and re.fullmatch(
+            rf"{re.escape(key)}\s*=.*", stripped, re.IGNORECASE
+        ):
+            out.append(f"{key} = {value}")
+            replaced = True
+            continue
+        out.append(line)
+    if not seen_section:
+        out.append(f"[{section}]")
+    if not replaced:
+        out.append(f"{key} = {value}")
+    Path(path).write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def sync_ranks(bot) -> None:
+    """Recompute previous/current leaderboard ranks for every cached player.
+
+    Mirrors the rank snapshot report.py writes after each match; used after an
+    admin edits someone's MMR so the leaderboard's rank column stays truthful.
+    """
+    played = {
+        pid
+        for pid, s in bot.player_mmr.items()
+        if s.get("matches_played", 0) > 0 or (s.get("wins", 0) + s.get("losses", 0)) > 0
+    }
+    ranks = {
+        pid: rank
+        for rank, (pid, _) in enumerate(
+            sorted(
+                ((pid, s) for pid, s in bot.player_mmr.items() if pid in played),
+                key=lambda x: x[1].get("mmr", 0),
+                reverse=True,
+            ),
+            start=1,
+        )
+    }
+    for pid in bot.player_mmr:
+        mmr_collection.update_one(
+            {"player_id": pid},
+            {"$set": {"previous_rank": ranks.get(pid), "current_rank": ranks.get(pid)}},
+            upsert=True,
+        )
+
+
+class MaintenanceCommands(BotCommands):
+    @commands.command(name="rollback")
+    @commands.has_permissions(administrator=True)
+    async def rollback(self, ctx):
+        """Revert the database to a snapshot from before the most recent match."""
+        warning = (
+            "⚠️ A match is currently active; rolling back the last *reported* match.\n"
+            if self.bot.match_ongoing
+            else ""
+        )
+        buf = io.StringIO()
+        error = None
+        async with self.bot.report_lock:
+            # Reuses the DebugTools revert script: it snapshots every affected
+            # document to backups/ before writing, so a backup file is always
+            # produced even if the revert itself fails midway.
+            with contextlib.redirect_stdout(buf):
+                try:
+                    from DebugTools.revert_last_match import revert
+
+                    revert(client, dry_run=False)
+                except SystemExit as e:
+                    error = str(e.code or "rollback aborted")
+                except Exception as e:
+                    error = f"{type(e).__name__}: {e}"
+        out = buf.getvalue().strip()
+        if error:
+            msg = f"Rollback failed: {error}"
+            if out:
+                msg += f"\n```\n{out[-1500:]}\n```"
+            await ctx.send(msg)
+            return
+        self.bot.load_mmr_data()
+        await ctx.send(
+            f"{warning}Rolled back the most recent match and resynced stats.```\n{out[-1700:]}\n```"
+        )
+
+    @commands.command(name="editplayer")
+    @commands.has_permissions(administrator=True)
+    async def editplayer(self, ctx, *, args: str = ""):
+        """
+        Edit a player's stats or linked Riot ID.
+        Usage: !editplayer <@user|Name#Tag> <mmr|wins|losses|riot> <value>
+        e.g. !editplayer @Pyr mmr 1500
+             !editplayer @Pyr riot New Name#TAG
+        """
+        user_arg, field, value = parse_edit_args(args)
+        if not field or not value:
+            await ctx.send(
+                "Usage: `!editplayer <@user|Name#Tag> <mmr|wins|losses|riot> <value>`"
+            )
+            return
+        pid = resolve_user_arg(user_arg, ctx.guild)
+        if not pid:
+            await ctx.send(
+                f"Could not resolve player `{user_arg}` — use an @mention or a linked `Name#Tag`."
+            )
+            return
+
+        if field == "riot":
+            await self._relink_riot(ctx, pid, value)
+            return
+
+        try:
+            amount = int(value)
+        except ValueError:
+            await ctx.send(f"`{value}` must be a whole number.")
+            return
+        if amount < 0:
+            await ctx.send("Value must be zero or positive.")
+            return
+
+        if pid in self.bot.player_mmr:
+            self.bot.player_mmr[pid][field] = amount
+        mmr_collection.update_one(
+            {"player_id": pid}, {"$set": {field: amount}}, upsert=True
+        )
+        if field == "mmr":
+            sync_ranks(self.bot)
+        await ctx.send(f"Set `{field}` = {amount} for <@{pid}>.")
+
+    async def _relink_riot(self, ctx, pid: str, value: str) -> None:
+        try:
+            riot_name, riot_tag = value.rsplit("#", 1)
+        except ValueError:
+            await ctx.send("Riot ID must be in `Name#Tag` format.")
+            return
+        riot_name, riot_tag = riot_name.strip(), riot_tag.strip()
+        if not riot_name or not riot_tag:
+            await ctx.send("Riot ID must be in `Name#Tag` format.")
+            return
+
+        async with aiohttp.ClientSession() as session:
+            try:
+                payload = await get_account_by_riot_id(
+                    session, riot_name, riot_tag, priority=True
+                )
+            except (
+                RiotApiInconclusive,
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+            ) as e:
+                await ctx.send(f"Network error reaching HenrikDev API: {e}")
+                return
+        if payload is None or not payload.get("_raw"):
+            await ctx.send(
+                f"Could not find Riot account `{riot_name}#{riot_tag}`; nothing was changed."
+            )
+            return
+
+        # Same stale-link cleanup as !linkriot: a Riot ID links to one Discord account.
+        for stale in users.find({"name": riot_name.lower(), "tag": riot_tag.lower()}):
+            if str(stale.get("discord_id")) != pid:
+                users.delete_one({"_id": stale["_id"]})
+                mmr_collection.delete_one({"player_id": stale.get("discord_id")})
+                print(
+                    f"[editplayer] Removed stale Riot ID link {riot_name}#{riot_tag} "
+                    f"from discord id {stale.get('discord_id')}"
+                )
+
+        set_fields = {"name": riot_name.lower(), "tag": riot_tag.lower()}
+        puuid = (payload.get("puuid") or "").strip()
+        if puuid:
+            set_fields["puuid"] = puuid
+        users.update_one({"discord_id": pid}, {"$set": set_fields}, upsert=True)
+        mmr_collection.update_one(
+            {"player_id": pid},
+            {"$set": {"name": f"{riot_name}#{riot_tag}"}},
+            upsert=False,
+        )
+        await ctx.send(f"Relinked <@{pid}> to `{riot_name}#{riot_tag}`.")
+
+    @commands.command(name="substitute")
+    @commands.has_permissions(administrator=True)
+    async def substitute(self, ctx, *, args: str = ""):
+        """
+        Replace a player in the current match (teams must already be decided).
+        Usage: !substitute <@OutPlayer|OutName#Tag> <@InPlayer|InName#Tag>
+        (Riot IDs containing spaces must use the @mention form.)
+        """
+        if not self.bot.match_ongoing:
+            await ctx.send(
+                "Substitutions only work on a match whose teams are already decided."
+            )
+            return
+        parts = (args or "").split()
+        if len(parts) < 2:
+            await ctx.send(
+                "Usage: `!substitute <@OutPlayer|OutName#Tag> <@InPlayer|InName#Tag>`"
+            )
+            return
+
+        # Riot IDs and display names can contain spaces, so try every split
+        # point: everything left of it is the outgoing player, right is the
+        # incoming one. The first fully-resolved pair wins.
+        out_pid = in_pid = None
+        for i in range(1, len(parts)):
+            left = resolve_user_arg(" ".join(parts[:i]), ctx.guild)
+            right = resolve_user_arg(" ".join(parts[i:]), ctx.guild)
+            if left and right:
+                out_pid, in_pid = left, right
+                break
+        if not out_pid or not in_pid:
+            await ctx.send(
+                "Could not resolve one of the players — use @mentions or linked `Name#Tag`s."
+            )
+            return
+        out_pid, in_pid = str(out_pid), str(in_pid)
+        if in_pid == out_pid:
+            await ctx.send("Outgoing and incoming player are the same.")
+            return
+        if in_pid in {str(p["id"]) for p in self.bot.queue}:
+            await ctx.send("That player is already in this match.")
+            return
+
+        team = None
+        for t in (self.bot.team1, self.bot.team2):
+            if any(str(p["id"]) == out_pid for p in t):
+                team = t
+                break
+        if team is None:
+            await ctx.send(f"<@{out_pid}> is not on either team in the current match.")
+            return
+
+        # The incoming player must have a valid linked Riot ID (issue requirement).
+        u = users.find_one({"discord_id": in_pid})
+        if not u or not u.get("name") or not u.get("tag"):
+            await ctx.send(
+                f"<@{in_pid}> has no linked Riot ID; they must run `!linkriot Name#Tag` first."
+            )
+            return
+        async with aiohttp.ClientSession() as session:
+            ok, reason = await verify_riot_account_async(session, u["name"], u["tag"])
+        if ok is False:
+            await ctx.send(
+                f"<@{in_pid}>'s linked Riot ID `{u['name']}#{u['tag']}` "
+                f"could not be verified: {reason}"
+            )
+            return
+
+        member = ctx.guild.get_member(int(in_pid)) if ctx.guild else None
+        in_name = member.name if member else u["name"]
+        in_player = {"id": in_pid, "name": in_name}
+
+        # Hold the report lock while mutating queue/teams: !report reads this
+        # state to resolve players and award MMR, so a concurrent report could
+        # otherwise see a half-swapped roster.
+        async with self.bot.report_lock:
+            # Swap in bot.queue too: !report resolves API players through the
+            # queue, so a substitute missing there would break reporting.
+            for i, p in enumerate(self.bot.queue):
+                if str(p["id"]) == out_pid:
+                    self.bot.queue[i] = in_player
+                    break
+            for i, p in enumerate(team):
+                if str(p["id"]) == out_pid:
+                    team[i] = in_player
+                    break
+        self.bot.ensure_player_mmr(in_pid, self.bot.player_names)
+        self.bot.player_names[in_pid] = in_name
+
+        # The outgoing player's doubledown no longer applies; refund it.
+        if quack_coins_enabled() and out_pid in self.bot.double_downs:
+            self.bot.double_downs.discard(out_pid)
+            add_coins(out_pid, DOUBLEDOWN_COST)
+
+        # Swap match roles and move the incoming player to their team voice
+        # channel (best effort).
+        if self.bot.match_role:
+            if member:
+                try:
+                    await member.add_roles(self.bot.match_role)
+                except discord.HTTPException:
+                    pass
+            out_member = ctx.guild.get_member(int(out_pid)) if ctx.guild else None
+            if out_member:
+                try:
+                    await out_member.remove_roles(self.bot.match_role)
+                except discord.HTTPException:
+                    pass
+        if voice_presence_enabled() and ctx.guild:
+            try:
+                await move_teams_to_voice(ctx.guild, self.bot.team1, self.bot.team2)
+            except Exception as e:
+                print(f"[substitute] Voice move failed: {e}")
+
+        side = "Attackers" if team is self.bot.team1 else "Defenders"
+        await ctx.send(
+            f"Substituted <@{in_pid}> in for <@{out_pid}> ({side}). "
+            "Report with `!report` as usual once the game is done."
+        )
+
+    @commands.command(name="enablereport")
+    @commands.has_permissions(administrator=True)
+    async def enablereport(self, ctx):
+        """Re-enable !report after a failed attempt locked out the current match."""
+        if not self.bot.match_ongoing:
+            await ctx.send("No match is currently active.")
+            return
+        async with self.bot.report_lock:
+            self.bot.match_not_reported = True
+        await ctx.send(
+            "Reporting re-enabled — `!report` may be used again for the current match."
+        )
+
+    @commands.command(name="fixmap")
+    @commands.has_permissions(administrator=True)
+    async def fixmap(self, ctx, *, map_name: str = ""):
+        """Force-set the current match's map (fixes 'map doesn't match' report errors)."""
+        if not (self.bot.match_ongoing or self.bot.selected_map):
+            await ctx.send("No active match to set a map for.")
+            return
+        from maps_service import get_standard_maps
+
+        try:
+            pool = get_standard_maps()
+        except Exception as e:
+            await ctx.send(f"Could not fetch the map pool: {e}")
+            return
+        wanted = map_name.strip().lower()
+        canonical = next((m for m in pool if m.lower() == wanted), None)
+        if not canonical:
+            await ctx.send(
+                f"`{map_name}` isn't a standard map. Choose one of: {', '.join(pool)}."
+            )
+            return
+        old = self.bot.selected_map
+        self.bot.selected_map = canonical
+        await ctx.send(f"Map for the current match set to **{canonical}** (was {old}).")
+
+    @commands.command(name="setconfig")
+    @commands.has_permissions(administrator=True)
+    async def setconfig(self, ctx, key: str, value: str):
+        """Update a bot.ini setting; applies immediately without a restart."""
+        if not re.fullmatch(r"[A-Za-z0-9_]+", key):
+            await ctx.send("Invalid key name (letters, digits, underscores only).")
+            return
+        set_ini_value(BOT_INI_PATH, "features", key, value)
+        # Live reload: re-read the file, then rebind the features proxy so
+        # feature_enabled() sees the new value even if [features] was missing.
+        BOT_CONFIG.read(BOT_INI_PATH)
+        if BOT_CONFIG.has_section("features"):
+            globals_mod.BOT_FEATURES = BOT_CONFIG["features"]
+        await ctx.send(f"Set [features] `{key}` = `{value}` (applied immediately).")
+
+    @commands.command(name="showconfig")
+    @commands.has_permissions(administrator=True)
+    async def showconfig(self, ctx):
+        """Show the current bot.ini [features] settings."""
+        lines = [f"{k} = {v}" for k, v in globals_mod.BOT_FEATURES.items()]
+        await ctx.send(
+            f"**bot.ini [features]**\n```\n{chr(10).join(lines) or '(empty)'}\n```"
+        )
+
+    @commands.command(name="matchinfo")
+    @commands.has_permissions(administrator=True)
+    async def matchinfo(self, ctx):
+        """Dump the bot's internal match/queue state for debugging."""
+        bot = self.bot
+
+        def team_lines(team):
+            lines = []
+            for p in team:
+                ud = users.find_one({"discord_id": str(p["id"])})
+                riot = (
+                    f"{ud.get('name', '?')}#{ud.get('tag', '?')}" if ud else "unlinked"
+                )
+                lines.append(f"{p.get('name', '?')} ({riot})")
+            return "\n".join(lines) or "—"
+
+        session = getattr(bot, "bet_session", None) or {}
+        info = (
+            f"signup_active: {bot.signup_active}\n"
+            f"match_ongoing: {bot.match_ongoing}\n"
+            f"match_not_reported: {bot.match_not_reported}\n"
+            f"setup_generation: {bot.setup_generation}\n"
+            f"chosen_mode: {bot.chosen_mode}\n"
+            f"selected_map: {bot.selected_map}\n"
+            f"captain1: {bot.captain1['name'] if bot.captain1 else None}\n"
+            f"captain2: {bot.captain2['name'] if bot.captain2 else None}\n"
+            f"match_channel: {getattr(bot.match_channel, 'name', None)}\n"
+            f"queue ({len(bot.queue)}): "
+            f"{', '.join(p.get('name', '?') for p in bot.queue) or '—'}\n"
+            f"team1 (Attackers):\n{team_lines(bot.team1)}\n"
+            f"team2 (Defenders):\n{team_lines(bot.team2)}\n"
+            f"bet_window_open: {bool(session.get('open'))}\n"
+            f"double_downs: {', '.join(bot.double_downs) or '—'}"
+        )
+        await ctx.send(f"```\n{info[:1900]}\n```")
+
+    @commands.command(name="addcoins")
+    @commands.has_permissions(administrator=True)
+    async def addcoins(self, ctx, *, args: str = ""):
+        """Grant (or, with a negative amount, remove) Quack Coins for a player."""
+        if not quack_coins_enabled():
+            await ctx.send("Quack Coins features are disabled.")
+            return
+        parts = (args or "").split()
+        if not parts:
+            await ctx.send("Usage: `!addcoins <@user|Name#Tag> <amount>`")
+            return
+        try:
+            amount = int(parts[-1])
+        except ValueError:
+            await ctx.send("Usage: `!addcoins <@user|Name#Tag> <amount>`")
+            return
+        user_arg = " ".join(parts[:-1])
+        pid = resolve_user_arg(user_arg, ctx.guild)
+        if not pid:
+            await ctx.send(f"Could not resolve player `{user_arg}`.")
+            return
+        if amount < 0 and coins_of(pid) + amount < 0:
+            await ctx.send(
+                f"<@{pid}> only has {coins_of(pid)} coins; can't remove {-amount}."
+            )
+            return
+        add_coins(pid, amount)
+        await ctx.send(f"<@{pid}> now has {coins_of(pid)} {quack_emote(self.bot)}.")
+
+    @commands.command(name="resetplayer")
+    @commands.has_permissions(administrator=True)
+    async def resetplayer(self, ctx, *, args: str = ""):
+        """Reset one player's season stats and MMR (corrupt-data recovery)."""
+        user_arg = (args or "").strip()
+        if not user_arg:
+            await ctx.send("Usage: `!resetplayer <@user|Name#Tag>`")
+            return
+        pid = resolve_user_arg(user_arg, ctx.guild)
+        if not pid:
+            await ctx.send(f"Could not resolve player `{user_arg}`.")
+            return
+        zeroed = {
+            "mmr": DEFAULT_MMR,
+            "wins": 0,
+            "losses": 0,
+            "total_combat_score": 0,
+            "total_kills": 0,
+            "total_deaths": 0,
+            "matches_played": 0,
+            "total_rounds_played": 0,
+            "average_combat_score": 0,
+            "kill_death_ratio": 0,
+            "total_rating_points": 0.0,
+            "total_rating_rounds": 0,
+            "avg_rating": None,
+            "previous_rank": None,
+            "current_rank": None,
+        }
+        mmr_collection.update_one({"player_id": pid}, {"$set": zeroed}, upsert=True)
+        if pid in self.bot.player_mmr:
+            self.bot.player_mmr[pid].update(zeroed)
+        await ctx.send(f"Reset season stats and MMR for <@{pid}>.")
