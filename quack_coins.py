@@ -56,6 +56,30 @@ def add_coins(player_id, amount: int) -> None:
     )
 
 
+def clear_season_coin_state(bot) -> None:
+    """Drop per-match Quack Coin state on a season reset.
+
+    Used by every season reset (!newseason, !resetseason) alongside zeroing
+    balances, because in-memory state would otherwise leak old-season coins
+    into the new season: escrowed bet coins would pay out at the next
+    !report, stale doubledowns would still apply, and the map-override
+    escalation would carry over. Open bets are dropped, not refunded, since
+    coins reset anyway.
+    """
+    session = getattr(bot, "bet_session", None)
+    bot.bet_session = None
+    if session and session.get("task"):
+        session["task"].cancel()
+    bot.double_downs = set()
+    bot.map_override_last = 0
+    bot.map_override_last_by = None
+
+
+def reset_all_coins() -> None:
+    """Zero every player's coin balance (season reset)."""
+    mmr_collection.update_many({}, {"$set": {"quack_coins": 0}})
+
+
 def award_match_coins(player_ids) -> None:
     for pid in player_ids:
         add_coins(pid, 1)

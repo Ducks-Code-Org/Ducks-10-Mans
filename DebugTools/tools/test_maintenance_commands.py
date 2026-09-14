@@ -165,6 +165,42 @@ def demo():
     finally:
         mc.users = original_users
 
+    # Quack Coins are per-season: every reset path zeroes them. The shared
+    # SEASON_STAT_DEFAULTS feeds !resetplayer and !resetseason, while
+    # !newseason zeroes coins in create_new_season (even with noreset).
+    assert (
+        mc.SEASON_STAT_DEFAULTS.get("quack_coins") == 0
+    ), "season stat defaults must zero quack_coins"
+    newseason_src = open(
+        os.path.join(
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            ),
+            "bot.py",
+        )
+    ).read()
+    create_block = newseason_src.split("def create_new_season")[1].split(
+        "def _reset_all_players_for_new_season"
+    )[0]
+    assert (
+        "reset_all_coins()" in create_block
+    ), "!newseason must zero quack_coins (even with noreset)"
+    assert (
+        "clear_season_coin_state(self)" in create_block
+    ), "!newseason must drop per-match coin state"
+    resetseason_src = open(
+        os.path.join(
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            ),
+            "commands",
+            "maintenance_commands.py",
+        )
+    ).read()
+    assert (
+        "clear_season_coin_state(self.bot)" in resetseason_src
+    ), "!resetseason must drop per-match coin state"
+
     print("all maintenance_commands self-checks passed")
 
 

@@ -76,7 +76,8 @@ class AdminCommands(BotCommands):
         message = (
             f"**<@&1311935865626431529> Season {doc['season_number']}** started.\n"
             f"<@{winner_doc['player_id']}> has been awarded the **Season {doc['season_number'] - 1} SSR** role!\n"
-            f"{'All player MMR + stats were reset.' if reset else 'Player stats were preserved (no reset).'}"
+            f"{'All player MMR + stats were reset.' if reset else 'Player stats were preserved (no reset).'}\n"
+            "Quack Coins were reset for the new season."
         )
         if announcement_channel:
             await announcement_channel.send(message)

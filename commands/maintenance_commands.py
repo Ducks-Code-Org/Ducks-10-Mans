@@ -20,6 +20,7 @@ from globals import BOT_CONFIG
 from quack_coins import (
     DOUBLEDOWN_COST,
     add_coins,
+    clear_season_coin_state,
     coins_of,
     quack_coins_enabled,
     quack_emote,
@@ -48,7 +49,7 @@ EDITABLE_FIELDS = {"mmr", "wins", "losses", "riot"}
 _MENTION_RE = re.compile(r"<@!?(\d+)>$")
 
 # Season stat fields wiped by !resetplayer / !resetseason (matches the
-# new-season reset in bot.py).
+# new-season reset in bot.py). Quack Coins are per-season, so they reset too.
 SEASON_STAT_DEFAULTS = {
     "mmr": DEFAULT_MMR,
     "wins": 0,
@@ -65,6 +66,7 @@ SEASON_STAT_DEFAULTS = {
     "avg_rating": None,
     "previous_rank": None,
     "current_rank": None,
+    "quack_coins": 0,
 }
 
 
@@ -637,6 +639,12 @@ class MaintenanceCommands(BotCommands):
         mmr_collection.update_one({"player_id": pid}, {"$set": zeroed}, upsert=True)
         if pid in self.bot.player_mmr:
             self.bot.player_mmr[pid].update(zeroed)
+        # Their coins were just reset, so drop any active doubledown (and the
+        # map-override turn if they held it) rather than granting it for free.
+        self.bot.double_downs.discard(pid)
+        if self.bot.map_override_last_by == pid:
+            self.bot.map_override_last = 0
+            self.bot.map_override_last_by = None
         await ctx.send(f"Reset season stats and MMR for <@{pid}>.")
 
     @commands.command(name="forcereport")
@@ -857,8 +865,11 @@ class MaintenanceCommands(BotCommands):
         }
         backup_path.write_text(json.dumps(backup), encoding="utf-8")
 
-        # Wipe season stats for everyone; identity and quack_coins survive.
+        # Wipe season stats for everyone. Identity survives; quack coins are
+        # per-season and reset with the rest of the stats (see
+        # SEASON_STAT_DEFAULTS). Per-match coin state is dropped as well.
         mmr_collection.update_many({}, {"$set": SEASON_STAT_DEFAULTS})
+        clear_season_coin_state(self.bot)
         seasons.update_one(
             {"_id": "current"}, {"$set": {"matches_played": 0}}, upsert=True
         )
