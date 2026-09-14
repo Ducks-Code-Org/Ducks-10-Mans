@@ -56,18 +56,7 @@ class HelpCommand(commands.Cog):
                     "**!pingrecent** - Ping players from the most recent queue\n"
                     "**!toggledev** - Toggle Developer Mode\n"
                     "**!newseason** - Resets stats and starts a new season\n"
-                    "**!rollback** - Revert the most recent match's stats\n"
-                    "**!editplayer** - Edit a player's stats or Riot ID\n"
-                    "↪ _usage: `!editplayer <@user> <mmr|wins|losses|riot> <value>`_\n"
-                    "**!substitute** - Swap a player into the current match\n"
-                    "↪ _usage: `!substitute <@Out> <@In>`_\n"
-                    "**!enablereport** - Re-enable !report for the current match\n"
-                    "**!fixmap <map>** - Force-set the current match's map\n"
-                    "**!setconfig <key> <value>** - Update bot.ini settings live\n"
-                    "**!showconfig** - Show current bot.ini feature flags\n"
-                    "**!matchinfo** - Dump internal match/queue state\n"
-                    "**!addcoins <@user> <amount>** - Grant Quack Coins\n"
-                    "**!resetplayer <@user>** - Reset a player's season stats\n"
+                    "**!adminhelp** - List all admin commands\n"
                 ),
                 inline=False,
             )

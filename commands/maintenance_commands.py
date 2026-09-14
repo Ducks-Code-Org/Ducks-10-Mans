@@ -389,19 +389,6 @@ class MaintenanceCommands(BotCommands):
             "Report with `!report` as usual once the game is done."
         )
 
-    @commands.command(name="enablereport")
-    @commands.has_permissions(administrator=True)
-    async def enablereport(self, ctx):
-        """Re-enable !report after a failed attempt locked out the current match."""
-        if not self.bot.match_ongoing:
-            await ctx.send("No match is currently active.")
-            return
-        async with self.bot.report_lock:
-            self.bot.match_not_reported = True
-        await ctx.send(
-            "Reporting re-enabled — `!report` may be used again for the current match."
-        )
-
     @commands.command(name="fixmap")
     @commands.has_permissions(administrator=True)
     async def fixmap(self, ctx, *, map_name: str = ""):
@@ -450,6 +437,32 @@ class MaintenanceCommands(BotCommands):
         await ctx.send(
             f"**bot.ini [features]**\n```\n{chr(10).join(lines) or '(empty)'}\n```"
         )
+
+    @commands.command(name="adminhelp")
+    @commands.has_permissions(administrator=True)
+    async def adminhelp(self, ctx):
+        """List all admin commands with a one-line purpose."""
+        embed = discord.Embed(
+            title="Admin Commands",
+            description="Maintenance and management commands (admins only).",
+            color=discord.Color.red(),
+        )
+        # Walk every registered prefix command and keep the admin-gated ones
+        # (discord.py permission checks like has_permissions/has_role), so this
+        # list stays correct as commands come and go.
+        lines = []
+        for cmd in sorted(self.bot.commands, key=lambda c: c.name):
+            if not cmd.enabled:
+                continue
+            if not any(
+                getattr(check, "__module__", "").startswith("discord")
+                for check in cmd.checks
+            ):
+                continue
+            doc = (cmd.help or "").strip().splitlines()[0] if cmd.help else ""
+            lines.append(f"**!{cmd.name}** - {doc}")
+        embed.add_field(name="Commands", value="\n".join(lines) or "—", inline=False)
+        await ctx.send(embed=embed)
 
     @commands.command(name="matchinfo")
     @commands.has_permissions(administrator=True)
