@@ -39,6 +39,12 @@ class CustomBot(commands.Bot):
         # "this setup was cancelled or superseded" (e.g. by !cancel).
         self.setup_generation = 0
 
+        # Quack Coins (issue #34)
+        self.bet_session: dict | None = None
+        self.double_downs: set[str] = set()
+        self.map_override_last: int = 0
+        self.map_override_last_by: str | None = None
+
         self.load_mmr_data()
         seasons.update_one(
             {"_id": "current"},
@@ -254,6 +260,8 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.signup")
         await self.load_extension("commands.stats")
         await self.load_extension("commands.bug")
+        await self.load_extension("commands.quack_commands")
+        await self.tree.sync()
         print("Bot is ready and cogs are loaded.")
 
     async def purge_old_match_roles(self):

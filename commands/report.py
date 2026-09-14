@@ -10,6 +10,13 @@ from discord.ext import commands
 from commands import BotCommands
 from database import users, mmr_collection, seasons, all_matches
 from globals import feature_enabled
+from quack_coins import (
+    award_match_coins,
+    doubledown_multiplier_of,
+    quack_coins_enabled,
+    refund_open_bets,
+    settle_bets,
+)
 from ranks import sync_player_rank
 from recent_queue import remember_recent_queue
 from riot_api import RiotApiInconclusive, get_recent_matches_async
@@ -535,6 +542,34 @@ class ReportCommand(BotCommands):
 
         await ctx.send("Match stats and MMR updated!")
 
+        # ------------------------------------------------------------
+        # Quack Coins: doubledown multipliers, betting payout, +1 per match
+        # (all feature-gated on the quack_coins flag in bot.ini).
+        # ------------------------------------------------------------
+        winner_side = (
+            "attackers" if winning_match_team_ids == team1_ids_set else "defenders"
+        )
+        if quack_coins_enabled():
+            for pid in playing_team_ids:
+                mult = doubledown_multiplier_of(self.bot, pid)
+                if mult == 1:
+                    continue
+                entry = self.bot.player_mmr.get(pid)
+                if entry is None:
+                    continue
+                before = entry.get("mmr", 0)
+                if pid in pre_update_mmr:
+                    before = pre_update_mmr.get(pid, {}).get("mmr", before)
+                new = before + (entry.get("mmr", 0) - before) * mult
+                entry["mmr"] = max(0, round(new))
+            # Coins go to everyone who played; settle the spectator bets
+            # against the winning side.
+            award_match_coins(playing_team_ids)
+            try:
+                await settle_bets(self.bot, ctx.channel, winner_side)
+            except Exception as e:
+                print(f"[DEBUG] Bet settlement failed: {e}")
+
         # Build a per-player MMR gain/loss summary
         mmr_lines = []
         for label, team in (
@@ -694,6 +729,10 @@ class ReportCommand(BotCommands):
         self.bot.captain2 = None
         self.bot.team1 = []
         self.bot.team2 = []
+        self.bot.double_downs = set()
+        self.bot.map_override_last = 0
+        self.bot.map_override_last_by = None
+        refund_open_bets(self.bot)
         await cleanup_match_resources(self.bot)
 
 
