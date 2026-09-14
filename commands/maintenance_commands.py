@@ -571,14 +571,22 @@ class MaintenanceCommands(BotCommands):
 
     @commands.command(name="resetseason")
     @commands.has_permissions(administrator=True)
-    async def resetseason(self, ctx):
+    async def resetseason(self, ctx, *, confirm: str = ""):
         """
         Wipe all stats for the current season, without ending it.
+        Requires `!resetseason confirm` (two-step, no accidental wipes).
         Reversible: snapshots every player doc and the season counter to a
         backup file in the same format DebugTools revert backups use
         ({"$oid": ...} ObjectIds), restorable via
         `python DebugTools/revert_last_match.py --restore <file>`.
         """
+        if confirm.strip().lower() != "confirm":
+            await ctx.send(
+                "This wipes **everyone's** MMR and season stats. "
+                "If you're sure, run `!resetseason confirm`."
+            )
+            return
+
         from DebugTools.revert_last_match import _jsonify
 
         # Snapshot every player doc + the current season doc to a backup file
@@ -612,3 +620,4 @@ class MaintenanceCommands(BotCommands):
             f"Backup: `{backup_path.name}` (restorable via "
             "`python DebugTools/revert_last_match.py --restore`)."
         )
+        print(f"[resetseason] Season stats wiped; backup {backup_path.name}")
