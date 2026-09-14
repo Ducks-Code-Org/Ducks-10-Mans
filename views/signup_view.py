@@ -180,7 +180,7 @@ class SignupView(discord.ui.View):
 
         # Remember who was in the queue for !pingrecent
         if self.bot.queue:
-            remember_recent_queue(self.bot.queue)
+            remember_recent_queue(self.bot.queue, cancelled=True)
 
         # Invalidate this setup cycle, then clear variables
         self.bot.setup_generation += 1

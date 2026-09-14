@@ -8,7 +8,7 @@ from commands.report import cleanup_match_resources
 from commands.signup import cancel_background_purge
 from database import mmr_collection
 from ranks import remove_all_rank_roles
-from recent_queue import get_recent_queue, remember_recent_queue
+from recent_queue import get_recent_queue, pingrecent_message, remember_recent_queue
 from stats_helper import DEFAULT_MMR
 from views.signup_view import SignupView
 from views.mode_vote_view import ModeVoteView
@@ -179,7 +179,7 @@ class AdminCommands(BotCommands):
                 self.bot.signup_view = None
 
             if self.bot.queue:
-                remember_recent_queue(self.bot.queue)
+                remember_recent_queue(self.bot.queue, cancelled=True)
             self.bot.current_signup_message = None
             self.bot.signup_active = False
             self.bot.match_not_reported = False
@@ -197,7 +197,7 @@ class AdminCommands(BotCommands):
             )
             print("Cancelling signup...")
 
-            await cleanup_match_resources(self.bot)
+            await cleanup_match_resources(self.bot, cancelled=True)
         # Handle a match that is already in progress
         elif self.bot.match_ongoing or self.bot.selected_map:
             self.bot.setup_generation += 1
@@ -213,7 +213,7 @@ class AdminCommands(BotCommands):
             await ctx.send(
                 "Cancelled active match. Feel free to start a new one with `!signup`."
             )
-            await cleanup_match_resources(self.bot)
+            await cleanup_match_resources(self.bot, cancelled=True)
             print("Cancelling active match...")
         # Handle a signup whose queue already filled (match setup phase:
         # team-mode vote, map-pool vote, map vote, or captains draft)
@@ -231,7 +231,7 @@ class AdminCommands(BotCommands):
             await ctx.send(
                 "Cancelled match setup. Feel free to start a new one with `!signup`."
             )
-            await cleanup_match_resources(self.bot)
+            await cleanup_match_resources(self.bot, cancelled=True)
             print("Cancelling match setup...")
         else:
             await ctx.send("No active signup or match to cancel.")
@@ -240,12 +240,8 @@ class AdminCommands(BotCommands):
     @commands.has_role("Owner")
     async def pingrecent(self, ctx):
         """Pings everyone who was in the most recently cancelled/finished queue."""
-        recent_ids = get_recent_queue()
+        recent_ids, cancelled = get_recent_queue()
         if not recent_ids:
             await ctx.send("No recent queue found to ping.")
             return
-        await ctx.send(
-            "The most recent queue was cancelled. "
-            + " ".join(f"<@{pid}>" for pid in recent_ids)
-            + " — a new queue may be starting if you're up for a game!"
-        )
+        await ctx.send(pingrecent_message(recent_ids, cancelled))
