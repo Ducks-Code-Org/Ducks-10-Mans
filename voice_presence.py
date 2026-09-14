@@ -14,10 +14,13 @@ hanging or being cancelled.
 """
 
 import asyncio
+import logging
 
 import discord
 
 from globals import feature_enabled
+
+log = logging.getLogger(__name__)
 
 LOBBY_CHANNEL_NAME = "lobby"
 ATTACKERS_CHANNEL_NAME = "Attackers"
@@ -53,7 +56,7 @@ def _guild_voice_channels(guild):
     try:
         return list(guild.voice_channels)
     except Exception as e:  # fail open: presence checks must never break setup
-        print(f"[voice] Could not list voice channels: {e!r}")
+        log.warning("Could not list voice channels: %r", e)
         return None
 
 
@@ -77,7 +80,7 @@ def _voice_channel_of(guild, player_id: int):
         member = guild.get_member(player_id)
         return member.voice.channel if member and member.voice else None
     except Exception as e:  # fail open: an unreadable voice state is not "absent"
-        print(f"[voice] Could not read voice state for {player_id}: {e!r}")
+        log.warning("Could not read voice state for %s: %r", player_id, e)
         return _UNKNOWN
 
 
@@ -89,7 +92,7 @@ def missing_lobby_players(guild, queue) -> list[str]:
     """
     channels = _guild_voice_channels(guild)
     if not channels:
-        print("[voice] No inspectable voice channels; skipping presence check")
+        log.info("No inspectable voice channels; skipping presence check")
         return []
     lobby = _find_channel(channels, LOBBY_CHANNEL_NAME)
 
@@ -97,7 +100,7 @@ def missing_lobby_players(guild, queue) -> list[str]:
     for player in queue or []:
         player_id = _player_id(player)
         if player_id is None:
-            print(f"[voice] Skipping malformed queue entry: {player!r}")
+            log.warning("Skipping malformed queue entry: %r", player)
             continue
         channel = _voice_channel_of(guild, player_id)
         if channel is _UNKNOWN:
@@ -123,7 +126,7 @@ async def wait_for_lobby(
     """
     channels = _guild_voice_channels(guild)
     if not channels:
-        print("[voice] No voice channels to monitor; skipping lobby wait")
+        log.info("No voice channels to monitor; skipping lobby wait")
         return True
 
     missing = missing_lobby_players(guild, queue)
@@ -167,7 +170,7 @@ async def move_teams_to_voice(guild, team1, team2) -> None:
     """
     channels = _guild_voice_channels(guild)
     if channels is None:
-        print("[voice] Could not inspect voice channels; skipping team move")
+        log.warning("Could not inspect voice channels; skipping team move")
         return
 
     for name, team in (
@@ -180,13 +183,13 @@ async def move_teams_to_voice(guild, team1, team2) -> None:
                 channel = await guild.create_voice_channel(name)
                 channels.append(channel)
             except (discord.HTTPException, asyncio.TimeoutError) as e:
-                print(f"[voice] Could not create '{name}' voice channel: {e}")
+                log.warning("Could not create '%s' voice channel: %s", name, e)
                 continue
 
         for player in team or []:
             player_id = _player_id(player)
             if player_id is None:
-                print(f"[voice] Skipping malformed team entry: {player!r}")
+                log.warning("Skipping malformed team entry: %r", player)
                 continue
             try:
                 member = guild.get_member(player_id)
@@ -194,6 +197,6 @@ async def move_teams_to_voice(guild, team1, team2) -> None:
                     continue
                 await member.move_to(channel)
             except (discord.HTTPException, asyncio.TimeoutError) as e:
-                print(f"[voice] Could not move {player_id} to '{name}': {e}")
+                log.warning("Could not move %s to '%s': %s", player_id, name, e)
             except (AttributeError, TypeError) as e:
-                print(f"[voice] Could not inspect member {player_id}: {e}")
+                log.warning("Could not inspect member %s: %s", player_id, e)

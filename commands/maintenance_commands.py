@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import io
 import json
+import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -34,6 +35,8 @@ from riot_api import (
 from stats_helper import DEFAULT_MMR, update_stats
 from vlr_rating import estimate_ratings_v4
 from voice_presence import move_teams_to_voice, voice_presence_enabled
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
@@ -346,9 +349,11 @@ class MaintenanceCommands(BotCommands):
             if str(stale.get("discord_id")) != pid:
                 users.delete_one({"_id": stale["_id"]})
                 mmr_collection.delete_one({"player_id": stale.get("discord_id")})
-                print(
-                    f"[editplayer] Removed stale Riot ID link {riot_name}#{riot_tag} "
-                    f"from discord id {stale.get('discord_id')}"
+                log.info(
+                    "Removed stale Riot ID link %s#%s from discord id %s",
+                    riot_name,
+                    riot_tag,
+                    stale.get("discord_id"),
                 )
 
         set_fields = {"name": riot_name.lower(), "tag": riot_tag.lower()}
@@ -475,7 +480,7 @@ class MaintenanceCommands(BotCommands):
             try:
                 await move_teams_to_voice(ctx.guild, self.bot.team1, self.bot.team2)
             except Exception as e:
-                print(f"[substitute] Voice move failed: {e}")
+                log.warning("Voice move failed: %s", e)
 
         side = "Attackers" if team is self.bot.team1 else "Defenders"
         await ctx.send(
@@ -713,7 +718,7 @@ class MaintenanceCommands(BotCommands):
             try:
                 ratings = estimate_ratings_v4(match)
             except Exception as e:
-                print(f"[forcereport] VLR rating estimation failed: {e}")
+                log.warning("VLR rating estimation failed: %s", e)
                 ratings = {}
             wtid = next(
                 (t["team_id"].lower() for t in match.get("teams", []) if t.get("won")),
@@ -795,7 +800,7 @@ class MaintenanceCommands(BotCommands):
                 f"Reported match `{match_id}` "
                 f"({match['metadata'].get('map', {}).get('name', '?')}).\n{summary[:1800]}"
             )
-            print(f"[forcereport] Reported {match_id}")
+            log.info("Reported match %s", match_id)
 
     @staticmethod
     async def _fetch_match_by_id(session, match_id: str):
@@ -879,4 +884,4 @@ class MaintenanceCommands(BotCommands):
             f"Backup: `{backup_path.name}` (restorable via "
             "`python DebugTools/revert_last_match.py --restore`)."
         )
-        print(f"[resetseason] Season stats wiped; backup {backup_path.name}")
+        log.info("Season stats wiped; backup %s", backup_path.name)

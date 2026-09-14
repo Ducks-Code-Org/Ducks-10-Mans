@@ -1,6 +1,7 @@
 "Lookup and display MMR and stats for a player."
 
 from discord.ext import commands
+
 from commands import BotCommands
 from database import users
 from ranks import tier_for_player

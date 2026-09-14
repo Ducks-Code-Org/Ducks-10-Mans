@@ -1,7 +1,8 @@
 "Starts the signup process for a new match."
 
-import random
 import asyncio
+import logging
+import random
 
 import aiohttp
 import discord
@@ -9,9 +10,11 @@ from discord.ext import commands
 
 from commands import BotCommands
 from database import mmr_collection, users
+from identity import ensure_current_riot_identity
 from riot_api import riot_account_exists_async
 from views.signup_view import SignupView
-from identity import ensure_current_riot_identity
+
+log = logging.getLogger(__name__)
 
 
 def _remove_user_everywhere(doc) -> str:
@@ -22,7 +25,7 @@ def _remove_user_everywhere(doc) -> str:
     name = (doc.get("name") or "").strip()
     tag = (doc.get("tag") or "").strip()
     riot_id = f"{name}#{tag}"
-    print(f"[purge] Removed invalid Riot ID {riot_id} ({discord_id})")
+    log.info("Removed invalid Riot ID %s (%s)", riot_id, discord_id)
     return riot_id
 
 
@@ -35,7 +38,7 @@ def _kick_from_queue(bot, discord_id: str) -> None:
         view = getattr(bot, "signup_view", None)
         if view is not None:
             view.sign_up_button.label = f"Sign Up ({len(bot.queue)}/10)"
-            print(f"[purge] Kicked purged player from queue ({discord_id})")
+            log.info("Kicked purged player from queue (%s)", discord_id)
             # The signup message is refreshed by the periodic refresh task
             # and again after the background purge completes.
 
@@ -105,7 +108,7 @@ async def _run_background_purge(bot, ctx) -> None:
         # A new signup or !cancel superseded this purge run; stop quietly.
         raise
     except Exception as e:
-        print(f"[purge] Background purge failed: {e}")
+        log.error("Background purge failed: %s", e, exc_info=e)
 
 
 def cancel_background_purge(bot) -> None:
@@ -147,7 +150,7 @@ class SignupCommand(BotCommands):
                 return
 
             self.bot.load_mmr_data()
-            print("[DEBUG] Reloaded MMR data at start of signup")
+            log.debug("Reloaded MMR data at start of signup")
 
             # Clear any existing signup view
             if self.bot.signup_view is not None:
@@ -174,6 +177,7 @@ class SignupCommand(BotCommands):
         self.bot.selected_map = None
 
         self.bot.match_name = f"match-{random.randrange(1, 10**4):04}"
+        log.info("Starting signup for %s", self.bot.match_name)
 
         try:
             self.bot.match_role = await ctx.guild.create_role(
@@ -215,6 +219,7 @@ class SignupCommand(BotCommands):
                     await self.bot.match_channel.delete()
                 except discord.HTTPException:
                     pass
+            log.error("Error setting up queue: %s", e, exc_info=e)
             await ctx.send(f"Error setting up queue: {e}")
 
 

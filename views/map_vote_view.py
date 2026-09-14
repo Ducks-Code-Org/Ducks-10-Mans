@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import random
 
 import discord
@@ -7,9 +8,11 @@ from discord.ui import Button
 from database import users
 from stats_helper import DEFAULT_MMR
 from tracker_links import tracker_link
-from views.captains_drafting_view import SecondCaptainChoiceView
 from views import safe_reply
+from views.captains_drafting_view import SecondCaptainChoiceView
 from voice_presence import move_teams_to_voice, voice_presence_enabled
+
+log = logging.getLogger(__name__)
 
 
 class MapVoteView(discord.ui.View):
@@ -45,7 +48,7 @@ class MapVoteView(discord.ui.View):
         self.vote_lock = asyncio.Lock()
         self.vote_time_remaining = 25
 
-        print("Starting new map vote...")
+        log.info("Starting new map vote...")
 
     async def setup(self):
         # Select 3 random maps from the given pool
@@ -74,7 +77,7 @@ class MapVoteView(discord.ui.View):
 
     async def send_view(self):
         if self.is_setup_cancelled():
-            print("Map vote not sent because match setup was cancelled.")
+            log.info("Map vote not sent because match setup was cancelled.")
             self.voting_phase_ended = True
             self.stop()
             self.cancel_interaction_queue_task()
@@ -82,7 +85,7 @@ class MapVoteView(discord.ui.View):
             return
 
         if not self.bot.chosen_mode:
-            print("No mode selected at start of map vote.")
+            log.warning("No mode selected at start of map vote.")
             await self.ctx.send(
                 "Error: Game mode not selected. Please start a new queue."
             )
@@ -104,7 +107,7 @@ class MapVoteView(discord.ui.View):
                 await self.handle_map_vote(interaction, map)
             except Exception as e:
                 # Keep the queue alive so later interactions still work
-                print(f"[DEBUG] Error processing map vote interaction: {e}")
+                log.error("Error processing map vote interaction: %s", e, exc_info=e)
             finally:
                 # Ensure the waiting coroutine is notified, even if an error occurs
                 if not fut.done():
@@ -153,7 +156,7 @@ class MapVoteView(discord.ui.View):
         await interaction.message.edit(view=self)
 
         # Reply and check for vote finish
-        print(f"Recorded new vote. Current state: {self.map_votes}")
+        log.info("Recorded new vote. Current state: %s", self.map_votes)
         await safe_reply(interaction, f"Voted {map}.", ephemeral=True)
         await self.check_for_winner()
 
@@ -189,7 +192,7 @@ class MapVoteView(discord.ui.View):
                 )
                 message = f"{winning_map} wins by majority!"
                 await self.ctx.send(message)
-                print(message)
+                log.info(message)
                 await self.close_vote(winning_map)
                 return
 
@@ -206,17 +209,17 @@ class MapVoteView(discord.ui.View):
                 if len(winners) > 1:
                     message = f"Tie! Randomly selected: **{winning_map}**"
                     await self.ctx.send(message)
-                    print(message)
+                    log.info(message)
                 else:
                     message = f"{winning_map} wins by {result}!"
                     await self.ctx.send(message)
-                    print(message)
+                    log.info(message)
                 await self.close_vote(winning_map)
                 return
 
     async def close_vote(self, winning_map: str):
         if self.is_setup_cancelled():
-            print("Map vote skipping close because match setup was cancelled.")
+            log.info("Map vote skipping close because match setup was cancelled.")
             self.voting_phase_ended = True
             self.stop()
             self.cancel_interaction_queue_task()
@@ -270,12 +273,12 @@ class MapVoteView(discord.ui.View):
         )
 
         if len(sorted_players) < 2:
-            print(
+            log.warning(
                 "Not enough players in the queue to assign captains. Stopping queue..."
             )
             return False
         if len(sorted_players) < 5:
-            print("Warning: Less than 5 players detected in queue. Continuing...")
+            log.warning("Less than 5 players detected in queue. Continuing...")
             self.bot.captain1 = sorted_players[0]
             self.bot.captain2 = sorted_players[1]
             return True
@@ -302,7 +305,7 @@ class MapVoteView(discord.ui.View):
 
     async def finalize_match_setup(self):
         if self.is_setup_cancelled():
-            print("Skipping match finalization because match setup was cancelled.")
+            log.info("Skipping match finalization because match setup was cancelled.")
             return
 
         # Finalize teams after map chosen

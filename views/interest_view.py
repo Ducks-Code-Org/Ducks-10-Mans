@@ -1,6 +1,6 @@
 # views/interest_view.py
 import discord
-from discord.ui import View, Button
+from discord.ui import Button, View
 
 from database import interests, users
 from globals import TIME_ZONE_CST

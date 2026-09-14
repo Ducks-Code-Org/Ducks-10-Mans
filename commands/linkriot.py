@@ -1,14 +1,17 @@
 "Link your Riot account to your Discord account."
 
 import asyncio
+import logging
 
 import aiohttp
 from discord.ext import commands
 
 from commands import BotCommands
-from database import users, mmr_collection
+from database import mmr_collection, users
 from riot_api import RiotApiInconclusive, get_account_by_riot_id
 from tracker_links import tracker_link
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
@@ -51,9 +54,11 @@ class LinkRiotCommand(BotCommands):
             if str(stale.get("discord_id")) != discord_id:
                 users.delete_one({"_id": stale["_id"]})
                 mmr_collection.delete_one({"player_id": stale.get("discord_id")})
-                print(
-                    f"[linkriot] Removed stale Riot ID link {riot_name}#{riot_tag} "
-                    f"from discord id {stale.get('discord_id')}"
+                log.info(
+                    "Removed stale Riot ID link %s#%s from discord id %s",
+                    riot_name,
+                    riot_tag,
+                    stale.get("discord_id"),
                 )
 
         users.update_one(
@@ -75,4 +80,7 @@ class LinkRiotCommand(BotCommands):
 
         await ctx.send(
             f"Successfully linked {tracker_link(riot_name, riot_tag)} to your Discord account."
+        )
+        log.info(
+            "Linked Riot ID %s#%s to discord id %s", riot_name, riot_tag, discord_id
         )

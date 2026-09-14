@@ -1,14 +1,15 @@
 "Report the most recent match played to update MMR and stats."
 
-import copy
 import asyncio
+import copy
+import logging
 
 import aiohttp
 import discord
 from discord.ext import commands
 
 from commands import BotCommands
-from database import users, mmr_collection, seasons, all_matches
+from database import all_matches, mmr_collection, seasons, users
 from globals import feature_enabled
 from quack_coins import (
     award_match_coins,
@@ -24,6 +25,8 @@ from stats_helper import update_stats
 from tracker_links import tracker_link
 from vlr_rating import estimate_ratings_v4
 
+log = logging.getLogger(__name__)
+
 
 async def setup(bot):
     if not hasattr(bot, "report_lock"):
@@ -36,9 +39,9 @@ async def _delete_channel_safely(channel) -> None:
     try:
         await channel.delete()
     except discord.NotFound:
-        print("[DEBUG] Match channel already deleted")
+        log.debug("Match channel already deleted")
     except discord.Forbidden:
-        print("[DEBUG] Missing permissions to delete match channel")
+        log.warning("Missing permissions to delete match channel")
 
 
 async def _remove_role_safely(role) -> None:
@@ -48,15 +51,15 @@ async def _remove_role_safely(role) -> None:
             try:
                 await member.remove_roles(role)
             except discord.HTTPException:
-                print("[DEBUG] Error removing role from member")
+                log.warning("Error removing role from member")
     except discord.HTTPException:
-        print("[DEBUG] Error removing roles from members")
+        log.warning("Error removing roles from members")
     try:
         await role.delete()
     except discord.NotFound:
-        print("[DEBUG] Match role already deleted")
+        log.debug("Match role already deleted")
     except discord.Forbidden:
-        print("[DEBUG] Missing permissions to delete match role")
+        log.warning("Missing permissions to delete match role")
 
 
 async def _delete_signup_message_safely(message) -> None:
@@ -88,7 +91,7 @@ async def cleanup_match_resources(bot, cancelled: bool = False):
             await _delete_signup_message_safely(bot.current_signup_message)
             bot.current_signup_message = None
     except Exception as e:
-        print(f"[DEBUG] Error during cleanup: {e}")
+        log.error("Error during cleanup: %s", e, exc_info=e)
 
 
 async def grant_season_roles(guild, players) -> None:
@@ -103,7 +106,7 @@ async def grant_season_roles(guild, players) -> None:
     try:
         season_number = int((season_doc or {}).get("season_number", 0))
     except (TypeError, ValueError):
-        print("[season] Invalid season_number stored; skipping season role grant")
+        log.warning("Invalid season_number stored; skipping season role grant")
         return
     if season_number < 0:
         return
@@ -114,7 +117,7 @@ async def grant_season_roles(guild, players) -> None:
         try:
             season_role = await guild.create_role(name=role_name)
         except discord.Forbidden:
-            print("[season] Missing permissions to create the season role")
+            log.warning("Missing permissions to create the season role")
             return
 
     for player in players:
@@ -122,16 +125,16 @@ async def grant_season_roles(guild, players) -> None:
             player_id = int(player["id"])
             member = guild.get_member(player_id) or await guild.fetch_member(player_id)
         except (KeyError, TypeError, ValueError):
-            print(f"[season] Skipping player with invalid id: {player!r}")
+            log.warning("Skipping player with invalid id: %r", player)
             continue
         except discord.HTTPException as e:
-            print(f"[season] Could not look up member {player.get('id')}: {e}")
+            log.warning("Could not look up member %s: %s", player.get("id"), e)
             continue
         if season_role not in member.roles:
             try:
                 await member.add_roles(season_role)
             except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
-                print(f"[season] Could not grant role to {player_id}: {e}")
+                log.warning("Could not grant role to %s: %s", player_id, e)
 
 
 class ReportCommand(BotCommands):
@@ -287,7 +290,7 @@ class ReportCommand(BotCommands):
 
         queue_riot_ids = {(member["name"], member["tag"]) for member in queue_members}
 
-        print(f"[DEBUG] Queued players RIOT ID's: {queue_riot_ids}")
+        log.debug("Queued players RIOT ID's: %s", queue_riot_ids)
 
         # get the list of players in the match
         match_player_names = set()
@@ -296,7 +299,7 @@ class ReportCommand(BotCommands):
             player_tag = player.get("tag", "").lower()
             match_player_names.add((player_name, player_tag))
 
-        print(f"[DEBUG] match_player_names from API: {match_player_names}")
+        log.debug("match_player_names from API: %s", match_player_names)
 
         if not queue_riot_ids.issubset(match_player_names):
             # Find which players don't match
@@ -333,7 +336,7 @@ class ReportCommand(BotCommands):
                 winning_team_id = team.get("team_id", "").lower()
                 break
 
-        print(f"[DEBUG]: Winning team: {winning_team_id}")
+        log.debug("Winning team: %s", winning_team_id)
         if not winning_team_id:
             await ctx.send("Could not determine the winning team.")
             return
@@ -348,11 +351,11 @@ class ReportCommand(BotCommands):
         team1_ids_set = {str(player["id"]) for player in self.bot.team1}
         team2_ids_set = {str(player["id"]) for player in self.bot.team2}
 
-        print(f"[DEBUG] team1 discord ids: {team1_ids_set}")
-        print(f"[DEBUG] team2 discord ids: {team2_ids_set}")
+        log.debug("team1 discord ids: %s", team1_ids_set)
+        log.debug("team2 discord ids: %s", team2_ids_set)
 
         winning_match_team_ids = set(match_team_players.get(winning_team_id, {}))
-        print(f"[DEBUG] Winning team Discord ID's: {winning_match_team_ids}")
+        log.debug("Winning team Discord ID's: %s", winning_match_team_ids)
 
         if winning_match_team_ids == team1_ids_set:
             playing_team_ids = [str(p["id"]) for p in self.bot.team1] + [
@@ -446,7 +449,7 @@ class ReportCommand(BotCommands):
         try:
             match_ratings = estimate_ratings_v4(match)
         except Exception as e:
-            print(f"[DEBUG] VLR rating estimation failed, skipping: {e}")
+            log.warning("VLR rating estimation failed, skipping: %s", e)
             match_ratings = {}
 
         # Per-team MMR averages feed the new ΔMMR expectation term. New
@@ -522,9 +525,10 @@ class ReportCommand(BotCommands):
         for player_stats in match_players:
             p_discord_id = _resolve_api_player(player_stats)
             if not p_discord_id:
-                print(
-                    f"[DEBUG] API player {player_stats.get('name')}#"
-                    f"{player_stats.get('tag')} is not in the queue; skipping"
+                log.info(
+                    "API player %s#%s is not in the queue; skipping",
+                    player_stats.get("name"),
+                    player_stats.get("tag"),
                 )
                 continue
             team_label = discord_to_teamlabel.get(p_discord_id)
@@ -551,7 +555,7 @@ class ReportCommand(BotCommands):
                     else 1
                 ),
             )
-        print("[DEBUG] Basic stats updated")
+        log.info("Basic stats updated for all players")
 
         await ctx.send("Match stats and MMR updated!")
 
@@ -568,7 +572,7 @@ class ReportCommand(BotCommands):
             try:
                 await settle_bets(self.bot, ctx.channel, winner_side)
             except Exception as e:
-                print(f"[DEBUG] Bet settlement failed: {e}")
+                log.error("Bet settlement failed: %s", e, exc_info=e)
 
         # Build a per-player MMR gain/loss summary
         mmr_lines = []
@@ -614,7 +618,7 @@ class ReportCommand(BotCommands):
             await ctx.send(embed=results_embed)
 
         self.bot.save_mmr_data()
-        print("[DEBUG] MMR data saved")
+        log.info("MMR data saved")
 
         # Record each player's previous leaderboard rank so the
         # leaderboard can display rank gain/loss since the last match
@@ -653,7 +657,7 @@ class ReportCommand(BotCommands):
                 upsert=True,
             )
 
-        print("[DEBUG] All stats saved to database")
+        log.info("All stats saved to database")
 
         sorted_mmr_after = sorted(
             self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
@@ -702,7 +706,7 @@ class ReportCommand(BotCommands):
                         is_rank_one=(position == 0),
                     )
                 except Exception as e:
-                    print(f"[ranks] Rank sync failed for {pid}: {e}")
+                    log.warning("Rank sync failed for %s: %s", pid, e)
 
         # Record every match played in a new collection
         all_matches.insert_one(match)
@@ -716,7 +720,7 @@ class ReportCommand(BotCommands):
         try:
             await grant_season_roles(ctx.guild, self.bot.team1 + self.bot.team2)
         except Exception as e:
-            print(f"[DEBUG] Failed to grant season roles: {e}")
+            log.error("Failed to grant season roles: %s", e, exc_info=e)
 
         await asyncio.sleep(5)
         self.bot.match_not_reported = False

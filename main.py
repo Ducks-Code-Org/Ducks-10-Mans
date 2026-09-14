@@ -4,6 +4,10 @@ import discord
 
 from bot import CustomBot
 from globals import BOT_TOKEN
+from logging_setup import setup_logging
+
+# Set up logging (level from bot.ini; must run before any module logs)
+discord_logger = setup_logging()
 
 # Set up bot
 intents = discord.Intents.default()
@@ -17,6 +21,7 @@ bot = CustomBot(
     intents=intents,
     help_command=None,
 )
+bot.discord_log_handler = discord_logger
 
 # Run the bot
 bot.run(BOT_TOKEN)
