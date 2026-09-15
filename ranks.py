@@ -68,15 +68,6 @@ def tier_for_player(mmr: int, *, matches_played: int) -> str | None:
     return rank_of(mmr)
 
 
-def help_menu_text() -> str:
-    """Rank tier listing for the !help embed."""
-    lines = []
-    for threshold, name, color in RANKS:
-        lines.append(f"• **{name}** — {threshold}+ ({color})")
-    lines.append(f"• **{SSR_NAME}** — Rank 1 ({SSR_COLOR})")
-    return "\n".join(lines)
-
-
 async def _role_for(guild: discord.Guild, name: str, color_hex: str):
     """Find a role by name, creating it with the tier color if missing."""
     role = discord.utils.get(guild.roles, name=name)

@@ -292,17 +292,56 @@ def demo():
     assert safety["collections"]["seasons"][0]["matches_played"] == 99
 
     # --- adminhelp: embed fields must never exceed Discord's 1024-char limit
-    long_lines = [f"**!cmd{i}** - {'x' * 120}" for i in range(20)]
+    long_lines = [f"**`!cmd{i} <arg>`**\n↪ {'x' * 120}" for i in range(20)]
     chunks = mc._chunk_embed_lines(long_lines)
     assert all(len(c) <= 1000 for c in chunks), [len(c) for c in chunks]
     # Whole lines are preserved: rejoining the chunks reproduces the input.
     assert "\n".join(chunks) == "\n".join(long_lines), "chunking must not lose lines"
     # A list that fits stays in a single chunk.
-    assert mc._chunk_embed_lines(["**!one** - hi", "**!two** - ho"]) == [
-        "**!one** - hi\n**!two** - ho"
-    ]
+    assert mc._chunk_embed_lines(["a", "b"]) == ["a\nb"]
     # Empty input falls back to the em-dash placeholder.
     assert mc._chunk_embed_lines([]) == ["—"]
+
+    # --- adminhelp: curated help map constraints ---------------------------
+    # Every description must be 10 words or fewer (the embed contract).
+    for name, (usage_args, desc) in mc.ADMIN_COMMAND_HELP.items():
+        assert len(desc.split()) <= 10, (name, desc)
+        assert usage_args == usage_args.strip(), name
+    # Fallbacks: a command absent from the map derives usage from its
+    # signature and truncates its docstring to 10 words.
+    import inspect
+
+    def _fake_cmd(name, params, doc):
+        c = types.SimpleNamespace(name=name, help=doc, enabled=True, checks=[])
+        c.clean_params = params
+        return c
+
+    import inspect as _inspect
+
+    no_args = _fake_cmd("unknowncmd", {}, "First line here.\nSecond line.")
+    assert mc._usage_args_of(no_args) == ""
+    assert mc._short_desc_of(no_args) == "First line here."
+    sig = _fake_cmd(
+        "withargs",
+        {
+            "required": _inspect.Parameter(
+                "required", _inspect.Parameter.POSITIONAL_OR_KEYWORD
+            ),
+            "optional": _inspect.Parameter(
+                "optional", _inspect.Parameter.POSITIONAL_OR_KEYWORD, default="x"
+            ),
+            "rest": _inspect.Parameter("rest", _inspect.Parameter.VAR_POSITIONAL),
+        },
+        "one two three four five six seven eight nine ten eleven twelve",
+    )
+    assert mc._usage_args_of(sig) == "<required> [optional] <rest...>"
+    assert (
+        mc._short_desc_of(sig) == "one two three four five six seven eight nine ten..."
+    )
+    # Curated entries win over signature/docstring for known commands.
+    known = _fake_cmd("addcoins", {}, "long docstring ignored")
+    assert mc._usage_args_of(known) == "<@user|Name#Tag> <amount>"
+    assert mc._short_desc_of(known) == "Grant or remove a player's Duck Coins"
     tmpdir.cleanup()
     print("snapshot/recover season self-checks passed")
 

@@ -1,8 +1,6 @@
 import discord
 from discord.ext import commands
 
-from ranks import help_menu_text
-
 
 async def setup(bot):
     await bot.add_cog(HelpCommand(bot))
@@ -34,13 +32,6 @@ class HelpCommand(commands.Cog):
                 "**!setmap <map>** - Spend Duck Coins to override the chosen map\n"
                 "**!bug** - Report a bug (pings the maintainers)\n"
             ),
-            inline=False,
-        )
-
-        # Rank tiers and their MMR thresholds
-        help_embed.add_field(
-            name="Ranks",
-            value=help_menu_text(),
             inline=False,
         )
 

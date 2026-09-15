@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import gzip
+import inspect
 import io
 import json
 import logging
@@ -89,6 +90,66 @@ def _chunk_embed_lines(lines: list[str], limit: int = 1000) -> list[str]:
     if current:
         chunks.append("\n".join(current))
     return chunks or ["—"]
+
+
+# Curated help for the !adminhelp embed: (usage arguments, description of 10
+# words max) per admin-gated command, keyed by command name. A command
+# missing from this map falls back to a signature-derived usage line and its
+# docstring's first line truncated to 10 words, so new commands still show
+# up reasonably until added here.
+ADMIN_COMMAND_HELP: dict[str, tuple[str, str]] = {
+    "newseason": ("[noreset]", "Start a new season and crown the SSR winner"),
+    "initialize_rounds": ("", "Zero every player's total rounds played"),
+    "simulate_queue": ("", "Fill the queue with 10 fake players"),
+    "toggledev": ("", "Toggle developer mode (switches the prefix)"),
+    "cancel": ("", "Cancel the active signup or match"),
+    "rollback": ("", "Undo the most recent reported match"),
+    "editplayer": (
+        "<@user|Name#Tag> <mmr|wins|losses|riot> <value>",
+        "Edit a player's stats or linked Riot ID",
+    ),
+    "substitute": ("<@out> <@in>", "Swap a substitute into the current match"),
+    "fixmap": ("<map>", "Force-set the current match's map"),
+    "setconfig": ("<key> <value>", "Update a bot.ini feature flag live"),
+    "showconfig": ("", "Show current bot.ini feature flags"),
+    "matchinfo": ("", "Dump internal match and queue state"),
+    "adminhelp": ("", "List admin commands with usage"),
+    "addcoins": ("<@user|Name#Tag> <amount>", "Grant or remove a player's Duck Coins"),
+    "resetplayer": ("<@user|Name#Tag>", "Reset one player's season stats"),
+    "forcereport": ("<match-id-or-URL>", "Report a specific match by id"),
+    "resetseason": ("confirm", "Wipe everyone's current-season stats"),
+    "snapshotseason": ("[full]", "Export season data as a .json.gz"),
+    "recoverseason": ("confirm", "Restore season data from an attached snapshot"),
+}
+
+
+def _usage_args_of(cmd) -> str:
+    """Usage arguments for a command: curated hint or signature-derived."""
+    curated = ADMIN_COMMAND_HELP.get(cmd.name)
+    if curated is not None:
+        return curated[0]
+    params = []
+    for name, param in cmd.clean_params.items():
+        if param.kind == inspect.Parameter.VAR_POSITIONAL:
+            params.append(f"<{name}...>")
+        elif param.default is inspect.Parameter.empty:
+            params.append(f"<{name}>")
+        else:
+            params.append(f"[{name}]")
+    return " ".join(params)
+
+
+def _short_desc_of(cmd, max_words: int = 10) -> str:
+    """A 10-words-max description: curated hint or docstring's first line."""
+    curated = ADMIN_COMMAND_HELP.get(cmd.name)
+    if curated is not None:
+        return curated[1]
+    doc = (cmd.help or "").strip()
+    first = doc.splitlines()[0] if doc else ""
+    words = first.split()
+    if len(words) > max_words:
+        return " ".join(words[:max_words]) + "..."
+    return first or "—"
 
 
 # Season stat fields wiped by !resetplayer / !resetseason (matches the
@@ -594,7 +655,7 @@ class MaintenanceCommands(BotCommands):
     @commands.command(name="adminhelp")
     @commands.has_permissions(administrator=True)
     async def adminhelp(self, ctx):
-        """List all admin commands with a one-line purpose."""
+        """List admin commands with usage."""
         embed = discord.Embed(
             title="Admin Commands",
             description="Maintenance and management commands (admins only).",
@@ -612,12 +673,10 @@ class MaintenanceCommands(BotCommands):
                 for check in cmd.checks
             ):
                 continue
-            doc = (cmd.help or "").strip().splitlines()[0] if cmd.help else ""
-            # Keep one line well under the 1024-char field limit even when
-            # many commands share a field.
-            if len(doc) > 90:
-                doc = doc[:87] + "..."
-            lines.append(f"**!{cmd.name}** - {doc}")
+            usage_args = _usage_args_of(cmd)
+            usage = f"!{cmd.name} {usage_args}".strip()
+            desc = _short_desc_of(cmd)
+            lines.append(f"**`{usage}`**\n↪ {desc}")
         chunks = _chunk_embed_lines(lines)
         for i, chunk in enumerate(chunks, start=1):
             name = "Commands" if len(chunks) == 1 else f"Commands ({i}/{len(chunks)})"
