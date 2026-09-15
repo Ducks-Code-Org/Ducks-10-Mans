@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import gzip
 import io
 import json
 import logging
@@ -59,6 +60,35 @@ def _season_match_filter(season_num: int) -> dict:
     return {
         "$or": [{"season_number": season_num}, {"season_number": {"$exists": False}}]
     }
+
+
+# Conservative upload budget for !snapshotseason attachments: Discord caps
+# message uploads (10 MiB non-boosted), so stay under it after compression.
+SNAPSHOT_UPLOAD_LIMIT = 8 * 1024 * 1024
+
+
+def _chunk_embed_lines(lines: list[str], limit: int = 1000) -> list[str]:
+    """Split command-list lines into embed-field-sized chunks.
+
+    Discord rejects any embed field whose value exceeds 1024 characters
+    (error 50035), so a long command list must be spread across fields.
+    Each returned chunk is a newline join of whole lines.
+    """
+    chunks: list[str] = []
+    current: list[str] = []
+    length = 0
+    for line in lines:
+        extra = len(line) + (1 if current else 0)  # +1 for the joining newline
+        if current and length + extra > limit:
+            chunks.append("\n".join(current))
+            current = []
+            length = 0
+            extra = len(line)
+        current.append(line)
+        length += extra
+    if current:
+        chunks.append("\n".join(current))
+    return chunks or ["—"]
 
 
 # Season stat fields wiped by !resetplayer / !resetseason (matches the
@@ -583,8 +613,15 @@ class MaintenanceCommands(BotCommands):
             ):
                 continue
             doc = (cmd.help or "").strip().splitlines()[0] if cmd.help else ""
+            # Keep one line well under the 1024-char field limit even when
+            # many commands share a field.
+            if len(doc) > 90:
+                doc = doc[:87] + "..."
             lines.append(f"**!{cmd.name}** - {doc}")
-        embed.add_field(name="Commands", value="\n".join(lines) or "—", inline=False)
+        chunks = _chunk_embed_lines(lines)
+        for i, chunk in enumerate(chunks, start=1):
+            name = "Commands" if len(chunks) == 1 else f"Commands ({i}/{len(chunks)})"
+            embed.add_field(name=name, value=chunk, inline=False)
         await ctx.send(embed=embed)
 
     @commands.command(name="matchinfo")
@@ -950,9 +987,8 @@ class MaintenanceCommands(BotCommands):
             },
         }
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        filename = f"season_snapshot_{season_num}_{stamp}.json"
-        payload = json.dumps(backup, default=str).encode("utf-8")
-        await ctx.send(
+        filename = f"season_snapshot_{season_num}_{stamp}.json.gz"
+        summary = (
             f"Season {season_num} snapshot: {len(matches)} match(es), "
             f"{len(mmr_docs)} player doc(s)"
             + (
@@ -960,7 +996,31 @@ class MaintenanceCommands(BotCommands):
                 if include_users
                 else ""
             )
-            + ".",
+            + "."
+        )
+        # Season payloads are highly repetitive JSON, so gzip shrinks them
+        # ~10-20x; !recoverseason sniffs the gzip magic bytes. Snapshots that
+        # still exceed the upload budget are written to the bot's backups
+        # folder instead of failing with a 413.
+        payload = gzip.compress(json.dumps(backup, default=str).encode("utf-8"))
+        if len(payload) > SNAPSHOT_UPLOAD_LIMIT:
+            disk_path = Path(globals_mod.__file__).parent / "backups" / filename
+            disk_path.parent.mkdir(parents=True, exist_ok=True)
+            disk_path.write_bytes(payload)
+            await ctx.send(
+                f"{summary} Snapshot is too large to upload here; saved to "
+                f"`backups/{filename}`."
+            )
+            log.info(
+                "%s snapshotted season %s to disk (%s bytes): %s",
+                ctx.author,
+                season_num,
+                len(payload),
+                disk_path,
+            )
+            return
+        await ctx.send(
+            summary,
             file=discord.File(io.BytesIO(payload), filename=filename),
         )
         log.info(
@@ -995,11 +1055,16 @@ class MaintenanceCommands(BotCommands):
         from DebugTools.revert_last_match import _dejsonify, _jsonify
 
         attachment = ctx.message.attachments[0]
-        if not attachment.filename.lower().endswith(".json"):
-            await ctx.send("Snapshot must be a .json file.")
+        if not attachment.filename.lower().endswith((".json", ".json.gz")):
+            await ctx.send("Snapshot must be a .json or .json.gz file.")
             return
         try:
-            backup = json.loads(await attachment.read())
+            raw = await attachment.read()
+            # !snapshotseason gzips its payload; sniff the magic bytes so
+            # both plain and gzipped snapshots are accepted.
+            if raw[:2] == b"\x1f\x8b":
+                raw = gzip.decompress(raw)
+            backup = json.loads(raw)
         except Exception as e:
             await ctx.send(f"Could not read the attachment as JSON: {e}")
             return

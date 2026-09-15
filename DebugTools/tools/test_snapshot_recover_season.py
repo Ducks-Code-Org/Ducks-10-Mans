@@ -1,4 +1,5 @@
 import asyncio
+import gzip
 import json
 import os
 import sys
@@ -37,7 +38,9 @@ class _FakeEmbed:
 
 _discord_stub = types.ModuleType("discord")
 _discord_stub.Embed = _FakeEmbed
-_discord_stub.File = lambda *a, **k: types.SimpleNamespace(fp=a[0] if a else None)
+_discord_stub.File = lambda *a, **k: types.SimpleNamespace(
+    fp=a[0] if a else None, filename=k.get("filename", "")
+)
 _discord_stub.utils = types.SimpleNamespace(get=lambda *a, **k: None)
 _discord_stub.NotFound = type("NotFound", (Exception,), {})
 _discord_stub.HTTPException = type("HTTPException", (Exception,), {})
@@ -200,7 +203,9 @@ def demo():
     msg, kw = ctx.sent[0][0][0], ctx.sent[0][1]
     assert f"Season {season_num} snapshot: 2 match(es)" in msg, msg
     assert "1 player doc(s)" in msg, msg
-    payload = kw["file"].fp.getvalue()
+    # Snapshots are gzipped (Discord upload limits); the filename says so.
+    assert kw["file"].filename.endswith(".json.gz"), kw["file"].filename
+    payload = gzip.decompress(kw["file"].fp.getvalue())
     backup = json.loads(payload)
     assert backup["format"] == "season-snapshot"
     assert backup["season_number"] == season_num
@@ -220,7 +225,7 @@ def demo():
     # full snapshot includes users
     ctx2 = FakeCtx(FakeMessage([]))
     asyncio.run(cog.snapshotseason(ctx2, arg="full"))
-    backup2 = json.loads(ctx2.sent[0][1]["file"].fp.getvalue())
+    backup2 = json.loads(gzip.decompress(ctx2.sent[0][1]["file"].fp.getvalue()))
     assert len(backup2["collections"]["users"]) == 1
 
     # BSON round-trip: $oid / $date survive json -> json
@@ -261,7 +266,9 @@ def demo():
     # Snapshot the live (drifted) state before recovery so the on-disk safety
     # backup can be checked after the command runs.
     safety_dir = Path(mc.globals_mod.__file__).parent / "backups"
-    ctx7 = FakeCtx(FakeMessage([FakeAttachment("snap.json", payload)]))
+    # The snapshot is round-tripped gzipped, exactly as !snapshotseason sends it.
+    gz_snapshot = gzip.compress(json.dumps(backup).encode("utf-8"))
+    ctx7 = FakeCtx(FakeMessage([FakeAttachment("snap.json.gz", gz_snapshot)]))
     asyncio.run(cog.recoverseason(ctx7, arg="confirm"))
     # matches: snapshot's 2 restored; the drifted extra deleted; other season kept
     assert len(mc.all_matches.docs) == 3, mc.all_matches.docs
@@ -283,6 +290,19 @@ def demo():
     safety = json.loads(safety_files[0].read_text())
     assert safety["collections"]["mmr_data"][0]["mmr"] == 0.0
     assert safety["collections"]["seasons"][0]["matches_played"] == 99
+
+    # --- adminhelp: embed fields must never exceed Discord's 1024-char limit
+    long_lines = [f"**!cmd{i}** - {'x' * 120}" for i in range(20)]
+    chunks = mc._chunk_embed_lines(long_lines)
+    assert all(len(c) <= 1000 for c in chunks), [len(c) for c in chunks]
+    # Whole lines are preserved: rejoining the chunks reproduces the input.
+    assert "\n".join(chunks) == "\n".join(long_lines), "chunking must not lose lines"
+    # A list that fits stays in a single chunk.
+    assert mc._chunk_embed_lines(["**!one** - hi", "**!two** - ho"]) == [
+        "**!one** - hi\n**!two** - ho"
+    ]
+    # Empty input falls back to the em-dash placeholder.
+    assert mc._chunk_embed_lines([]) == ["—"]
     tmpdir.cleanup()
     print("snapshot/recover season self-checks passed")
 
