@@ -140,12 +140,6 @@ class LeaderboardView(View):
         start_index = self.current_page * self.players_per_page
         end_index = min((self.current_page + 1) * self.players_per_page, len(data))
 
-        coin_emote = ""
-        if show_coins:
-            from duck_coins import duck_emote
-
-            coin_emote = duck_emote(self.bot)
-
         for idx, player_data in enumerate(data[start_index:end_index], start=1):
             player_id = str(player_data["player_id"])
             user_data = users.find_one({"discord_id": player_id})
@@ -178,7 +172,9 @@ class LeaderboardView(View):
                 f"{kd_ratio:.2f}",
             ]
             if show_coins:
-                row.append(f"{player_data.get('duck_coins', 0)} {coin_emote}")
+                # Plain number only: this table renders inside a Discord code
+                # block, where custom emojis like :duckcoin: show as raw text.
+                row.append(player_data.get("duck_coins", 0))
             leaderboard_data.append(row)
 
         table_output = t2a(
