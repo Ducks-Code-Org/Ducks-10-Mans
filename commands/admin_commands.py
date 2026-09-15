@@ -11,7 +11,7 @@ from commands.signup import cancel_background_purge
 from database import mmr_collection
 from duck_coins import refund_open_bets
 from ranks import remove_all_rank_roles
-from recent_queue import get_recent_queue, pingrecent_message, remember_recent_queue
+from recent_queue import remember_recent_queue
 from stats_helper import DEFAULT_MMR
 from views.mode_vote_view import ModeVoteView
 from views.signup_view import SignupView
@@ -271,14 +271,3 @@ class AdminCommands(BotCommands):
             log.info("Cancelling match setup...")
         else:
             await ctx.send("No active signup or match to cancel.")
-
-    @commands.command()
-    @commands.has_role("Owner")
-    async def pingrecent(self, ctx):
-        """Pings everyone who was in the most recently cancelled/finished queue."""
-        recent_ids, cancelled = get_recent_queue()
-        if not recent_ids:
-            await ctx.send("No recent queue found to ping.")
-            return
-        log.info("%s pinged %s recent queue player(s)", ctx.author, len(recent_ids))
-        await ctx.send(pingrecent_message(recent_ids, cancelled))

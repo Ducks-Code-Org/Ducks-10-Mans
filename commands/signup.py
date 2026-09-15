@@ -11,6 +11,7 @@ from discord.ext import commands
 from commands import BotCommands
 from database import mmr_collection, users
 from identity import ensure_current_riot_identity
+from recent_queue import get_recent_queue, pingrecent_message
 from riot_api import riot_account_exists_async
 from views.signup_view import SignupView
 
@@ -124,6 +125,7 @@ async def setup(bot):
     if not hasattr(bot, "signup_lock"):
         bot.signup_lock = asyncio.Lock()
     await bot.add_cog(SignupCommand(bot))
+    await bot.add_cog(PingRecentCommand(bot))
 
 
 class SignupCommand(BotCommands):
@@ -237,3 +239,15 @@ async def ensure_perms(ctx) -> bool:
         )
         return False
     return True
+
+
+class PingRecentCommand(BotCommands):
+    @commands.command(name="pingrecent")
+    async def pingrecent(self, ctx):
+        """Pings everyone who was in the most recently cancelled/finished queue."""
+        recent_ids, cancelled = get_recent_queue()
+        if not recent_ids:
+            await ctx.send("No recent queue found to ping.")
+            return
+        log.info("%s pinged %s recent queue player(s)", ctx.author, len(recent_ids))
+        await ctx.send(pingrecent_message(recent_ids, cancelled))

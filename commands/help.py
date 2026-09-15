@@ -26,6 +26,7 @@ class HelpCommand(commands.Cog):
                 "**!stats <Name#Tag>** - Check a player's MMR and match statistics\n"
                 "**!linkriot <Name#Tag>** - Link your Riot account\n"
                 "**!interest <time>** - Plan a time to play 10 mans (`!interest list` for upcoming)\n"
+                "**!pingrecent** - Ping everyone from the most recent queue\n"
                 "**!leaderboard <type>** - View the leaderboard\n"
                 "↪ _Available types: `mmr` (default), `wins`, `losses`, `kd`, `acs`, `coins`_\n"
                 "**!bet attackers|defenders <amount>** - Bet Duck Coins on the match\n"
