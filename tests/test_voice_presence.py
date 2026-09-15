@@ -4,9 +4,7 @@ import os
 import sys
 import types
 
-sys.path.insert(
-    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Stub the DB module (import-time Mongo connection).
 _database_stub = types.ModuleType("database")
@@ -20,7 +18,7 @@ sys.modules["database"] = _database_stub
 import discord
 
 import globals
-from voice_presence import (
+from game.voice_presence import (
     LOBBY_WAIT_SECONDS,
     missing_lobby_players,
     move_teams_to_voice,

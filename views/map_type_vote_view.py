@@ -6,7 +6,7 @@ from functools import partial
 import discord
 from discord.ui import Button
 
-from maps_service import get_competitive_maps, get_standard_maps
+from services.maps_service import get_competitive_maps, get_standard_maps
 from views import safe_reply
 from views.map_vote_view import MapVoteView
 

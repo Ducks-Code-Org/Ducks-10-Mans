@@ -3,7 +3,7 @@
 import discord
 
 from globals import BOT_TOKEN
-from logging_setup import setup_logging
+from ops.logging_setup import setup_logging
 
 # Set up logging (level from bot.ini) before importing bot/database so their
 # import-time logs (e.g. the Mongo ping) reach the configured handlers.

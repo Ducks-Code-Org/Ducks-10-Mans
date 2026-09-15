@@ -43,7 +43,7 @@ from pymongo.server_api import ServerApi
 
 
 def find_repo_root() -> Path:
-    """Find the directory containing env.bat (works from DebugTools/ or repo root)."""
+    """Find the directory containing env.bat (works from tools/ops/ or repo root)."""
     d = Path(__file__).resolve().parent
     for candidate in (d, *d.parents):
         if (candidate / "env.bat").exists():
@@ -383,7 +383,7 @@ def winning_team_id(match: dict) -> str | None:
     for team in match.get("teams", []):
         if team.get("won"):
             return (team.get("team_id") or "").strip().title()
-    # Fallback: infer from round scores (matches DebugTools' helper behavior)
+    # Fallback: infer from round scores (matches tools.ops.helpers' behavior)
     rounds_won: dict[str, int] = {}
     for team in match.get("teams", []):
         tid = (team.get("team_id") or "").strip().title()

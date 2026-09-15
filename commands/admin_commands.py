@@ -9,10 +9,10 @@ from commands import BotCommands
 from commands.report import cleanup_match_resources
 from commands.signup import cancel_background_purge
 from database import mmr_collection
-from duck_coins import refund_open_bets
-from ranks import remove_all_rank_roles
-from recent_queue import remember_recent_queue
-from stats_helper import DEFAULT_MMR
+from game.duck_coins import refund_open_bets
+from game.ranks import remove_all_rank_roles
+from game.recent_queue import remember_recent_queue
+from game.stats_helper import DEFAULT_MMR
 from views.mode_vote_view import ModeVoteView
 from views.signup_view import SignupView
 

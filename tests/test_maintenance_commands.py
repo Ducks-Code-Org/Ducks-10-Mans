@@ -2,9 +2,7 @@ import os
 import sys
 import types
 
-sys.path.insert(
-    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Stub modules with import-time side effects (Mongo connection) so this
 # self-check can run without a database.
@@ -176,7 +174,7 @@ def demo():
     import ast
 
     bot_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "bot.py",
     )
     tree = ast.parse(open(bot_path, encoding="utf-8").read())
@@ -227,9 +225,7 @@ def demo():
 
     resetseason_src = open(
         os.path.join(
-            os.path.dirname(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            ),
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "commands",
             "maintenance_commands.py",
         ),

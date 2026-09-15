@@ -3,9 +3,7 @@ import os
 import sys
 import types
 
-sys.path.insert(
-    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Stub modules with import-time side effects (Mongo connection, map pools)
 # so this self-check can run without a database or API access.
@@ -17,10 +15,10 @@ _database_stub.all_matches = types.SimpleNamespace()
 _database_stub.recent_queue = types.SimpleNamespace()
 sys.modules["database"] = _database_stub
 
-_maps_stub = types.ModuleType("maps_service")
+_maps_stub = types.ModuleType("services.maps_service")
 _maps_stub.get_competitive_maps = lambda: ["Ascent", "Bind", "Haven", "Split"]
 _maps_stub.get_standard_maps = lambda: ["Ascent", "Bind", "Haven", "Split"]
-sys.modules["maps_service"] = _maps_stub
+sys.modules["services.maps_service"] = _maps_stub
 
 from views.map_type_vote_view import MapTypeVoteView
 from views.map_vote_view import MapVoteView

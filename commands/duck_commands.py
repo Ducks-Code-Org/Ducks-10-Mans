@@ -5,7 +5,7 @@ import logging
 from discord.ext import commands
 
 from commands import BotCommands
-from duck_coins import command_available, doubledown, place_bet, setmap_override
+from game.duck_coins import command_available, doubledown, place_bet, setmap_override
 
 log = logging.getLogger(__name__)
 

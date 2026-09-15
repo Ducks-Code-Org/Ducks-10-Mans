@@ -3,9 +3,7 @@ import os
 import sys
 import types
 
-sys.path.insert(
-    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Stub modules with import-time side effects (Mongo connection) so this
 # self-check can run without a database.
@@ -21,10 +19,10 @@ _database_stub.all_matches = types.SimpleNamespace()
 _database_stub.recent_queue = types.SimpleNamespace()
 sys.modules["database"] = _database_stub
 
-_maps_stub = types.ModuleType("maps_service")
+_maps_stub = types.ModuleType("services.maps_service")
 _maps_stub.get_standard_maps = lambda: ["Ascent", "Bind", "Haven", "Split"]
 _maps_stub.get_competitive_maps = lambda: ["Ascent", "Bind"]
-sys.modules["maps_service"] = _maps_stub
+sys.modules["services.maps_service"] = _maps_stub
 
 
 class _FakeEmbed:
@@ -40,8 +38,8 @@ _discord_stub.NotFound = type("NotFound", (Exception,), {})
 _discord_stub.HTTPException = type("HTTPException", (Exception,), {})
 sys.modules["discord"] = _discord_stub
 
-import duck_coins
-from duck_coins import (
+import game.duck_coins as duck_coins
+from game.duck_coins import (
     DOUBLEDOWN_COST,
     SETMAP_BASE_COST,
     coins_of,
@@ -253,7 +251,7 @@ def demo():
     # Doubledown doubles the match delta only, never the first-match seed.
     # stats_helper is imported separately with its own stub in test_vlr_rating,
     # but here we verify the multiplier plumbing with a tiny fake.
-    import stats_helper as _sh
+    import game.stats_helper as _sh
 
     store = {}
     _sh.update_stats(
@@ -295,9 +293,7 @@ def demo():
     # the gate and the override window stay mutually exclusive.
     command_src = open(
         os.path.join(
-            os.path.dirname(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            ),
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "commands",
             "duck_commands.py",
         )
@@ -311,7 +307,7 @@ def demo():
 
     # Season resets drop per-match coin state and zero every balance (see
     # test_maintenance_commands for the stat-defaults side of the reset).
-    from duck_coins import clear_season_coin_state, reset_all_coins
+    from game.duck_coins import clear_season_coin_state, reset_all_coins
 
     DB["1"] = {"player_id": "1", "duck_coins": 42}
     DB["2"] = {"player_id": "2", "duck_coins": 7}

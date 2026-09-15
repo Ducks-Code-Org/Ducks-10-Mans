@@ -7,9 +7,9 @@ import discord
 from discord.ui import Select
 
 from database import users
-from stats_helper import DEFAULT_MMR
+from game.stats_helper import DEFAULT_MMR
 from tracker_links import tracker_link
-from voice_presence import move_teams_to_voice, voice_presence_enabled
+from game.voice_presence import move_teams_to_voice, voice_presence_enabled
 
 log = logging.getLogger(__name__)
 
@@ -412,7 +412,7 @@ class CaptainsDraftingView(discord.ui.View):
         await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match and use `!report` to finalize results.")
 
-        from duck_coins import on_teams_announced
+        from game.duck_coins import on_teams_announced
 
         await on_teams_announced(self.bot, self.ctx)
 

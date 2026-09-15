@@ -8,7 +8,7 @@ from discord.ext import commands
 
 from commands.leaderboard import LeaderboardCommand
 from database import mmr_collection, seasons, users
-from stats_helper import DEFAULT_MMR
+from game.stats_helper import DEFAULT_MMR
 from views.signup_view import SignupView
 
 log = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ class CustomBot(commands.Bot):
         # reset, so `!newseason noreset` preserves coin balances too.
         # Per-match coin state (bet escrow, doubledowns, map-override
         # escalation) is per-match, not per-season, so it is always dropped.
-        from duck_coins import clear_season_coin_state, reset_all_coins
+        from game.duck_coins import clear_season_coin_state, reset_all_coins
 
         clear_season_coin_state(self)
         if reset_player_stats:

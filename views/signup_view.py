@@ -8,13 +8,13 @@ import discord
 from discord.ui import Button
 
 from database import users
-from recent_queue import remember_recent_queue
-from riot_api import verify_riot_account_async
-from stats_helper import DEFAULT_MMR
+from game.recent_queue import remember_recent_queue
+from services.riot_api import verify_riot_account_async
+from game.stats_helper import DEFAULT_MMR
 from tracker_links import tracker_link
 from views import safe_reply
 from views.mode_vote_view import ModeVoteView
-from voice_presence import voice_presence_enabled, wait_for_lobby
+from game.voice_presence import voice_presence_enabled, wait_for_lobby
 
 log = logging.getLogger(__name__)
 
@@ -196,7 +196,7 @@ class SignupView(discord.ui.View):
         self.bot.chosen_mode = None
         self.bot.selected_map = None
 
-        from duck_coins import refund_open_bets
+        from game.duck_coins import refund_open_bets
 
         refund_open_bets(self.bot)
         self.bot.double_downs = set()
