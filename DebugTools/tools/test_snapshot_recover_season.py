@@ -181,7 +181,7 @@ def demo():
         "mmr": 1234.5,
         "wins": 3,
         "losses": 1,
-        "quack_coins": 9,
+        "duck_coins": 9,
     }
     season_doc = {"_id": "current", "season_number": season_num, "matches_played": 2}
     user_doc = {"_id": oid, "discord_id": "42", "name": "Duck", "tag": "0001"}
@@ -272,7 +272,7 @@ def demo():
     assert len(mc.mmr_collection.docs) == 1
     assert mc.mmr_collection.docs[0]["player_id"] == "42"
     assert mc.mmr_collection.docs[0]["mmr"] == 1234.5
-    assert mc.mmr_collection.docs[0]["quack_coins"] == 9
+    assert mc.mmr_collection.docs[0]["duck_coins"] == 9
     # season doc fully replaced (matches_played back to 2, not merged)
     assert mc.seasons.find_one({"_id": "current"})["matches_played"] == 2
     # The success reply names the safety backup that was written.

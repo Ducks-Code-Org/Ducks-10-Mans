@@ -196,7 +196,7 @@ class SignupView(discord.ui.View):
         self.bot.chosen_mode = None
         self.bot.selected_map = None
 
-        from quack_coins import refund_open_bets
+        from duck_coins import refund_open_bets
 
         refund_open_bets(self.bot)
         self.bot.double_downs = set()

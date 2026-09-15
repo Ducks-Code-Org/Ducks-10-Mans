@@ -9,7 +9,7 @@ from commands import BotCommands
 from commands.report import cleanup_match_resources
 from commands.signup import cancel_background_purge
 from database import mmr_collection
-from quack_coins import refund_open_bets
+from duck_coins import refund_open_bets
 from ranks import remove_all_rank_roles
 from recent_queue import get_recent_queue, pingrecent_message, remember_recent_queue
 from stats_helper import DEFAULT_MMR
@@ -87,7 +87,7 @@ class AdminCommands(BotCommands):
             f"**<@&1311935865626431529> Season {doc['season_number']}** started.\n"
             f"<@{winner_doc['player_id']}> has been awarded the **Season {doc['season_number'] - 1} SSR** role!\n"
             f"{'All player MMR + stats were reset.' if reset else 'Player stats were preserved (no reset).'}\n"
-            f"{'Quack Coins were reset for the new season.' if reset else 'Quack Coins were preserved (no reset).'}"
+            f"{'Duck Coins were reset for the new season.' if reset else 'Duck Coins were preserved (no reset).'}"
         )
         if announcement_channel:
             await announcement_channel.send(message)

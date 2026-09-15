@@ -1,4 +1,4 @@
-"""Quack Coins currency: awarding, betting, doubledown, and map overrides (issue #34)."""
+"""Duck Coins currency: awarding, betting, doubledown, and map overrides (issue #34)."""
 
 import asyncio
 import logging
@@ -16,28 +16,28 @@ DOUBLEDOWN_COST = 5
 SETMAP_BASE_COST = 3
 
 
-def quack_coins_enabled() -> bool:
-    return feature_enabled("quack_coins")
+def duck_coins_enabled() -> bool:
+    return feature_enabled("duck_coins")
 
 
 def command_available(bot, *, requires_running_match: bool = True) -> str | None:
-    """None when a Quack Coins command may run, else the rejection message.
+    """None when a Duck Coins command may run, else the rejection message.
 
-    `/setmap` overrides the map during the captains draft, i.e. *before* the
-    match is running, so it passes requires_running_match=False. `/bet` and
-    `/doubledown` only make sense while a match is in progress.
+    `!setmap` overrides the map during the captains draft, i.e. *before* the
+    match is running, so it passes requires_running_match=False. `!bet` and
+    `!doubledown` only make sense while a match is in progress.
     """
-    if not quack_coins_enabled():
-        return "Quack Coins features are disabled."
+    if not duck_coins_enabled():
+        return "Duck Coins features are disabled."
     if requires_running_match and not bot.match_ongoing:
         return "No match is running right now."
     return None
 
 
-def quack_emote(bot) -> str:
-    """The custom :quackcoin: emote, or a duck fallback when it can't be found."""
+def duck_emote(bot) -> str:
+    """The custom :duckcoin: emote, or a duck fallback when it can't be found."""
     try:
-        emoji = discord.utils.get(list(bot.emojis), name="quackcoin")
+        emoji = discord.utils.get(list(bot.emojis), name="duckcoin")
     except (AttributeError, TypeError):
         emoji = None
     return str(emoji) if emoji else "🦆"
@@ -45,14 +45,14 @@ def quack_emote(bot) -> str:
 
 def coins_of(player_id) -> int:
     doc = mmr_collection.find_one({"player_id": str(player_id)})
-    return int(doc.get("quack_coins", 0)) if doc else 0
+    return int(doc.get("duck_coins", 0)) if doc else 0
 
 
 def add_coins(player_id, amount: int) -> None:
     mmr_collection.update_one(
         {"player_id": str(player_id)},
         {
-            "$inc": {"quack_coins": amount},
+            "$inc": {"duck_coins": amount},
             "$setOnInsert": {"player_id": str(player_id)},
         },
         upsert=True,
@@ -60,7 +60,7 @@ def add_coins(player_id, amount: int) -> None:
 
 
 def clear_season_coin_state(bot) -> None:
-    """Drop per-match Quack Coin state on a season reset.
+    """Drop per-match Duck Coin state on a season reset.
 
     Used by every season reset (!newseason, !resetseason) alongside zeroing
     balances, because in-memory state would otherwise leak old-season coins
@@ -82,18 +82,18 @@ def clear_season_coin_state(bot) -> None:
 
 def reset_all_coins() -> None:
     """Zero every player's coin balance (season reset)."""
-    mmr_collection.update_many({}, {"$set": {"quack_coins": 0}})
+    mmr_collection.update_many({}, {"$set": {"duck_coins": 0}})
 
 
 def award_match_coins(player_ids) -> None:
     for pid in player_ids:
         add_coins(pid, 1)
     if player_ids:
-        log.info("Awarded 1 Quack Coin to %s match players", len(player_ids))
+        log.info("Awarded 1 Duck Coin to %s match players", len(player_ids))
 
 
 def insufficient(bot, balance: int, needed: int) -> str:
-    e = quack_emote(bot)
+    e = duck_emote(bot)
     return f"You have {balance} {e} but need {needed} {e} for that."
 
 
@@ -110,16 +110,16 @@ def _side_name(side: str) -> str:
 
 
 def _announcement(bot, remaining: int) -> str:
-    e = quack_emote(bot)
+    e = duck_emote(bot)
     window = (
         f"Window closes in **{remaining // 60}:{remaining % 60:02d}**."
         if remaining
         else "**Betting window closed.**"
     )
     return (
-        f"{e} **Betting is open!** Bet with `/bet attackers <amount>` or "
-        f"`/bet defenders <amount>` (min 1). Players in this match cannot bet.\n"
-        f"`/doubledown` costs {DOUBLEDOWN_COST} {e} to double your MMR change for this match.\n"
+        f"{e} **Betting is open!** Bet with `!bet attackers <amount>` or "
+        f"`!bet defenders <amount>` (min 1). Players in this match cannot bet.\n"
+        f"`!doubledown` costs {DOUBLEDOWN_COST} {e} to double your MMR change for this match.\n"
         f"{window}"
     )
 
@@ -133,9 +133,9 @@ async def _edit_window(session, text: str) -> None:
 
 async def on_teams_announced(bot, ctx) -> None:
     """Open the 5-minute betting/doubledown window after teams are posted."""
-    if not quack_coins_enabled() or ctx is None:
+    if not duck_coins_enabled() or ctx is None:
         return
-    log.info("Opening %ss Quack Coin bet window", BET_WINDOW_SECONDS)
+    log.info("Opening %ss Duck Coin bet window", BET_WINDOW_SECONDS)
     session = {
         "open": True,
         "bets": {"attackers": {}, "defenders": {}},
@@ -168,7 +168,7 @@ async def _bet_window_countdown(bot, session) -> None:
             remaining = BET_WINDOW_SECONDS - elapsed
             if remaining <= 0:
                 session["open"] = False
-                log.info("Quack Coin bet window closed")
+                log.info("Duck Coin bet window closed")
                 await _edit_window(session, _announcement(bot, 0))
                 return
             if not session["open"]:
@@ -185,7 +185,7 @@ def place_bet(bot, user_id: str, side: str, amount: int) -> str:
         return "No betting window is open right now."
     side = (side or "").lower()
     if side not in session["bets"]:
-        return "Pick a side: `/bet attackers <amount>` or `/bet defenders <amount>`."
+        return "Pick a side: `!bet attackers <amount>` or `!bet defenders <amount>`."
     if str(user_id) in _match_players(bot):
         return "You can't bet on a match you're playing in."
     if amount < 1:
@@ -197,7 +197,7 @@ def place_bet(bot, user_id: str, side: str, amount: int) -> str:
     session["bets"][side][str(user_id)] = (
         session["bets"][side].get(str(user_id), 0) + amount
     )
-    e = quack_emote(bot)
+    e = duck_emote(bot)
     pool = sum(session["bets"][side].values())
     log.info(
         "Bet placed by %s: %s coins on %s (pool: %s)",
@@ -238,7 +238,7 @@ async def settle_bets(bot, channel, winner: str) -> None:
     loser_side = "defenders" if winner == "attackers" else "attackers"
     pool = sum(winners.values())
     total = pool + sum(bets[loser_side].values())
-    e = quack_emote(bot)
+    e = duck_emote(bot)
     if not winners:
         log.info("No winning bets on %s; %s coin pool unclaimed", winner, total)
         await channel.send(
@@ -275,7 +275,7 @@ def doubledown(bot, user_id: str) -> str:
         return insufficient(bot, balance, DOUBLEDOWN_COST)
     add_coins(user_id, -DOUBLEDOWN_COST)
     bot.double_downs.add(str(user_id))
-    e = quack_emote(bot)
+    e = duck_emote(bot)
     log.info("Doubledown purchased by %s for %s coins", user_id, DOUBLEDOWN_COST)
     return f"Paid {DOUBLEDOWN_COST} {e} — your MMR change for this match is doubled!"
 
@@ -308,6 +308,6 @@ def setmap_override(bot, user_id: str, map_name: str) -> str:
     bot.selected_map = canonical
     bot.map_override_last = cost
     bot.map_override_last_by = str(user_id)
-    e = quack_emote(bot)
+    e = duck_emote(bot)
     log.info("%s paid %s coins to override the map to %s", user_id, cost, canonical)
     return f"<@{user_id}> paid {cost} {e} — the map is now **{canonical}**!"

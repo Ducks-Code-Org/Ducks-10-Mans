@@ -27,10 +27,10 @@ class HelpCommand(commands.Cog):
                 "**!linkriot <Name#Tag>** - Link your Riot account\n"
                 "**!interest <time>** - Plan a time to play 10 mans (`!interest list` for upcoming)\n"
                 "**!leaderboard <type>** - View the leaderboard\n"
-                "↪ _Available types: `mmr` (default), `wins`, `losses`, `kd`, `acs`, `quacks`_\n"
-                "**/bet attackers|defenders <amount>** - Bet Quack Coins on the match\n"
-                "**/doubledown** - Spend 5 Quack Coins to double your MMR change\n"
-                "**/setmap <map>** - Spend Quack Coins to override the chosen map\n"
+                "↪ _Available types: `mmr` (default), `wins`, `losses`, `kd`, `acs`, `coins`_\n"
+                "**!bet attackers|defenders <amount>** - Bet Duck Coins on the match\n"
+                "**!doubledown** - Spend 5 Duck Coins to double your MMR change\n"
+                "**!setmap <map>** - Spend Duck Coins to override the chosen map\n"
                 "**!bug** - Report a bug (pings the maintainers)\n"
             ),
             inline=False,

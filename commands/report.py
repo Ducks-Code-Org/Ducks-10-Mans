@@ -11,10 +11,10 @@ from discord.ext import commands
 from commands import BotCommands
 from database import all_matches, mmr_collection, seasons, users
 from globals import feature_enabled
-from quack_coins import (
+from duck_coins import (
     award_match_coins,
     doubledown_multiplier_of,
-    quack_coins_enabled,
+    duck_coins_enabled,
     refund_open_bets,
     settle_bets,
 )
@@ -391,7 +391,7 @@ class ReportCommand(BotCommands):
         # update_stats can apply them to the match delta only.
         double_down_multipliers = (
             {pid: doubledown_multiplier_of(self.bot, pid) for pid in playing_team_ids}
-            if quack_coins_enabled()
+            if duck_coins_enabled()
             else {}
         )
 
@@ -562,7 +562,7 @@ class ReportCommand(BotCommands):
                 rating=rating_info.get("rating"),
                 mmr_multiplier=(
                     double_down_multipliers.get(p_discord_id, 1)
-                    if quack_coins_enabled()
+                    if duck_coins_enabled()
                     else 1
                 ),
             )
@@ -577,14 +577,14 @@ class ReportCommand(BotCommands):
         )
 
         # ------------------------------------------------------------
-        # Quack Coins: betting payout and +1 coin per match played
-        # (feature-gated on the quack_coins flag in bot.ini). The
+        # Duck Coins: betting payout and +1 coin per match played
+        # (feature-gated on the duck_coins flag in bot.ini). The
         # doubledown multiplier was applied inside update_stats above.
         # ------------------------------------------------------------
         winner_side = (
             "attackers" if winning_match_team_ids == team1_ids_set else "defenders"
         )
-        if quack_coins_enabled():
+        if duck_coins_enabled():
             award_match_coins(playing_team_ids)
             try:
                 await settle_bets(self.bot, ctx.channel, winner_side)

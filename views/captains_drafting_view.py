@@ -412,7 +412,7 @@ class CaptainsDraftingView(discord.ui.View):
         await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match and use `!report` to finalize results.")
 
-        from quack_coins import on_teams_announced
+        from duck_coins import on_teams_announced
 
         await on_teams_announced(self.bot, self.ctx)
 

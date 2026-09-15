@@ -165,13 +165,13 @@ def demo():
     finally:
         mc.users = original_users
 
-    # Quack Coins are per-season. SEASON_STAT_DEFAULTS feeds !resetplayer
+    # Duck Coins are per-season. SEASON_STAT_DEFAULTS feeds !resetplayer
     # and !resetseason; !newseason resets coins only when it resets stats,
     # so `noreset` preserves balances, while per-match coin state is always
     # dropped when the season turns over.
     assert (
-        mc.SEASON_STAT_DEFAULTS.get("quack_coins") == 0
-    ), "season stat defaults must zero quack_coins"
+        mc.SEASON_STAT_DEFAULTS.get("duck_coins") == 0
+    ), "season stat defaults must zero duck_coins"
 
     import ast
 
@@ -179,7 +179,7 @@ def demo():
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
         "bot.py",
     )
-    tree = ast.parse(open(bot_path).read())
+    tree = ast.parse(open(bot_path, encoding="utf-8").read())
     create_fn = next(
         n
         for n in ast.walk(tree)
@@ -215,7 +215,7 @@ def demo():
     branch_calls = calls_in(reset_branch)
     assert (
         "reset_all_coins" in branch_calls
-    ), "newseason with reset must zero quack_coins"
+    ), "newseason with reset must zero duck_coins"
     assert (
         "self._reset_all_players_for_new_season" in branch_calls
     ), "stats reset must stay in the same branch"
@@ -232,7 +232,8 @@ def demo():
             ),
             "commands",
             "maintenance_commands.py",
-        )
+        ),
+        encoding="utf-8",
     ).read()
     assert (
         "clear_season_coin_state(self.bot)" in resetseason_src

@@ -119,7 +119,7 @@ class LeaderboardView(View):
             "kill_death_ratio": "K/D",
             "wins": "Wins",
             "losses": "Losses",
-            "quack_coins": "Quack Coins",
+            "duck_coins": "Duck Coins",
         }
 
         show_coins = True
@@ -134,7 +134,7 @@ class LeaderboardView(View):
             "K/D",
         ]
         if show_coins:
-            headers.append("Quacks")
+            headers.append("Coins")
 
         leaderboard_data = []
         start_index = self.current_page * self.players_per_page
@@ -142,9 +142,9 @@ class LeaderboardView(View):
 
         coin_emote = ""
         if show_coins:
-            from quack_coins import quack_emote
+            from duck_coins import duck_emote
 
-            coin_emote = quack_emote(self.bot)
+            coin_emote = duck_emote(self.bot)
 
         for idx, player_data in enumerate(data[start_index:end_index], start=1):
             player_id = str(player_data["player_id"])
@@ -178,7 +178,7 @@ class LeaderboardView(View):
                 f"{kd_ratio:.2f}",
             ]
             if show_coins:
-                row.append(f"{player_data.get('quack_coins', 0)} {coin_emote}")
+                row.append(f"{player_data.get('duck_coins', 0)} {coin_emote}")
             leaderboard_data.append(row)
 
         table_output = t2a(

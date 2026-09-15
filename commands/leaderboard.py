@@ -26,9 +26,9 @@ class LeaderboardCommand(BotCommands):
             "kd": "kill_death_ratio",
             "wins": "wins",
             "losses": "losses",
-            "quacks": "quack_coins",
-            "quackcoins": "quack_coins",
-            "coins": "quack_coins",
+            "coins": "duck_coins",
+            "duckcoins": "duck_coins",
+            "ducks": "duck_coins",
         }
 
         sort_by = sort_by.lower()

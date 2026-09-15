@@ -45,7 +45,7 @@ class CustomBot(commands.Bot):
         # Discord log mirror flush task (started in on_ready).
         self.mirror_flush_loop = None
 
-        # Quack Coins (issue #34)
+        # Duck Coins (issue #34)
         self.bet_session: dict | None = None
         self.double_downs: set[str] = set()
         self.map_override_last: int = 0
@@ -105,11 +105,11 @@ class CustomBot(commands.Bot):
             upsert=True,
         )
 
-        # Quack Coins are per-season currency: they reset with the stats
+        # Duck Coins are per-season currency: they reset with the stats
         # reset, so `!newseason noreset` preserves coin balances too.
         # Per-match coin state (bet escrow, doubledowns, map-override
         # escalation) is per-match, not per-season, so it is always dropped.
-        from quack_coins import clear_season_coin_state, reset_all_coins
+        from duck_coins import clear_season_coin_state, reset_all_coins
 
         clear_season_coin_state(self)
         if reset_player_stats:
@@ -125,7 +125,7 @@ class CustomBot(commands.Bot):
         """
         # Reset core 10-mans stats in db. MMR starts at 0 and is re-seeded
         # (100×VLR) after each player's first reported match of the season.
-        # (Quack Coins are zeroed by create_new_season alongside this reset.)
+        # (Duck Coins are zeroed by create_new_season alongside this reset.)
         mmr_collection.update_many(
             {},
             {
@@ -276,7 +276,8 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.signup")
         await self.load_extension("commands.stats")
         await self.load_extension("commands.bug")
-        await self.load_extension("commands.quack_commands")
+        await self.load_extension("commands.duck_commands")
+        self.tree.on_error = self._on_app_command_error
         self.tree.on_error = self._on_app_command_error
         await self.tree.sync()
         log.info("Bot is ready and cogs are loaded.")

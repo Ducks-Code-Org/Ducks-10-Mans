@@ -18,13 +18,13 @@ import globals as globals_mod
 from commands import BotCommands
 from database import all_matches, client, mmr_collection, seasons, users
 from globals import BOT_CONFIG
-from quack_coins import (
+from duck_coins import (
     DOUBLEDOWN_COST,
     add_coins,
     clear_season_coin_state,
     coins_of,
-    quack_coins_enabled,
-    quack_emote,
+    duck_coins_enabled,
+    duck_emote,
 )
 from riot_api import (
     RiotApiInconclusive,
@@ -62,7 +62,7 @@ def _season_match_filter(season_num: int) -> dict:
 
 
 # Season stat fields wiped by !resetplayer / !resetseason (matches the
-# new-season reset in bot.py). Quack Coins are per-season, so they reset too.
+# new-season reset in bot.py). Duck Coins are per-season, so they reset too.
 SEASON_STAT_DEFAULTS = {
     "mmr": DEFAULT_MMR,
     "wins": 0,
@@ -79,7 +79,7 @@ SEASON_STAT_DEFAULTS = {
     "avg_rating": None,
     "previous_rank": None,
     "current_rank": None,
-    "quack_coins": 0,
+    "duck_coins": 0,
 }
 
 
@@ -473,7 +473,7 @@ class MaintenanceCommands(BotCommands):
         self.bot.player_names[in_pid] = in_name
 
         # The outgoing player's doubledown no longer applies; refund it.
-        if quack_coins_enabled() and out_pid in self.bot.double_downs:
+        if duck_coins_enabled() and out_pid in self.bot.double_downs:
             self.bot.double_downs.discard(out_pid)
             add_coins(out_pid, DOUBLEDOWN_COST)
 
@@ -626,9 +626,9 @@ class MaintenanceCommands(BotCommands):
     @commands.command(name="addcoins")
     @commands.has_permissions(administrator=True)
     async def addcoins(self, ctx, *, args: str = ""):
-        """Grant (or, with a negative amount, remove) Quack Coins for a player."""
-        if not quack_coins_enabled():
-            await ctx.send("Quack Coins features are disabled.")
+        """Grant (or, with a negative amount, remove) Duck Coins for a player."""
+        if not duck_coins_enabled():
+            await ctx.send("Duck Coins features are disabled.")
             return
         parts = (args or "").split()
         if not parts:
@@ -651,7 +651,7 @@ class MaintenanceCommands(BotCommands):
             return
         add_coins(pid, amount)
         log.info("%s adjusted %s's coins by %s", ctx.author, pid, amount)
-        await ctx.send(f"<@{pid}> now has {coins_of(pid)} {quack_emote(self.bot)}.")
+        await ctx.send(f"<@{pid}> now has {coins_of(pid)} {duck_emote(self.bot)}.")
 
     @commands.command(name="resetplayer")
     @commands.has_permissions(administrator=True)
@@ -898,7 +898,7 @@ class MaintenanceCommands(BotCommands):
         }
         backup_path.write_text(json.dumps(backup), encoding="utf-8")
 
-        # Wipe season stats for everyone. Identity survives; quack coins are
+        # Wipe season stats for everyone. Identity survives; duck coins are
         # per-season and reset with the rest of the stats (see
         # SEASON_STAT_DEFAULTS). Per-match coin state is dropped as well.
         mmr_collection.update_many({}, {"$set": SEASON_STAT_DEFAULTS})
