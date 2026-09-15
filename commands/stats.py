@@ -6,6 +6,7 @@ from discord.ext import commands
 
 from commands import BotCommands
 from database import users
+from duck_coins import coins_of, duck_coins_enabled, duck_emote
 from ranks import tiers_for_player
 from stats_helper import DEFAULT_MMR, avg_rating_of
 from tracker_links import tracker_link
@@ -98,11 +99,19 @@ class StatsCommand(BotCommands):
                 "Tier: " + " + ".join(tiers) if tiers else "Tier: none (play a match!)"
             )
 
+            # Duck Coin balance (live from the DB, not the stats cache). Shown
+            # only when the feature is enabled, matching every other coin
+            # surface. Not inside a code block, so the custom emoji renders.
+            coins_line = ""
+            if duck_coins_enabled():
+                coins_line = f"Coins: {coins_of(player_id)} {duck_emote(self.bot)}\n"
+
             await ctx.send(
                 f"**{tracker_link(riot_name, riot_tag)}'s Stats:**\n"
                 f"MMR: {mmr_value}\n"
                 f"{tier_line}\n"
                 f"{rank_line}\n"
+                f"{coins_line}"
                 f"Wins: {wins}\n"
                 f"Losses: {losses}\n"
                 f"Win%: {win_percent:.2f}%\n"
