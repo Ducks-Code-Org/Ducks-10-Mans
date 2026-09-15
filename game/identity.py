@@ -1,7 +1,16 @@
 # identity.py
+import logging
+
 import aiohttp
+
 from database import users
-from riot_api import get_account_by_puuid, get_account_by_riot_id
+from services.riot_api import (
+    RiotApiInconclusive,
+    get_account_by_puuid,
+    get_account_by_riot_id,
+)
+
+log = logging.getLogger(__name__)
 
 
 async def ensure_current_riot_identity(discord_id: int):
@@ -26,10 +35,18 @@ async def ensure_current_riot_identity(discord_id: int):
 
     async with aiohttp.ClientSession() as session:
         acc = None
-        if puuid:
-            acc = await get_account_by_puuid(session, puuid)
-        if acc is None and name and tag:
-            acc = await get_account_by_riot_id(session, name, tag)
+        try:
+            if puuid:
+                acc = await get_account_by_puuid(session, puuid, priority=True)
+            if acc is None and name and tag:
+                acc = await get_account_by_riot_id(session, name, tag, priority=True)
+        except RiotApiInconclusive:
+            # Rate limits / API problems are inconclusive, never failures.
+            # Skip the refresh silently so signup isn't blocked or crashed.
+            log.warning(
+                "Riot lookup inconclusive (rate limited or API error); skipping identity refresh"
+            )
+            return (True, "", doc)
 
         if acc is None:
             return (
@@ -50,7 +67,7 @@ async def ensure_current_riot_identity(discord_id: int):
         if new_tag and new_tag != tag:
             updates["tag"] = new_tag.lower().strip()
 
-        print(f"[DEBUG]: Updating database for: {new_name}#{new_tag}")
+        log.info("Updating database for: %s#%s", new_name, new_tag)
         if updates:
             users.update_one({"_id": doc["_id"]}, {"$set": updates})
             doc.update(updates)

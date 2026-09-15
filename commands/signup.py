@@ -1,20 +1,131 @@
 "Starts the signup process for a new match."
 
-import random
 import asyncio
+import logging
+import random
 
+import aiohttp
 import discord
 from discord.ext import commands
 
 from commands import BotCommands
+from database import mmr_collection, users
+from game.identity import ensure_current_riot_identity
+from game.recent_queue import get_recent_queue, pingrecent_message
+from services.riot_api import riot_account_exists_async
 from views.signup_view import SignupView
-from identity import ensure_current_riot_identity
+
+log = logging.getLogger(__name__)
+
+
+def _remove_user_everywhere(doc) -> str:
+    """Delete a user doc and its mmr doc. Returns the Riot ID string."""
+    discord_id = str(doc.get("discord_id"))
+    users.delete_one({"_id": doc["_id"]})
+    mmr_collection.delete_one({"player_id": discord_id})
+    name = (doc.get("name") or "").strip()
+    tag = (doc.get("tag") or "").strip()
+    riot_id = f"{name}#{tag}"
+    log.info("Removed invalid Riot ID %s (%s)", riot_id, discord_id)
+    return riot_id
+
+
+def _kick_from_queue(bot, discord_id: str) -> None:
+    """Remove a purged player from any active signup queue, if present."""
+    if not bot.signup_active:
+        return
+    if discord_id in [p["id"] for p in bot.queue]:
+        bot.queue = [p for p in bot.queue if p["id"] != discord_id]
+        view = getattr(bot, "signup_view", None)
+        if view is not None:
+            view.sign_up_button.label = f"Sign Up ({len(bot.queue)}/10)"
+            log.info("Kicked purged player from queue (%s)", discord_id)
+            # The signup message is refreshed by the periodic refresh task
+            # and again after the background purge completes.
+
+
+async def purge_invalid_riot_ids(bot=None) -> list[str]:
+    """Remove linked Riot accounts that no longer exist on Riot's side.
+
+    All account checks are issued in parallel against the API. Returns the
+    display names of the removed players. Inconclusive checks (network/API
+    errors) are skipped so flaky API responses never purge data.
+    """
+    docs = [
+        doc
+        for doc in users.find()
+        if (doc.get("name") or "").strip() and (doc.get("tag") or "").strip()
+    ]
+    if not docs:
+        return []
+
+    log.info("Checking %s linked Riot ID(s) for validity", len(docs))
+    removed: list[str] = []
+    async with aiohttp.ClientSession() as session:
+        # One shared semaphore caps concurrent API calls so we don't hit rate limits.
+        sem = asyncio.Semaphore(5)
+
+        async def check(doc):
+            async with sem:
+                return await riot_account_exists_async(
+                    session, doc.get("name"), doc.get("tag")
+                )
+
+        results = await asyncio.gather(*(check(doc) for doc in docs))
+
+    for doc, exists in zip(docs, results):
+        # exists is False only on a confirmed 404; None (inconclusive) and
+        # True (account exists) both keep the link.
+        if exists is not False:
+            continue
+        removed.append(_remove_user_everywhere(doc))
+        if bot is not None:
+            _kick_from_queue(bot, str(doc.get("discord_id")))
+
+    return removed
+
+
+async def _run_background_purge(bot, ctx) -> None:
+    """Background purge that refreshes the signup message afterwards."""
+    try:
+        removed = await purge_invalid_riot_ids(bot)
+        if removed:
+            try:
+                await ctx.send(
+                    "Removed "
+                    + ", ".join(f"`{r}`" for r in removed)
+                    + " from the database (Riot account no longer exists)."
+                )
+            except discord.HTTPException:
+                pass
+            view = getattr(bot, "signup_view", None)
+            if view is not None and view.bot.current_signup_message:
+                try:
+                    await view.bot.current_signup_message.edit(
+                        embed=view.get_signup_embed(), view=view
+                    )
+                except discord.HTTPException:
+                    pass
+    except asyncio.CancelledError:
+        # A new signup or !cancel superseded this purge run; stop quietly.
+        raise
+    except Exception as e:
+        log.error("Background purge failed: %s", e, exc_info=e)
+
+
+def cancel_background_purge(bot) -> None:
+    """Cancel any in-flight background Riot-ID purge task."""
+    task = getattr(bot, "background_purge_task", None)
+    if task is not None and not task.done():
+        task.cancel()
+    bot.background_purge_task = None
 
 
 async def setup(bot):
     if not hasattr(bot, "signup_lock"):
         bot.signup_lock = asyncio.Lock()
     await bot.add_cog(SignupCommand(bot))
+    await bot.add_cog(PingRecentCommand(bot))
 
 
 class SignupCommand(BotCommands):
@@ -32,19 +143,33 @@ class SignupCommand(BotCommands):
                 await ctx.send("Report the last match before starting another one.")
                 return
 
+            # A stale purge from a previous signup may still be hogging the
+            # rate-limit budget; drop it now that we know we're proceeding.
+            cancel_background_purge(self.bot)
+
             ok, msg, _db_user = await ensure_current_riot_identity(ctx.author.id)
             if not ok:
                 await ctx.send(msg)
                 return
 
             self.bot.load_mmr_data()
-            print("[DEBUG] Reloaded MMR data at start of signup")
+            log.debug("Reloaded MMR data at start of signup")
 
             # Clear any existing signup view
             if self.bot.signup_view is not None:
                 self.bot.signup_view = None
 
+        # Fire off the invalid-Riot-ID purge in the background so the signup
+        # isn't blocked by the (potentially slow) round of API checks. It
+        # removes purged players from the queue as they're detected.
+        self.bot.background_purge_task = asyncio.create_task(
+            _run_background_purge(self.bot, ctx)
+        )
+
         # Reset all match related states
+        # Bump the setup generation so any stale views from a previous
+        # match-setup cycle are invalidated.
+        self.bot.setup_generation += 1
         self.bot.signup_active = True
         self.bot.queue = []
         self.bot.captain1 = None
@@ -55,6 +180,7 @@ class SignupCommand(BotCommands):
         self.bot.selected_map = None
 
         self.bot.match_name = f"match-{random.randrange(1, 10**4):04}"
+        log.info("Starting signup for %s", self.bot.match_name)
 
         try:
             self.bot.match_role = await ctx.guild.create_role(
@@ -86,17 +212,18 @@ class SignupCommand(BotCommands):
         except Exception as e:
             # Cleanup
             self.bot.signup_active = False
-            if hasattr(self.bot, "match_role") and self.bot.match_role:
+            if getattr(self.bot, "match_role", None):
                 try:
                     await self.bot.match_role.delete()
-                except:
+                except discord.HTTPException:
                     pass
-            if hasattr(self.bot, "match_channel") and self.bot.match_channel:
+            if getattr(self.bot, "match_channel", None):
                 try:
                     await self.bot.match_channel.delete()
-                except:
+                except discord.HTTPException:
                     pass
-            await ctx.send(f"Error setting up queue: {str(e)}")
+            log.error("Error setting up queue: %s", e, exc_info=e)
+            await ctx.send(f"Error setting up queue: {e}")
 
 
 async def ensure_perms(ctx) -> bool:
@@ -112,3 +239,15 @@ async def ensure_perms(ctx) -> bool:
         )
         return False
     return True
+
+
+class PingRecentCommand(BotCommands):
+    @commands.command(name="pingrecent")
+    async def pingrecent(self, ctx):
+        """Pings everyone who was in the most recently cancelled/finished queue."""
+        recent_ids, cancelled = get_recent_queue()
+        if not recent_ids:
+            await ctx.send("No recent queue found to ping.")
+            return
+        log.info("%s pinged %s recent queue player(s)", ctx.author, len(recent_ids))
+        await ctx.send(pingrecent_message(recent_ids, cancelled))

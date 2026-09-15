@@ -1,8 +1,8 @@
 """Diagnose missing mmr_data documents for players in the users collection.
 
 Usage:
-    python DebugTools/fix_missing_mmr_docs.py            # diagnose only (no writes)
-    python DebugTools/fix_missing_mmr_docs.py --fix      # create missing default docs
+    python tools/ops/fix_missing_mmr_docs.py            # diagnose only (no writes)
+    python tools/ops/fix_missing_mmr_docs.py --fix      # create missing default docs
 
 Root cause of the 'sen babymcnerd#uwu' bug:
   1. ensure_player_mmr() skips players already in self.player_mmr (in-memory).
@@ -20,8 +20,6 @@ default record.
 from __future__ import annotations
 
 import argparse
-import datetime
-import json
 import os
 import re
 import sys
@@ -79,7 +77,7 @@ def get_client() -> MongoClient:
         sys.exit("[fix] Could not find uri_key in environment, env.bat, or globals.py")
     client = MongoClient(
         uri,
-        tlsAllowInvalidCertificates=True,
+        tls=True,
         server_api=ServerApi("1"),
         serverSelectionTimeoutMS=10000,
     )
@@ -183,7 +181,7 @@ def diagnose(db, *, fix: bool = False):
     elif fix:
         print("[fix] Nothing to fix.")
     else:
-        print(f"\n[fix] Run with --fix to create/reset the missing documents.")
+        print("\n[fix] Run with --fix to create/reset the missing documents.")
 
 
 def main():

@@ -1,5 +1,7 @@
 "Commands related to displaying leaderboards."
 
+import logging
+
 from discord.ext import commands
 
 from commands import BotCommands
@@ -7,6 +9,8 @@ from database import mmr_collection
 from views.leaderboard_view import (
     LeaderboardView,
 )
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
@@ -22,10 +26,14 @@ class LeaderboardCommand(BotCommands):
             "kd": "kill_death_ratio",
             "wins": "wins",
             "losses": "losses",
+            "coins": "duck_coins",
+            "duckcoins": "duck_coins",
+            "ducks": "duck_coins",
         }
 
         sort_by = sort_by.lower()
         if sort_by not in valid_sort_map:
+            log.warning("Invalid leaderboard type requested: %r", sort_by)
             return None, "Invalid leaderboard type.", None
 
         sort_by_internal = valid_sort_map[sort_by]
@@ -40,10 +48,9 @@ class LeaderboardCommand(BotCommands):
             sort_by_internal,
             players_per_page=10,
             timeout=None,
-            mode="normal",
         )
         content = leaderboard_view.make_content(
-            sorted_data, "normal", leaderboard_view.total_pages
+            sorted_data, leaderboard_view.total_pages
         )
         return leaderboard_view, content, None
 

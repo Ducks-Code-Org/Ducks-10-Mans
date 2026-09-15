@@ -1,8 +1,17 @@
 "Lookup and display MMR and stats for a player."
 
+import logging
+
 from discord.ext import commands
+
 from commands import BotCommands
 from database import users
+from game.duck_coins import coins_of, duck_coins_enabled, duck_emote
+from game.ranks import tiers_for_player
+from game.stats_helper import DEFAULT_MMR, avg_rating_of
+from tracker_links import tracker_link
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
@@ -25,6 +34,7 @@ class StatsCommand(BotCommands):
             if player_data:
                 player_id = str(player_data.get("discord_id"))
             else:
+                log.info("Stats lookup failed: no player matches %s", riot_input)
                 await ctx.send(
                     "Could not find this player. Please check the name and tag and ensure they have played at least one match."
                 )
@@ -34,13 +44,18 @@ class StatsCommand(BotCommands):
 
         if player_id in self.bot.player_mmr:
             stats_data = self.bot.player_mmr[player_id]
-            mmr_value = stats_data.get("mmr", 1000)
+            mmr_value = stats_data.get("mmr", DEFAULT_MMR)
             wins = stats_data.get("wins", 0)
             losses = stats_data.get("losses", 0)
             matches_played = stats_data.get("matches_played", wins + losses)
             total_rounds_played = stats_data.get("total_rounds_played", 0)
             avg_cs = stats_data.get("average_combat_score", 0)
             kd_ratio = stats_data.get("kill_death_ratio", 0)
+            # Round-weighted average VLR rating; None when never recorded.
+            avg_rating = avg_rating_of(stats_data)
+            avg_rating_display = (
+                f"{avg_rating:.2f}" if isinstance(avg_rating, (int, float)) else "N/A"
+            )
             win_percent = (wins / matches_played) * 100 if matches_played > 0 else 0
 
             # Get riot name and tag
@@ -48,9 +63,8 @@ class StatsCommand(BotCommands):
             if user_data:
                 riot_name = user_data.get("name", "Unknown")
                 riot_tag = user_data.get("tag", "Unknown")
-                player_name = f"{riot_name}#{riot_tag}"
             else:
-                player_name = ctx.author.name
+                riot_name, riot_tag = ctx.author.name, ""
 
             total_players = len(self.bot.player_mmr)
             sorted_mmr = sorted(
@@ -63,7 +77,6 @@ class StatsCommand(BotCommands):
                 reverse=True,
             )
             position = None
-            slash = "/"
             for idx, (pid, _) in enumerate(sorted_mmr, start=1):
                 if pid == player_id:
                     position = idx
@@ -71,19 +84,40 @@ class StatsCommand(BotCommands):
 
             # Rank 1 tag
             if position == 1:
-                position = "*Supersonic Radiant!* (Rank 1)"
-                total_players = ""
-                slash = ""
+                rank_line = "*Supersonic Radiant!* (Rank 1)"
+            else:
+                rank_line = f"Rank: {position}/{total_players}"
+
+            # MMR tiers (rank 1 also wears Supersonic Radiant on top of their
+            # traditional tier, matching the role sync). Players who have not
+            # played this season have no tier, matching their lack of a rank
+            # role (issue #159).
+            tiers = tiers_for_player(
+                mmr_value, position=position, matches_played=matches_played
+            )
+            tier_line = (
+                "Tier: " + " + ".join(tiers) if tiers else "Tier: none (play a match!)"
+            )
+
+            # Duck Coin balance (live from the DB, not the stats cache). Shown
+            # only when the feature is enabled, matching every other coin
+            # surface. Not inside a code block, so the custom emoji renders.
+            coins_line = ""
+            if duck_coins_enabled():
+                coins_line = f"Coins: {coins_of(player_id)} {duck_emote(self.bot)}\n"
 
             await ctx.send(
-                f"**{player_name}'s Stats:**\n"
+                f"**{tracker_link(riot_name, riot_tag)}'s Stats:**\n"
                 f"MMR: {mmr_value}\n"
-                f"Rank: {position}{slash}{total_players}\n"
+                f"{tier_line}\n"
+                f"{rank_line}\n"
+                f"{coins_line}"
                 f"Wins: {wins}\n"
                 f"Losses: {losses}\n"
                 f"Win%: {win_percent:.2f}%\n"
                 f"Matches Played: {matches_played}\n"
                 f"Total Rounds Played: {total_rounds_played}\n"
+                f"Avg Rating: {avg_rating_display}\n"
                 f"Average Combat Score: {avg_cs:.2f}\n"
                 f"Kill/Death Ratio: {kd_ratio:.2f}"
             )

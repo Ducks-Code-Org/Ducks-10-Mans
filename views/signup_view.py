@@ -1,14 +1,22 @@
 """This view creates and maintains a signup interaction, contained within its own channel."""
 
 import asyncio
+import logging
 
+import aiohttp
 import discord
 from discord.ui import Button
 
 from database import users
-from riot_api import verify_riot_account
+from game.recent_queue import remember_recent_queue
+from services.riot_api import verify_riot_account_async
+from game.stats_helper import DEFAULT_MMR
+from tracker_links import tracker_link
 from views import safe_reply
 from views.mode_vote_view import ModeVoteView
+from game.voice_presence import voice_presence_enabled, wait_for_lobby
+
+log = logging.getLogger(__name__)
 
 
 class SignupView(discord.ui.View):
@@ -17,6 +25,8 @@ class SignupView(discord.ui.View):
         self.ctx = ctx
         self.bot = bot
         self.bot.origin_ctx = ctx
+        # Capture the current setup cycle so we can detect a later !cancel.
+        self.setup_generation = bot.setup_generation
 
         # Start Task Runners
         self.signup_request_queue = (
@@ -43,10 +53,10 @@ class SignupView(discord.ui.View):
         self.sign_up_button.callback = self.sign_up_callback
         self.leave_queue_button.callback = self.leave_queue_callback
 
-        print("Starting new signup...")
+        log.info("Starting new signup...")
 
     async def sign_up_callback(self, interaction: discord.Interaction):
-        print(f"Sign up requested by: {interaction.user.name}")
+        log.info("Sign up requested by: %s", interaction.user.name)
 
         # Defer the interaction if not already done, to allow time for processing
         if not interaction.response.is_done():
@@ -63,11 +73,18 @@ class SignupView(discord.ui.View):
         await fut  # Wait until this request is processed
 
     async def leave_queue_callback(self, interaction: discord.Interaction):
-        print(f"Leave queue requested by: {interaction.user.name}")
+        log.info("Leave queue requested by: %s", interaction.user.name)
 
         # Defer the interaction if not already done, to allow time for processing
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
+
+        # If this signup was cancelled (e.g. by !cancel), stop processing.
+        if self.bot is None or self.bot.setup_generation != self.setup_generation:
+            await interaction.followup.send(
+                "This signup was cancelled.", ephemeral=True
+            )
+            return
 
         # Check if the user is in the queue
         player_id: str = str(interaction.user.id)
@@ -81,8 +98,7 @@ class SignupView(discord.ui.View):
             if player["id"] != player_id:
                 new_queue.append(player)
         self.bot.queue = new_queue
-        riot_names: list[str] = self.get_riot_names()
-        print(f"{interaction.user.name} left the queue successfully")
+        log.info("%s left the queue successfully", interaction.user.name)
 
         # Update last activity
         self.last_activity_time = asyncio.get_event_loop().time()
@@ -114,6 +130,9 @@ class SignupView(discord.ui.View):
             try:
                 # Process the signup for this interaction
                 await self.handle_signup(interaction)
+            except Exception as e:
+                # Keep the queue alive so later signups still work
+                log.error("Error processing signup interaction: %s", e, exc_info=e)
             finally:
                 # Ensure the waiting coroutine is notified, even if an error occurs
                 if not fut.done():
@@ -155,14 +174,19 @@ class SignupView(discord.ui.View):
             self.timeout_monitor_task = None
 
     async def cancel_signup(self, reason):
+        log.info("Signup cancelled: %s", reason)
         # Send message to original channel
         try:
             await self.ctx.send(f"Signup cancelled: {reason}")
-            print(f"Signup cancelled: {reason}")
-        except:
+        except discord.HTTPException:
             pass  # In case channel is deleted or something
 
-        # Clear variables
+        # Remember who was in the queue for !pingrecent
+        if self.bot.queue:
+            remember_recent_queue(self.bot.queue, cancelled=True)
+
+        # Invalidate this setup cycle, then clear variables
+        self.bot.setup_generation += 1
         self.bot.signup_active = False
         self.bot.queue = []
         self.bot.captain1 = None
@@ -172,14 +196,21 @@ class SignupView(discord.ui.View):
         self.bot.chosen_mode = None
         self.bot.selected_map = None
 
+        from game.duck_coins import refund_open_bets
+
+        refund_open_bets(self.bot)
+        self.bot.double_downs = set()
+        self.bot.map_override_last = 0
+        self.bot.map_override_last_by = None
+
         # Delete role and channel
         try:
             await self.bot.match_role.delete()
-        except:
+        except discord.HTTPException:
             pass
         try:
             await self.bot.match_channel.delete()
-        except:
+        except discord.HTTPException:
             pass
 
         # Cleanup view
@@ -190,6 +221,11 @@ class SignupView(discord.ui.View):
         self.cancel_timeout_monitor_task()
 
     async def handle_signup(self, interaction: discord.Interaction):
+        # If this signup was cancelled (e.g. by !cancel), stop processing.
+        if self.bot is None or self.bot.setup_generation != self.setup_generation:
+            await safe_reply(interaction, "This signup was cancelled.", ephemeral=True)
+            return
+
         # Only allow up to 10 players in the queue
         if len(self.bot.queue) >= 10:
             await safe_reply(
@@ -217,10 +253,14 @@ class SignupView(discord.ui.View):
             )
             return
 
-        # Verify the user's Riot account
+        # Verify the user's Riot account (async + rate-limited; 429s never
+        # block the signup)
         user_name: str = (db_user.get("name") or "").lower().strip()
         user_tag: str = (db_user.get("tag") or "").lower().strip()
-        is_successful, reason = verify_riot_account(user_name, user_tag)
+        async with aiohttp.ClientSession() as session:
+            is_successful, reason = await verify_riot_account_async(
+                session, user_name, user_tag
+            )
         if not is_successful:
             await safe_reply(
                 interaction,
@@ -229,17 +269,28 @@ class SignupView(discord.ui.View):
             )
             return
 
+        # Verify the stored Riot ID is linked to THIS discord id in the database
+        # (someone else may have linked the same Riot ID to their account)
+        linked_user = users.find_one({"name": user_name, "tag": user_tag})
+        if not linked_user or str(linked_user.get("discord_id")) != user_id:
+            await safe_reply(
+                interaction,
+                "❌ Your Riot ID is linked to a different Discord account, or was changed "
+                "after another user linked it. Please re-link it using `!linkriot <Name#Tag>`.",
+                ephemeral=True,
+            )
+            return
+
         # Add the user the queue, and create mmr data if not present
         self.bot.queue.append({"id": user_id, "name": interaction.user.name})
         if user_id not in self.bot.player_mmr:
             self.bot.player_mmr[user_id] = {
-                "mmr": 1000,
+                "mmr": DEFAULT_MMR,
                 "wins": 0,
                 "losses": 0,
             }
         self.bot.player_names[user_id] = interaction.user.name
-        riot_names: list[str] = self.get_riot_names()
-        print(f"{interaction.user.name} joined the queue successfully.")
+        log.info("%s joined the queue successfully.", interaction.user.name)
 
         # Update last activity
         self.last_activity_time = asyncio.get_event_loop().time()
@@ -267,6 +318,12 @@ class SignupView(discord.ui.View):
             await self.finalize_signup(interaction)
 
     async def finalize_signup(self, interaction: discord.Interaction):
+        # If this signup was cancelled (e.g. by !cancel), don't start match setup.
+        if self.bot.setup_generation != self.setup_generation:
+            log.info("Skipping signup finalization because signup was cancelled.")
+            return
+
+        log.info("Signup full (%s players); starting match setup", len(self.bot.queue))
         await interaction.channel.send(
             "The queue is now full, proceeding to the voting stage."
         )
@@ -281,6 +338,26 @@ class SignupView(discord.ui.View):
             "__Players:__ " + " ".join([f"<@{p['id']}>" for p in self.bot.queue])
         )
 
+        # Wait for everyone to join the lobby voice channel before setup
+        # (feature-flagged in bot.ini).
+        if voice_presence_enabled():
+            ready = await wait_for_lobby(
+                self.ctx.guild,
+                self.bot.queue,
+                send=interaction.channel.send,
+                is_cancelled=lambda: self.bot is None
+                or self.bot.setup_generation != self.setup_generation,
+            )
+            if not ready:
+                if (
+                    self.bot is not None
+                    and self.bot.setup_generation == self.setup_generation
+                ):
+                    await self.cancel_signup(
+                        "Players did not join the lobby voice channel in time."
+                    )
+                return
+
         self.bot.signup_active = False
         self.ctx.channel = self.bot.match_channel
 
@@ -290,7 +367,7 @@ class SignupView(discord.ui.View):
         await self.bot.current_signup_message.edit(view=self)
 
         self.bot.chosen_mode = None
-        mode_vote = ModeVoteView(self.ctx, self.bot)
+        mode_vote = ModeVoteView(self.ctx, self.bot, self.setup_generation)
         await mode_vote.send_view()
         self.stop()
         self.cancel_refresh_signup_task()
@@ -302,8 +379,6 @@ class SignupView(discord.ui.View):
         try:
             await asyncio.sleep(60)
             while self.bot.signup_active:
-                riot_names: list[str] = self.get_riot_names()
-
                 if self.bot.current_signup_message:
                     try:
                         await self.bot.current_signup_message.edit(
@@ -345,7 +420,9 @@ class SignupView(discord.ui.View):
         player_embed_lines = []
         for player in self.bot.queue:
             display_name, riot_name, riot_tag = get_user_data(player)
-            player_embed_lines.append(f"{display_name} (`{riot_name}#{riot_tag}`)")
+            player_embed_lines.append(
+                f"{display_name} ({tracker_link(riot_name, riot_tag)})"
+            )
 
         embed = discord.Embed(
             title="Signup Queue",
@@ -375,9 +452,9 @@ class SignupView(discord.ui.View):
                 if self.bot.match_channel.name != new_channel_name:
                     try:
                         await self.bot.match_channel.edit(name=new_channel_name)
-                        print(f"Renamed channel to {new_channel_name}")
+                        log.info("Renamed channel to %s", new_channel_name)
                     except discord.HTTPException:
-                        print(f"Failed to rename channel {self.bot.match_name}")
+                        log.warning("Failed to rename channel %s", self.bot.match_name)
                     await asyncio.sleep(720)
                 else:
                     await asyncio.sleep(10)  # small delay to avoid busy loop
@@ -388,15 +465,6 @@ class SignupView(discord.ui.View):
         if self.channel_rename_task:
             self.channel_rename_task.cancel()
             self.channel_rename_task = None
-
-    def get_riot_names(self) -> list[str]:
-        riot_names: list[str] = []
-        for player in self.bot.queue:
-            discord_id = player["id"]
-            user_data = users.find_one({"discord_id": str(discord_id)})
-            riot_name = user_data.get("name", "Unknown") if user_data else "Unknown"
-            riot_names.append(riot_name)
-        return riot_names
 
     def cleanup(self):
         """Used to cleanup the signup externally"""
