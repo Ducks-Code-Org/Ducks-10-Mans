@@ -1,8 +1,8 @@
 """Merge duplicate mmr_data documents that share the same player_id.
 
 Usage:
-    python DebugTools/dedupe_mmr_docs.py            # diagnose only (no writes)
-    python DebugTools/dedupe_mmr_docs.py --fix      # merge & remove duplicates
+    python tools/ops/dedupe_mmr_docs.py            # diagnose only (no writes)
+    python tools/ops/dedupe_mmr_docs.py --fix      # merge & remove duplicates
 
 Root cause (issue #144): mmr_data has no unique index on player_id, so
 historical upserts could create multiple documents per player. When that

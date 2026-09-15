@@ -20,7 +20,7 @@ import globals as globals_mod
 from commands import BotCommands
 from database import all_matches, client, mmr_collection, seasons, users
 from globals import BOT_CONFIG
-from duck_coins import (
+from game.duck_coins import (
     DOUBLEDOWN_COST,
     add_coins,
     clear_season_coin_state,
@@ -28,15 +28,15 @@ from duck_coins import (
     duck_coins_enabled,
     duck_emote,
 )
-from riot_api import (
+from services.riot_api import (
     RiotApiInconclusive,
     get_account_by_riot_id,
     get_match_by_id_async,
     verify_riot_account_async,
 )
-from stats_helper import DEFAULT_MMR, update_stats
-from vlr_rating import estimate_ratings_v4
-from voice_presence import move_teams_to_voice, voice_presence_enabled
+from game.stats_helper import DEFAULT_MMR, update_stats
+from services.vlr_rating import estimate_ratings_v4
+from game.voice_presence import move_teams_to_voice, voice_presence_enabled
 
 log = logging.getLogger(__name__)
 
@@ -349,12 +349,12 @@ class MaintenanceCommands(BotCommands):
         buf = io.StringIO()
         error = None
         async with self.bot.report_lock:
-            # Reuses the DebugTools revert script: it snapshots every affected
+            # Reuses the tools.ops revert script: it snapshots every affected
             # document to backups/ before writing, so a backup file is always
             # produced even if the revert itself fails midway.
             with contextlib.redirect_stdout(buf):
                 try:
-                    from DebugTools.revert_last_match import revert
+                    from tools.ops.revert_last_match import revert
 
                     revert(client, dry_run=False)
                 except SystemExit as e:
@@ -608,7 +608,7 @@ class MaintenanceCommands(BotCommands):
         if not (self.bot.match_ongoing or self.bot.selected_map):
             await ctx.send("No active match to set a map for.")
             return
-        from maps_service import get_standard_maps
+        from services.maps_service import get_standard_maps
 
         try:
             pool = get_standard_maps()
@@ -960,9 +960,9 @@ class MaintenanceCommands(BotCommands):
         Wipe all stats for the current season, without ending it.
         Requires `!resetseason confirm` (two-step, no accidental wipes).
         Reversible: snapshots every player doc and the season counter to a
-        backup file in the same format DebugTools revert backups use
+        backup file in the same format tools.ops revert backups use
         ({"$oid": ...} ObjectIds), restorable via
-        `python DebugTools/revert_last_match.py --restore <file>`.
+        `python tools/ops/revert_last_match.py --restore <file>`.
         """
         if confirm.strip().lower() != "confirm":
             await ctx.send(
@@ -972,7 +972,7 @@ class MaintenanceCommands(BotCommands):
             return
 
         log.warning("%s is wiping all season stats", ctx.author)
-        from DebugTools.revert_last_match import _jsonify
+        from tools.ops.revert_last_match import _jsonify
 
         # Snapshot every player doc + the current season doc to a backup file
         # (same layout the revert script's --restore reads).
@@ -1006,7 +1006,7 @@ class MaintenanceCommands(BotCommands):
         await ctx.send(
             "Wiped season stats for all players. "
             f"Backup: `{backup_path.name}` (restorable via "
-            "`python DebugTools/revert_last_match.py --restore`)."
+            "`python tools/ops/revert_last_match.py --restore`)."
         )
         log.info("Season stats wiped; backup %s", backup_path.name)
 
@@ -1025,7 +1025,7 @@ class MaintenanceCommands(BotCommands):
             return
         season_num = int(season_doc.get("season_number", 0))
 
-        from DebugTools.revert_last_match import _jsonify
+        from tools.ops.revert_last_match import _jsonify
 
         async with self.bot.report_lock:
             matches = list(all_matches.find(_season_match_filter(season_num)))
@@ -1111,7 +1111,7 @@ class MaintenanceCommands(BotCommands):
             await ctx.send("Attach the snapshot .json file to this message.")
             return
 
-        from DebugTools.revert_last_match import _dejsonify, _jsonify
+        from tools.ops.revert_last_match import _dejsonify, _jsonify
 
         attachment = ctx.message.attachments[0]
         if not attachment.filename.lower().endswith((".json", ".json.gz")):
@@ -1146,7 +1146,7 @@ class MaintenanceCommands(BotCommands):
         safety_path = None
         async with self.bot.report_lock:
             # Pre-recovery safety snapshot to disk (restorable via
-            # python DebugTools/revert_last_match.py --restore).
+            # python tools/ops/revert_last_match.py --restore).
             if season_doc:
                 stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
                 safety = {
@@ -1206,7 +1206,7 @@ class MaintenanceCommands(BotCommands):
                 safety_note = (
                     f" The safety backup `{safety_path.name}` can restore the "
                     "pre-recovery state "
-                    "(`python DebugTools/revert_last_match.py --restore`)."
+                    "(`python tools/ops/revert_last_match.py --restore`)."
                     if safety_path
                     else ""
                 )

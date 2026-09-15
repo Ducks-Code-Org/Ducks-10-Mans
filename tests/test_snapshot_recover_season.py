@@ -10,9 +10,7 @@ from pathlib import Path
 
 from bson import ObjectId
 
-sys.path.insert(
-    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Stub modules with import-time side effects (Mongo connection) so this
 # self-check can run without a database.
@@ -55,7 +53,7 @@ sys.modules["discord.ext"] = _discord_stub.ext
 sys.modules["discord.ext.commands"] = _discord_stub.ext.commands
 
 import commands.maintenance_commands as mc  # noqa: E402
-from DebugTools.revert_last_match import _dejsonify, _jsonify  # noqa: E402
+from tools.ops.revert_last_match import _dejsonify, _jsonify  # noqa: E402
 
 
 class FakeCollection:

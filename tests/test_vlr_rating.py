@@ -9,9 +9,7 @@ in stats_helper.
 import os
 import sys
 
-sys.path.insert(
-    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Stub modules with import-time side effects (Mongo connection) so the
 # stats_helper aggregation can be exercised without a database.
@@ -21,7 +19,7 @@ _database_stub = types.ModuleType("database")
 _database_stub.mmr_collection = types.SimpleNamespace(update_one=lambda *a, **k: None)
 sys.modules["database"] = _database_stub
 
-from vlr_rating import estimate_ratings_v4
+from services.vlr_rating import estimate_ratings_v4
 
 
 def make_match():
@@ -157,7 +155,7 @@ def main():
     assert estimate_ratings_v4({"players": [], "rounds": []}) == {}
 
     # --- stats_helper round-weighted aggregation -------------------------
-    import stats_helper
+    import game.stats_helper as stats_helper
 
     # The average is derived from the persisted totals, so a player loaded
     # from the DB without an avg_rating key still displays correctly, and a
@@ -324,7 +322,7 @@ def main():
     assert store7["7"]["mmr"] >= 0, store7["7"]
 
     # --- ranks: tier thresholds and ordering ------------------------------
-    from ranks import RANKS, rank_of
+    from game.ranks import RANKS, rank_of
 
     assert rank_of(0) == "Wood Rank"
     assert rank_of(99) == "Wood Rank"
@@ -341,7 +339,7 @@ def main():
 
     # Unplayed players (0 matches) get no tier even at position 1, matching
     # the rank-role sync which only ranks players who played (issue #159).
-    from ranks import tiers_for_player, tier_for_player
+    from game.ranks import tiers_for_player, tier_for_player
 
     assert tiers_for_player(1200, position=1, matches_played=0) == []
     # Rank 1 wears Supersonic Radiant IN ADDITION to their traditional tier.

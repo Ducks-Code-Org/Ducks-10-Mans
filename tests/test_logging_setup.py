@@ -5,11 +5,9 @@ import os
 import sys
 import types
 
-sys.path.insert(
-    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from logging_setup import (
+from ops.logging_setup import (
     DiscordLogHandler,
     configured_level,
     discord_mirror_enabled,

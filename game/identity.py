@@ -4,7 +4,11 @@ import logging
 import aiohttp
 
 from database import users
-from riot_api import RiotApiInconclusive, get_account_by_puuid, get_account_by_riot_id
+from services.riot_api import (
+    RiotApiInconclusive,
+    get_account_by_puuid,
+    get_account_by_riot_id,
+)
 
 log = logging.getLogger(__name__)
 

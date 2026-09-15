@@ -6,9 +6,9 @@ from discord.ext import commands
 
 from commands import BotCommands
 from database import users
-from duck_coins import coins_of, duck_coins_enabled, duck_emote
-from ranks import tiers_for_player
-from stats_helper import DEFAULT_MMR, avg_rating_of
+from game.duck_coins import coins_of, duck_coins_enabled, duck_emote
+from game.ranks import tiers_for_player
+from game.stats_helper import DEFAULT_MMR, avg_rating_of
 from tracker_links import tracker_link
 
 log = logging.getLogger(__name__)

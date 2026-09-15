@@ -10,9 +10,9 @@ from discord.ext import commands
 
 from commands import BotCommands
 from database import mmr_collection, users
-from identity import ensure_current_riot_identity
-from recent_queue import get_recent_queue, pingrecent_message
-from riot_api import riot_account_exists_async
+from game.identity import ensure_current_riot_identity
+from game.recent_queue import get_recent_queue, pingrecent_message
+from services.riot_api import riot_account_exists_async
 from views.signup_view import SignupView
 
 log = logging.getLogger(__name__)

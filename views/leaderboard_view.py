@@ -10,7 +10,7 @@ from table2ascii import PresetStyle
 from table2ascii import table2ascii as t2a
 
 from database import mmr_collection, users
-from stats_helper import DEFAULT_MMR, avg_rating_of
+from game.stats_helper import DEFAULT_MMR, avg_rating_of
 
 log = logging.getLogger(__name__)
 

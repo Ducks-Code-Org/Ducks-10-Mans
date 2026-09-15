@@ -1,8 +1,8 @@
 """Diagnose missing mmr_data documents for players in the users collection.
 
 Usage:
-    python DebugTools/fix_missing_mmr_docs.py            # diagnose only (no writes)
-    python DebugTools/fix_missing_mmr_docs.py --fix      # create missing default docs
+    python tools/ops/fix_missing_mmr_docs.py            # diagnose only (no writes)
+    python tools/ops/fix_missing_mmr_docs.py --fix      # create missing default docs
 
 Root cause of the 'sen babymcnerd#uwu' bug:
   1. ensure_player_mmr() skips players already in self.player_mmr (in-memory).

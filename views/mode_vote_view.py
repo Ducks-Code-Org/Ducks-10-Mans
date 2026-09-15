@@ -6,7 +6,7 @@ from functools import partial
 import discord
 from discord.ui import Button
 
-from stats_helper import DEFAULT_MMR
+from game.stats_helper import DEFAULT_MMR
 from views import safe_reply
 from views.map_type_vote_view import MapTypeVoteView
 

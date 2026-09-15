@@ -7,7 +7,7 @@ import discord
 
 from database import mmr_collection
 from globals import feature_enabled
-from maps_service import get_standard_maps
+from services.maps_service import get_standard_maps
 
 log = logging.getLogger(__name__)
 

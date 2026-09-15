@@ -34,7 +34,7 @@ def display_all_changes(stat_changes: list[StatChange]):
 
 
 def get_matchlist_changes_that_will_be_made(matchlist):
-    from DebugTools.helpers.stat_getters import (
+    from tools.ops.helpers.stat_getters import (
         get_losses_from_matchlist,
         get_wins_from_matchlist,
         get_combat_score_from_matchlist,
@@ -165,7 +165,7 @@ def get_matchlist_changes_that_will_be_made(matchlist):
 
 
 def get_changes_that_will_be_made(match):
-    from DebugTools.helpers.stat_getters import (
+    from tools.ops.helpers.stat_getters import (
         get_losses_from_match,
         get_wins_from_match,
         get_combat_score_from_match,

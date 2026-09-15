@@ -8,7 +8,7 @@ from discord.ext import commands
 
 from commands import BotCommands
 from database import mmr_collection, users
-from riot_api import RiotApiInconclusive, get_account_by_riot_id
+from services.riot_api import RiotApiInconclusive, get_account_by_riot_id
 from tracker_links import tracker_link
 
 log = logging.getLogger(__name__)

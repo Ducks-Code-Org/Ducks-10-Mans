@@ -4,11 +4,9 @@ import sys
 
 import aiohttp
 
-sys.path.insert(
-    0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from riot_api import (
+from services.riot_api import (
     RiotApiInconclusive,
     _get_rate_lock,
     _rate_slots,

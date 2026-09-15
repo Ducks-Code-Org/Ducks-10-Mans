@@ -11,19 +11,19 @@ from discord.ext import commands
 from commands import BotCommands
 from database import all_matches, mmr_collection, seasons, users
 from globals import feature_enabled
-from duck_coins import (
+from game.duck_coins import (
     award_match_coins,
     doubledown_multiplier_of,
     duck_coins_enabled,
     refund_open_bets,
     settle_bets,
 )
-from ranks import sync_player_rank
-from recent_queue import remember_recent_queue
-from riot_api import RiotApiInconclusive, get_recent_matches_async
-from stats_helper import update_stats
+from game.ranks import sync_player_rank
+from game.recent_queue import remember_recent_queue
+from services.riot_api import RiotApiInconclusive, get_recent_matches_async
+from game.stats_helper import update_stats
 from tracker_links import tracker_link
-from vlr_rating import estimate_ratings_v4
+from services.vlr_rating import estimate_ratings_v4
 
 log = logging.getLogger(__name__)
 
