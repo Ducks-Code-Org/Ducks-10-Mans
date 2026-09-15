@@ -1,9 +1,10 @@
 """MMR rank tiers and their persistent Discord roles (issue #159).
 
 Players with zero matches this season have no rank role; everyone who has
-played at least one match gets exactly one. Roles are found by name and
-created automatically with the tier color when missing. `!newseason` strips
-them all.
+played at least one match gets their traditional MMR tier role, and the rank
+1 player additionally carries the Supersonic Radiant role on top of it. Roles
+are found by name and created automatically with the tier color when missing.
+`!newseason` strips them all.
 """
 
 import logging
@@ -27,10 +28,8 @@ SSR_NAME = "Supersonic Radiant"
 SSR_COLOR = "#fb36f5"
 
 
-def rank_of(mmr: int, is_rank_one: bool = False) -> str | None:
-    """Role name for an MMR value. Rank 1 overall is always SSR."""
-    if is_rank_one:
-        return SSR_NAME
+def rank_of(mmr: int) -> str | None:
+    """Traditional MMR tier name for an MMR value (never Supersonic Radiant)."""
     if mmr < 0:
         return None
     for threshold, name, _ in RANKS:
@@ -39,15 +38,34 @@ def rank_of(mmr: int, is_rank_one: bool = False) -> str | None:
     return None
 
 
-def tier_for_player(mmr: int, *, position: int, matches_played: int) -> str | None:
-    """Rank tier for a player, or None if they haven't played this season.
+def tiers_for_player(mmr: int, *, position: int, matches_played: int) -> list[str]:
+    """Every rank tier role a player should hold, traditional tier first.
+
+    The rank 1 player wears Supersonic Radiant *in addition to* their
+    traditional MMR tier. Unplayed players have no rank role, so they hold no
+    tiers either (issue #159).
+    """
+    if matches_played <= 0:
+        return []
+    tiers = []
+    tier = rank_of(mmr)
+    if tier:
+        tiers.append(tier)
+    if position == 1:
+        tiers.append(SSR_NAME)
+    return tiers
+
+
+def tier_for_player(mmr: int, *, matches_played: int) -> str | None:
+    """Traditional MMR tier for the !stats display, or None if unplayed.
 
     Unplayed players have no rank role, so they must show no tier either
-    (issue #159).
+    (issue #159). A rank 1 player's Supersonic Radiant status is shown
+    separately by the rank line and worn as an extra role on top of this tier.
     """
     if matches_played <= 0:
         return None
-    return rank_of(mmr, is_rank_one=(position == 1))
+    return rank_of(mmr)
 
 
 def help_menu_text() -> str:
@@ -76,31 +94,52 @@ async def _role_for(guild: discord.Guild, name: str, color_hex: str):
 async def sync_player_rank(
     bot, guild: discord.Guild, discord_id: str, mmr: int, is_rank_one: bool = False
 ) -> None:
-    """Ensure the member has exactly the role their MMR calls for."""
+    """Ensure the member holds exactly the roles their standing calls for.
+
+    The traditional MMR tier always follows the player's MMR, and the rank 1
+    player additionally wears Supersonic Radiant on top of it rather than
+    instead of it.
+    """
     member = guild.get_member(int(discord_id))
     if member is None:
         return
 
     tier_names = {name for _, name, _ in RANKS} | {SSR_NAME}
-    target = rank_of(mmr, is_rank_one)
+    target = rank_of(mmr)
 
+    # Remove tier roles the player no longer deserves. Supersonic Radiant is
+    # kept while the member is still rank 1 and stripped otherwise; the
+    # traditional tier is kept only while it matches the current MMR.
     for role in member.roles:
-        if role.name in tier_names and (target is None or role.name != target):
-            try:
-                await member.remove_roles(role)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
-                log.warning("Could not remove %s from %s: %s", role.name, discord_id, e)
-
-    if target is None:
-        return
-
-    color = next((c for _, n, c in RANKS if n == target), SSR_COLOR)
-    role = await _role_for(guild, target, color)
-    if role is not None and role not in member.roles:
+        if role.name not in tier_names:
+            continue
+        if role.name == SSR_NAME:
+            if is_rank_one:
+                continue
+        elif role.name == target:
+            continue
         try:
-            await member.add_roles(role)
+            await member.remove_roles(role)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
-            log.warning("Could not grant %s to %s: %s", target, discord_id, e)
+            log.warning("Could not remove %s from %s: %s", role.name, discord_id, e)
+
+    if target is not None:
+        color = next((c for _, n, c in RANKS if n == target), None)
+        role = await _role_for(guild, target, color)
+        if role is not None and role not in member.roles:
+            try:
+                await member.add_roles(role)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+                log.warning("Could not grant %s to %s: %s", target, discord_id, e)
+
+    # Supersonic Radiant for the rank 1 player, stacked on their tier role.
+    if is_rank_one:
+        role = await _role_for(guild, SSR_NAME, SSR_COLOR)
+        if role is not None and role not in member.roles:
+            try:
+                await member.add_roles(role)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+                log.warning("Could not grant %s to %s: %s", SSR_NAME, discord_id, e)
 
 
 async def remove_all_rank_roles(guild: discord.Guild) -> None:

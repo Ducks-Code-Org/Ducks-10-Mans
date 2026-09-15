@@ -704,8 +704,9 @@ class ReportCommand(BotCommands):
                     else:
                         await ctx.send(message)
 
-        # Sync each player's rank role to their new MMR (no rank role until
-        # the first match of the season; rank 1 overall is Supersonic Radiant).
+        # Sync each player's rank roles to their new MMR (no rank role until
+        # the first match of the season; rank 1 overall also wears Supersonic
+        # Radiant on top of their traditional tier).
         if ctx.guild:
             played_sorted = [
                 (pid, stats)

@@ -332,7 +332,8 @@ def main():
     assert rank_of(299) == "Iron Rank"
     assert rank_of(750) == "Mother-Ducker Rank"
     assert rank_of(10000) == "Mother-Ducker Rank"
-    assert rank_of(500, is_rank_one=True) == "Supersonic Radiant"
+    # rank_of is purely MMR-based and never returns Supersonic Radiant.
+    assert rank_of(500) != "Supersonic Radiant"
     assert rank_of(-5) is None  # unplayed players get no tier
     # Thresholds strictly ascending when listed low-to-high
     thresholds = sorted(t for t, _, _ in RANKS)
@@ -340,12 +341,26 @@ def main():
 
     # Unplayed players (0 matches) get no tier even at position 1, matching
     # the rank-role sync which only ranks players who played (issue #159).
-    from ranks import tier_for_player
+    from ranks import tiers_for_player, tier_for_player
 
-    assert tier_for_player(1200, position=1, matches_played=0) is None
-    assert tier_for_player(1200, position=1, matches_played=3) == "Supersonic Radiant"
-    assert tier_for_player(0, position=5, matches_played=0) is None
-    assert tier_for_player(0, position=5, matches_played=1) == "Wood Rank"
+    assert tiers_for_player(1200, position=1, matches_played=0) == []
+    # Rank 1 wears Supersonic Radiant IN ADDITION to their traditional tier.
+    assert tiers_for_player(1200, position=1, matches_played=3) == [
+        "Mother-Ducker Rank",
+        "Supersonic Radiant",
+    ]
+    assert tiers_for_player(0, position=5, matches_played=0) == []
+    assert tiers_for_player(0, position=5, matches_played=1) == ["Wood Rank"]
+    # Non-rank-1 players hold only their traditional tier.
+    assert tiers_for_player(1200, position=2, matches_played=3) == [
+        "Mother-Ducker Rank"
+    ]
+
+    # tier_for_player shows only the traditional tier (SSR status is a
+    # separate role/display, never a replacement for the MMR tier).
+    assert tier_for_player(1200, matches_played=0) is None
+    assert tier_for_player(1200, matches_played=3) == "Mother-Ducker Rank"
+    assert tier_for_player(0, matches_played=1) == "Wood Rank"
 
     print("vlr_rating self-check OK")
 
