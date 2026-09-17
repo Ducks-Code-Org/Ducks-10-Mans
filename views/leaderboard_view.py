@@ -116,6 +116,7 @@ class LeaderboardView(View):
     def make_content(self, data, page_count):
         sort_by_to_title = {
             "mmr": "MMR",
+            "avg_rating": "Avg Rating",
             "average_combat_score": "ACS",
             "kill_death_ratio": "K/D",
             "wins": "Wins",
@@ -230,7 +231,15 @@ class LeaderboardView(View):
 
     async def on_refresh(self, interaction: discord.Interaction):
         self.sorted_data = sorted(
-            mmr_collection.find(), key=lambda x: x.get(self.sort_by, 0), reverse=True
+            mmr_collection.find(),
+            key=lambda x: (
+                avg_rating_of(x)
+                if self.sort_by == "avg_rating" and avg_rating_of(x) is not None
+                else float("-inf")
+                if self.sort_by == "avg_rating"
+                else x.get(self.sort_by, 0)
+            ),
+            reverse=True,
         )
         self.sorted_data = [d for d in self.sorted_data if _has_played(d)]
 
