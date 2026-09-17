@@ -27,8 +27,7 @@ class CoinsCommand(BotCommands):
         player_id = _resolve_player(self.bot, ctx, target)
         if player_id is None:
             await ctx.send(
-                "Could not find that player. Use a Riot ID (`Name#Tag`) or "
-                "@mention."
+                "Could not find that player. Use a Riot ID (`Name#Tag`) or " "@mention."
             )
             return
 
@@ -48,6 +47,4 @@ class CoinsCommand(BotCommands):
             f"**{title}** has **{coins}** Duck Coins {emote}",
             mention_author=False,
         )
-        log.info(
-            "Coins lookup for %s by %s: %s coins", player_id, ctx.author, coins
-        )
+        log.info("Coins lookup for %s by %s: %s coins", player_id, ctx.author, coins)
