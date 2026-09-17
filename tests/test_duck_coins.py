@@ -249,6 +249,52 @@ def demo():
     assert "<@1> paid 5" in reply and bot.map_override_last == 5
     assert coins_of("1") == 95, "explicit wager must charge exactly that amount"
 
+    # Grace window after teams finalize: overrides still work for 2 minutes
+    # and retitle the posted teams embed; they expire after the deadline.
+    # (Deadlines are set inside a coroutine: asyncio.get_event_loop() needs a
+    # running loop on Python 3.12+.)
+    class _FakeTeamsMessage:
+        def __init__(self):
+            self.embeds = [types.SimpleNamespace(title="Teams on Ascent")]
+            self.edits = []
+
+        async def edit(self, embed=None):
+            self.edits.append(embed)
+
+    async def _run_grace_checks():
+        now = asyncio.get_event_loop().time()
+        bots = []
+        for _ in range(3):
+            b = FakeBot()
+            b.match_ongoing = True
+            b.map_override_deadline = now + 120
+            b.map_override_last = 0
+            b.map_override_last_by = None
+            b.current_teams_message = _FakeTeamsMessage()
+            b.emojis = []
+            bots.append(b)
+            DB["1"]["duck_coins"] = 100
+        # Inside the window: charged, map set, embed retitled.
+        reply = await setmap_override(bots[0], "1", "Bind")
+        assert "now **Bind**" in reply, "grace-window override must be accepted"
+        assert bots[0].selected_map == "Bind"
+        assert bots[0].current_teams_message.edits, "teams embed must be edited"
+        assert bots[0].current_teams_message.embeds[0].title == "Teams on Bind"
+        assert coins_of("1") == 97, "grace-window override must charge"
+        # Past the deadline: rejected without charge.
+        bots[1].map_override_deadline = now - 1
+        reply = await setmap_override(bots[1], "1", "Haven")
+        assert "before the teams are fully decided" in reply, "expired grace must deny"
+        assert not bots[1].current_teams_message.edits
+        # Before teams finalize there is no teams embed yet and no edit attempt.
+        bots[2].match_ongoing = False
+        bots[2].map_override_deadline = None
+        reply = await setmap_override(bots[2], "1", "Haven")
+        assert "now **Haven**" in reply
+        assert not bots[2].current_teams_message.edits, "no embed edit before finalize"
+
+    asyncio.run(_run_grace_checks())
+
     # Command gating: the !setmap window (captains draft) is exactly when no
     # match is running, so its gate must not require a running match.
     import globals as _globals
