@@ -125,15 +125,11 @@ class StatsCommand(BotCommands):
         embed.add_field(name="Rank", value=rank_line, inline=False)
         embed.add_field(name="MMR", value=str(mmr_value), inline=True)
         embed.add_field(name="Win/Loss", value=f"{wins}/{losses}", inline=True)
-        embed.add_field(
-            name="Win Rate", value=f"{win_percent:.2f}%", inline=True
-        )
+        embed.add_field(name="Win Rate", value=f"{win_percent:.2f}%", inline=True)
         embed.add_field(name="Avg. Rating", value=avg_rating_display, inline=True)
         embed.add_field(name="Avg. ACS", value=f"{avg_cs:.2f}", inline=True)
         embed.add_field(name="K/D Ratio", value=f"{kd_ratio:.2f}", inline=True)
         embed.set_footer(text="Use !stats @user or !stats Name#Tag")
 
         await ctx.send(embed=embed)
-        log.info(
-            "Stats lookup: %s (%s) by %s", riot_name, riot_tag, ctx.author
-        )
+        log.info("Stats lookup: %s (%s) by %s", riot_name, riot_tag, ctx.author)
