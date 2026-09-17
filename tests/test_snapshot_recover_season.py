@@ -114,6 +114,7 @@ class FakeBot:
         self.double_downs = set()
         self.map_override_last = 0
         self.map_override_last_by = None
+        self.map_override_deadline = None
 
 
 class FakeMessage:

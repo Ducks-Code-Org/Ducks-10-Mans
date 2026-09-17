@@ -31,7 +31,7 @@ class HelpCommand(commands.Cog):
                 "↪ _Available types: `mmr` (default), `wins`, `losses`, `kd`, `acs`, `coins`_\n"
                 "**!bet attackers|defenders <amount>** - Bet Duck Coins on the match\n"
                 "**!doubledown** - Spend 5 Duck Coins to double your MMR change\n"
-                "**!setmap <map>** - Spend Duck Coins to override the chosen map\n"
+                "**!setmap <map> <amount>** - Wager Duck Coins (min 3) to override the chosen map\n"
                 "**!bug** - Report a bug (pings the maintainers)\n"
             ),
             inline=False,
