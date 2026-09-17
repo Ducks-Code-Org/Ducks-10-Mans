@@ -7,7 +7,7 @@ from discord.ext import commands
 
 from commands import BotCommands
 from database import users
-from game.ranks import tier_for_player
+from game.ranks import SSR_NAME, role_mention, tier_for_player
 from game.ranking import position_of
 from game.stats_helper import DEFAULT_MMR, avg_rating_of
 
@@ -110,9 +110,9 @@ class StatsCommand(BotCommands):
         tier = tier_for_player(mmr_value, matches_played=matches_played)
         rank_parts = []
         if tier:
-            rank_parts.append(f"@{tier}")
+            rank_parts.append(role_mention(ctx.guild, tier))
         if position == 1:
-            rank_parts.append("@Supersonic Radiant")
+            rank_parts.append(role_mention(ctx.guild, SSR_NAME))
         if position is not None:
             rank_parts.append(f"{position}/{ranked_total}")
         rank_line = ", ".join(rank_parts) if rank_parts else "Unranked"
