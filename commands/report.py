@@ -18,7 +18,7 @@ from game.duck_coins import (
     refund_open_bets,
     settle_bets,
 )
-from game.ranks import sync_player_rank
+from game.ranks import SSR_NAME, role_mention, sync_player_rank
 from game.recent_queue import remember_recent_queue
 from services.riot_api import RiotApiInconclusive, get_recent_matches_async
 from game.stats_helper import update_stats
@@ -698,7 +698,10 @@ class ReportCommand(BotCommands):
                             if channel.name.lower() == "announcements":
                                 announcement_channel = channel
                                 break
-                    message = f"{tracker_link(riot_name, riot_tag)} is now supersonic radiant!"
+                    ssr = role_mention(ctx.guild, SSR_NAME)
+                    message = (
+                        f"{tracker_link(riot_name, riot_tag)} is now {ssr}!"
+                    )
                     if announcement_channel:
                         await announcement_channel.send(message)
                     else:

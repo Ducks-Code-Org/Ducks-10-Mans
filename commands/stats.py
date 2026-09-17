@@ -7,7 +7,7 @@ from discord.ext import commands
 from commands import BotCommands
 from database import users
 from game.duck_coins import coins_of, duck_coins_enabled, duck_emote
-from game.ranks import tiers_for_player
+from game.ranks import SSR_NAME, role_mention, tiers_for_player
 from game.stats_helper import DEFAULT_MMR, avg_rating_of
 from tracker_links import tracker_link
 
@@ -84,19 +84,23 @@ class StatsCommand(BotCommands):
 
             # Rank 1 tag
             if position == 1:
-                rank_line = "*Supersonic Radiant!* (Rank 1)"
+                rank_line = f"*{role_mention(ctx.guild, SSR_NAME)}!* (Rank 1)"
             else:
                 rank_line = f"Rank: {position}/{total_players}"
 
             # MMR tiers (rank 1 also wears Supersonic Radiant on top of their
             # traditional tier, matching the role sync). Players who have not
             # played this season have no tier, matching their lack of a rank
-            # role (issue #159).
+            # role (issue #159). Tiers render as @role mentions when the role
+            # exists (issue #180).
             tiers = tiers_for_player(
                 mmr_value, position=position, matches_played=matches_played
             )
+            tier_mentions = [role_mention(ctx.guild, t) for t in tiers]
             tier_line = (
-                "Tier: " + " + ".join(tiers) if tiers else "Tier: none (play a match!)"
+                "Tier: " + " + ".join(tier_mentions)
+                if tier_mentions
+                else "Tier: none (play a match!)"
             )
 
             # Duck Coin balance (live from the DB, not the stats cache). Shown

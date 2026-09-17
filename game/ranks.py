@@ -68,6 +68,12 @@ def tier_for_player(mmr: int, *, matches_played: int) -> str | None:
     return rank_of(mmr)
 
 
+def role_mention(guild: discord.Guild, name: str) -> str:
+    """Mention text for a rank role by name, falling back to the raw name."""
+    role = discord.utils.get(guild.roles, name=name) if guild else None
+    return role.mention if role else f"@{name}"
+
+
 async def _role_for(guild: discord.Guild, name: str, color_hex: str):
     """Find a role by name, creating it with the tier color if missing."""
     role = discord.utils.get(guild.roles, name=name)
