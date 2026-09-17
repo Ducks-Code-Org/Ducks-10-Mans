@@ -219,6 +219,7 @@ class AdminCommands(BotCommands):
             self.bot.double_downs = set()
             self.bot.map_override_last = 0
             self.bot.map_override_last_by = None
+            self.bot.map_override_deadline = None
 
             await ctx.send(
                 "Canceled active signup. Feel free to start a new one with `!signup`."
@@ -242,6 +243,7 @@ class AdminCommands(BotCommands):
             self.bot.double_downs = set()
             self.bot.map_override_last = 0
             self.bot.map_override_last_by = None
+            self.bot.map_override_deadline = None
             await ctx.send(
                 "Cancelled active match. Feel free to start a new one with `!signup`."
             )
@@ -264,6 +266,7 @@ class AdminCommands(BotCommands):
             self.bot.double_downs = set()
             self.bot.map_override_last = 0
             self.bot.map_override_last_by = None
+            self.bot.map_override_deadline = None
             await ctx.send(
                 "Cancelled match setup. Feel free to start a new one with `!signup`."
             )

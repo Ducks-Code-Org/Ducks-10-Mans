@@ -790,6 +790,7 @@ class MaintenanceCommands(BotCommands):
         if self.bot.map_override_last_by == pid:
             self.bot.map_override_last = 0
             self.bot.map_override_last_by = None
+            self.bot.map_override_deadline = None
         log.info("%s reset season stats for %s", ctx.author, pid)
         await ctx.send(f"Reset season stats and MMR for <@{pid}>.")
 

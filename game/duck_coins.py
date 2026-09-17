@@ -14,6 +14,9 @@ log = logging.getLogger(__name__)
 BET_WINDOW_SECONDS = 300
 DOUBLEDOWN_COST = 5
 SETMAP_BASE_COST = 3
+# After teams finalize (match_ongoing flips True), !setmap stays usable this
+# long — a grace window for last-second map swaps in both modes.
+SETMAP_GRACE_SECONDS = 120
 
 
 def duck_coins_enabled() -> bool:
@@ -78,6 +81,7 @@ def clear_season_coin_state(bot) -> None:
     bot.double_downs = set()
     bot.map_override_last = 0
     bot.map_override_last_by = None
+    bot.map_override_deadline = None
 
 
 def reset_all_coins() -> None:
@@ -95,6 +99,15 @@ def award_match_coins(player_ids) -> None:
 def insufficient(bot, balance: int, needed: int) -> str:
     e = duck_emote(bot)
     return f"You have {balance} {e} but need {needed} {e} for that."
+
+
+def open_map_override_grace(bot) -> None:
+    """Allow !setmap for SETMAP_GRACE_SECONDS after teams finalize (issue #195)."""
+    bot.map_override_deadline = asyncio.get_event_loop().time() + SETMAP_GRACE_SECONDS
+    log.info(
+        "!setmap grace window open for %ss after team finalization",
+        SETMAP_GRACE_SECONDS,
+    )
 
 
 def _match_players(bot) -> set[str]:
@@ -297,8 +310,12 @@ def setmap_override(bot, user_id: str, map_name: str, amount: int = None) -> str
             "Map overrides only work in Captains or Balanced mode, after map "
             "voting has finished."
         )
-    if not bot.selected_map or bot.match_ongoing:
-        return "Map overrides only work before the teams are fully decided."
+    if not bot.selected_map:
+        return "Map overrides only work after map voting has finished."
+    if bot.match_ongoing:
+        deadline = getattr(bot, "map_override_deadline", None)
+        if deadline is None or asyncio.get_event_loop().time() > deadline:
+            return "Map overrides only work before the teams are fully decided."
     wanted = (map_name or "").strip().lower()
     pool = get_standard_maps()
     canonical = next((m for m in pool if m.lower() == wanted), None)

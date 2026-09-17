@@ -50,6 +50,7 @@ class CustomBot(commands.Bot):
         self.double_downs: set[str] = set()
         self.map_override_last: int = 0
         self.map_override_last_by: str | None = None
+        self.map_override_deadline: float | None = None
 
         self.load_mmr_data()
         seasons.update_one(

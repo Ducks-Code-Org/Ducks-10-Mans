@@ -762,6 +762,7 @@ class ReportCommand(BotCommands):
         self.bot.double_downs = set()
         self.bot.map_override_last = 0
         self.bot.map_override_last_by = None
+        self.bot.map_override_deadline = None
         refund_open_bets(self.bot)
         await cleanup_match_resources(self.bot)
 
