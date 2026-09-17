@@ -6,6 +6,7 @@ import math
 import discord
 import wcwidth
 from discord.ui import Button, View
+from table2ascii import Alignment
 from table2ascii import PresetStyle
 from table2ascii import table2ascii as t2a
 
@@ -33,7 +34,7 @@ def _rank_display(player_data: dict, sort_by: str, fallback_rank: int) -> str:
         return str(fallback_rank)
     if not isinstance(prev, int) or prev == rank:
         return str(rank)
-    return f"{rank} ({prev - rank:+d})"
+    return f"{rank}({prev - rank:+d})"
 
 
 def truncate_by_display_width(original_string, max_width=15, ellipsis=True):
@@ -181,6 +182,7 @@ class LeaderboardView(View):
             header=headers,
             body=leaderboard_data,
             first_col_heading=True,
+            alignments=[Alignment.LEFT] * len(headers),
             style=PresetStyle.thick_compact,
         )
 
