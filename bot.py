@@ -267,6 +267,7 @@ class CustomBot(commands.Bot):
 
     async def setup_hook(self):
         await self.load_extension("commands.admin_commands")
+        await self.load_extension("commands.coins")
         await self.load_extension("commands.help")
         await self.load_extension("commands.interest")
         await self.load_extension("commands.leaderboard")
