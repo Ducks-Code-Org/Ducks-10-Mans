@@ -23,6 +23,8 @@ class HelpCommand(commands.Cog):
                 "**!report** - Report match results and update MMR\n"
                 "**!stats <Name#Tag>** - Check a player's MMR and match statistics\n"
                 "**!linkriot <Name#Tag>** - Link your Riot account\n"
+                "**!coins <Name#Tag|@user>** - Check Duck Coin balance (yours by default)\n"
+                "**!ranks** - View rank roles and their MMR thresholds\n"
                 "**!interest <time>** - Plan a time to play 10 mans (`!interest list` for upcoming)\n"
                 "**!pingrecent** - Ping everyone from the most recent queue\n"
                 "**!leaderboard <type>** - View the leaderboard\n"
