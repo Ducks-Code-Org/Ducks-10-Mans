@@ -182,7 +182,7 @@ class LeaderboardView(View):
             header=headers,
             body=leaderboard_data,
             first_col_heading=True,
-            alignments=[Alignment.LEFT] * len(headers),
+            alignments=[Alignment.LEFT] + [Alignment.CENTER] * (len(headers) - 1),
             style=PresetStyle.thick_compact,
         )
 
