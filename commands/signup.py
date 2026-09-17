@@ -12,7 +12,11 @@ from commands import BotCommands
 from database import mmr_collection, users
 from game.identity import ensure_current_riot_identity
 from game.recent_queue import get_recent_queue, pingrecent_message
-from services.riot_api import riot_account_exists_async
+from services.riot_api import (
+    RiotApiInconclusive,
+    get_account_by_puuid,
+    riot_account_exists_async,
+)
 from views.signup_view import SignupView
 
 log = logging.getLogger(__name__)
@@ -50,6 +54,11 @@ async def purge_invalid_riot_ids(bot=None) -> list[str]:
     All account checks are issued in parallel against the API. Returns the
     display names of the removed players. Inconclusive checks (network/API
     errors) are skipped so flaky API responses never purge data.
+
+    A confirmed 404 on the stored Riot ID no longer deletes anything right
+    away: the stored puuid is checked first, and when it still resolves the
+    link is treated as a rename and refreshed (issue #182). Only an account
+    that is gone entirely (no puuid or puuid also 404s) gets purged.
     """
     docs = [
         doc
@@ -78,6 +87,33 @@ async def purge_invalid_riot_ids(bot=None) -> list[str]:
         # True (account exists) both keep the link.
         if exists is not False:
             continue
+        # The stored Riot ID is gone — but that's what a rename looks like.
+        # Resolve via puuid before destroying any stats (issue #182).
+        puuid = (doc.get("puuid") or "").strip()
+        if puuid:
+            acc = None
+            try:
+                acc = await get_account_by_puuid(session, puuid)
+            except (RiotApiInconclusive, Exception) as e:
+                log.warning(
+                    "PUUID resolve failed for %s during purge: %s", puuid, e
+                )
+            if acc and acc.get("gameName") and acc.get("tagLine"):
+                new_name = acc["gameName"].lower().strip()
+                new_tag = acc["tagLine"].lower().strip()
+                users.update_one(
+                    {"_id": doc["_id"]},
+                    {"$set": {"name": new_name, "tag": new_tag, "puuid": puuid}},
+                )
+                log.info(
+                    "Riot ID renamed: %s#%s -> %s#%s (%s); stats preserved",
+                    doc.get("name"),
+                    doc.get("tag"),
+                    new_name,
+                    new_tag,
+                    doc.get("discord_id"),
+                )
+                continue
         removed.append(_remove_user_everywhere(doc))
         if bot is not None:
             _kick_from_queue(bot, str(doc.get("discord_id")))
