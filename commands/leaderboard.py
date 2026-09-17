@@ -6,9 +6,9 @@ from discord.ext import commands
 
 from commands import BotCommands
 from database import mmr_collection
-from game.stats_helper import avg_rating_of
 from views.leaderboard_view import (
     LeaderboardView,
+    sort_key_for,
 )
 
 log = logging.getLogger(__name__)
@@ -42,16 +42,7 @@ class LeaderboardCommand(BotCommands):
         sort_by_internal = valid_sort_map[sort_by]
         cursor = mmr_collection.find()
         sorted_data = list(cursor)
-
-        def sort_key(doc):
-            if sort_by_internal == "avg_rating":
-                # Round-weighted average VLR rating; unplayed players (no
-                # rounds recorded) sort to the bottom.
-                rating = avg_rating_of(doc)
-                return rating if rating is not None else float("-inf")
-            return doc.get(sort_by_internal, 0)
-
-        sorted_data.sort(key=sort_key, reverse=True)
+        sorted_data.sort(key=sort_key_for(sort_by_internal), reverse=True)
 
         leaderboard_view = LeaderboardView(
             ctx,
