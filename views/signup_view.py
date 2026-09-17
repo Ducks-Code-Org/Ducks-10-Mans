@@ -103,12 +103,21 @@ class SignupView(discord.ui.View):
         # Update last activity
         self.last_activity_time = asyncio.get_event_loop().time()
 
-        # Edit the queue message and button label to reflect the new queue
+        # Edit the queue message and button label to reflect the new queue.
+        # Prefer the canonical signup message (see handle_signup, issue #181).
         self.sign_up_button.label = f"Sign Up ({len(self.bot.queue)}/10)"
-        await interaction.message.edit(
-            embed=self.get_signup_embed(),
-            view=self,
-        )
+        signup_message = self.bot.current_signup_message or interaction.message
+        try:
+            await signup_message.edit(
+                embed=self.get_signup_embed(),
+                view=self,
+            )
+        except discord.NotFound:
+            self.bot.current_signup_message = await self.bot.match_channel.send(
+                embed=self.get_signup_embed(),
+                view=self,
+                silent=True,
+            )
 
         # Notify the user that they have left the queue
         await interaction.followup.send(
@@ -302,12 +311,25 @@ class SignupView(discord.ui.View):
         if member:
             await member.add_roles(self.bot.match_role)
 
-        # Update the message and the signup button
+        # Update the message and the signup button. Prefer the canonical
+        # signup message: interaction.message can be a deleted/stale message
+        # (e.g. recreated by the refresh task right after a match report),
+        # and editing it raises inside discord.py (issue #181).
         self.sign_up_button.label = f"Sign Up ({len(self.bot.queue)}/10)"
-        await interaction.message.edit(
-            embed=self.get_signup_embed(),
-            view=self,
-        )
+        signup_message = self.bot.current_signup_message or interaction.message
+        try:
+            await signup_message.edit(
+                embed=self.get_signup_embed(),
+                view=self,
+            )
+        except discord.NotFound:
+            # Signup message was deleted; recreate it so the queue embed and
+            # live buttons are never left missing.
+            self.bot.current_signup_message = await self.bot.match_channel.send(
+                embed=self.get_signup_embed(),
+                view=self,
+                silent=True,
+            )
         await interaction.followup.send(
             f"{interaction.user.name} added to the queue!",
             ephemeral=True,

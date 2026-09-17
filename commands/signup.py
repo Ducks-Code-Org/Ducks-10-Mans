@@ -191,8 +191,12 @@ class SignupCommand(BotCommands):
             self.bot.load_mmr_data()
             log.debug("Reloaded MMR data at start of signup")
 
-            # Clear any existing signup view
+            # Tear down any existing signup view. Just dropping the reference
+            # leaks its background tasks, which then race the new signup's
+            # refresh task over current_signup_message — recreating stale
+            # embeds/buttons or deleting them (issue #181).
             if self.bot.signup_view is not None:
+                self.bot.signup_view.cleanup()
                 self.bot.signup_view = None
 
         # Fire off the invalid-Riot-ID purge in the background so the signup
