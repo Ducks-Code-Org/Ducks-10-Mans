@@ -93,33 +93,34 @@ def _chunk_embed_lines(lines: list[str], limit: int = 1000) -> list[str]:
 
 
 # Curated help for the !adminhelp embed: (usage arguments, description of 10
-# words max) per admin-gated command, keyed by command name. A command
-# missing from this map falls back to a signature-derived usage line and its
-# docstring's first line truncated to 10 words, so new commands still show
-# up reasonably until added here.
-ADMIN_COMMAND_HELP: dict[str, tuple[str, str]] = {
-    "newseason": ("[noreset]", "Start a new season and crown the SSR winner"),
-    "initialize_rounds": ("", "Zero every player's total rounds played"),
-    "simulate_queue": ("", "Fill the queue with 10 fake players"),
-    "toggledev": ("", "Toggle developer mode (switches the prefix)"),
-    "cancel": ("", "Cancel the active signup or match"),
-    "rollback": ("", "Undo the most recent reported match"),
+# words max) per admin-gated command, keyed by command name, grouped by the
+# section they render under. A command missing from this map falls back to a
+# signature-derived usage line and its docstring's first line truncated to 10
+# words, so new commands still show up reasonably until added here.
+ADMIN_COMMAND_HELP: dict[str, tuple[str, str, str]] = {
+    # section, usage args, short description
+    "newseason": ("Season", "[noreset]", "Start a new season and crown the SSR winner"),
+    "resetseason": ("Season", "confirm", "Wipe everyone's current-season stats"),
+    "resetplayer": ("Season", "<@user|Name#Tag>", "Reset one player's season stats"),
+    "snapshotseason": ("Season", "[full]", "Export season data as a .json.gz"),
+    "recoverseason": ("Season", "confirm", "Restore season data from an attached snapshot"),
+    "rollback": ("Match", "", "Undo the most recent reported match"),
+    "cancel": ("Match", "", "Cancel the active signup or match"),
+    "substitute": ("Match", "<@out> <@in>", "Swap a substitute into the current match"),
+    "fixmap": ("Match", "<map>", "Force-set the current match's map"),
+    "forcereport": ("Match", "<match-id-or-URL>", "Report a specific match by id"),
+    "matchinfo": ("Match", "", "Dump internal match and queue state"),
     "editplayer": (
+        "Players",
         "<@user|Name#Tag> <mmr|wins|losses|riot> <value>",
         "Edit a player's stats or linked Riot ID",
     ),
-    "substitute": ("<@out> <@in>", "Swap a substitute into the current match"),
-    "fixmap": ("<map>", "Force-set the current match's map"),
-    "setconfig": ("<key> <value>", "Update a bot.ini feature flag live"),
-    "showconfig": ("", "Show current bot.ini feature flags"),
-    "matchinfo": ("", "Dump internal match and queue state"),
-    "adminhelp": ("", "List admin commands with usage"),
-    "addcoins": ("<@user|Name#Tag> <amount>", "Grant or remove a player's Duck Coins"),
-    "resetplayer": ("<@user|Name#Tag>", "Reset one player's season stats"),
-    "forcereport": ("<match-id-or-URL>", "Report a specific match by id"),
-    "resetseason": ("confirm", "Wipe everyone's current-season stats"),
-    "snapshotseason": ("[full]", "Export season data as a .json.gz"),
-    "recoverseason": ("confirm", "Restore season data from an attached snapshot"),
+    "addcoins": ("Players", "<@user|Name#Tag> <amount>", "Grant or remove a player's Duck Coins"),
+    "setconfig": ("Config", "<key> <value>", "Update a bot.ini feature flag live"),
+    "showconfig": ("Config", "", "Show current bot.ini feature flags"),
+    "toggledev": ("Config", "", "Toggle developer mode (switches the prefix)"),
+    "simulate_queue": ("Config", "", "Fill the queue with 10 fake players"),
+    "initialize_rounds": ("Config", "", "Zero every player's total rounds played"),
 }
 
 
@@ -127,7 +128,7 @@ def _usage_args_of(cmd) -> str:
     """Usage arguments for a command: curated hint or signature-derived."""
     curated = ADMIN_COMMAND_HELP.get(cmd.name)
     if curated is not None:
-        return curated[0]
+        return curated[1]
     params = []
     for name, param in cmd.clean_params.items():
         if param.kind == inspect.Parameter.VAR_POSITIONAL:
@@ -143,7 +144,7 @@ def _short_desc_of(cmd, max_words: int = 10) -> str:
     """A 10-words-max description: curated hint or docstring's first line."""
     curated = ADMIN_COMMAND_HELP.get(cmd.name)
     if curated is not None:
-        return curated[1]
+        return curated[2]
     doc = (cmd.help or "").strip()
     first = doc.splitlines()[0] if doc else ""
     words = first.split()
@@ -664,9 +665,9 @@ class MaintenanceCommands(BotCommands):
         # Walk every registered prefix command and keep the admin-gated ones
         # (discord.py permission checks like has_permissions/has_role), so this
         # list stays correct as commands come and go.
-        lines = []
+        sections: dict[str, list[str]] = {}
         for cmd in sorted(self.bot.commands, key=lambda c: c.name):
-            if not cmd.enabled:
+            if not cmd.enabled or cmd.name == "adminhelp":
                 continue
             if not any(
                 getattr(check, "__module__", "").startswith("discord")
@@ -676,11 +677,21 @@ class MaintenanceCommands(BotCommands):
             usage_args = _usage_args_of(cmd)
             usage = f"!{cmd.name} {usage_args}".strip()
             desc = _short_desc_of(cmd)
-            lines.append(f"**`{usage}`**\n↪ {desc}")
-        chunks = _chunk_embed_lines(lines)
-        for i, chunk in enumerate(chunks, start=1):
-            name = "Commands" if len(chunks) == 1 else f"Commands ({i}/{len(chunks)})"
-            embed.add_field(name=name, value=chunk, inline=False)
+            section = ADMIN_COMMAND_HELP.get(cmd.name, ("Other",))[0]
+            sections.setdefault(section, []).append(f"`{usage}` — {desc}")
+        # Sections first (curated order), then any unlisted commands.
+        order = [s for s in ("Season", "Match", "Players", "Config") if s in sections]
+        for section in order:
+            section_lines = sections.pop(section)
+            chunks = _chunk_embed_lines(section_lines)
+            for i, chunk in enumerate(chunks, start=1):
+                name = section if len(chunks) == 1 else f"{section} ({i}/{len(chunks)})"
+                embed.add_field(name=name, value=chunk, inline=False)
+        for section, section_lines in sorted(sections.items()):
+            chunks = _chunk_embed_lines(section_lines)
+            for i, chunk in enumerate(chunks, start=1):
+                name = section if len(chunks) == 1 else f"{section} ({i}/{len(chunks)})"
+                embed.add_field(name=name, value=chunk, inline=False)
         await ctx.send(embed=embed)
 
     @commands.command(name="matchinfo")
