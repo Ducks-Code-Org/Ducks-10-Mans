@@ -28,6 +28,7 @@ class CustomBot(commands.Bot):
         self.team2: list[dict] = []
         self.signup_active = False
         self.current_signup_message = None
+        self.current_teams_message = None
         self.queue: list[dict] = []
         self.captain1: dict | None = None
         self.captain2: dict | None = None

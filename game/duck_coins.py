@@ -110,6 +110,27 @@ def open_map_override_grace(bot) -> None:
     )
 
 
+def _in_grace_window(bot) -> bool:
+    """True when match is ongoing and the 2-minute setmap grace is still open."""
+    if not bot.match_ongoing:
+        return False
+    deadline = getattr(bot, "map_override_deadline", None)
+    return deadline is not None and asyncio.get_event_loop().time() <= deadline
+
+
+async def _refresh_teams_embed(bot, new_map: str) -> None:
+    """Retitle the posted teams embed after a grace-window map override."""
+    message = getattr(bot, "current_teams_message", None)
+    if message is None:
+        return
+    try:
+        embed = message.embeds[0]
+        embed.title = f"Teams on {new_map}"
+        await message.edit(embed=embed)
+    except (discord.NotFound, discord.HTTPException, AttributeError, IndexError) as e:
+        log.warning("Could not update teams embed after map override: %s", e)
+
+
 def _match_players(bot) -> set[str]:
     return {str(p["id"]) for p in bot.team1 + bot.team2}
 
@@ -298,7 +319,7 @@ def doubledown_multiplier_of(bot, player_id) -> int:
     return 2 if str(player_id) in bot.double_downs else 1
 
 
-def setmap_override(bot, user_id: str, map_name: str, amount: int = None) -> str:
+async def setmap_override(bot, user_id: str, map_name: str, amount: int = None) -> str:
     """Override the voted map.
 
     With `amount` unset the cost escalates by one coin over the last override
@@ -346,4 +367,8 @@ def setmap_override(bot, user_id: str, map_name: str, amount: int = None) -> str
     bot.map_override_last_by = str(user_id)
     e = duck_emote(bot)
     log.info("%s paid %s coins to override the map to %s", user_id, cost, canonical)
+    if _in_grace_window(bot):
+        # The teams/match summary embed is already posted; retitle it so it
+        # reflects the overridden map (issue #195).
+        await _refresh_teams_embed(bot, canonical)
     return f"<@{user_id}> paid {cost} {e} — the map is now **{canonical}**!"

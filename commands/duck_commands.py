@@ -50,15 +50,25 @@ class DuckCommands(BotCommands):
         the previous override wager.
         """
         # Overrides must land after map voting and before teams are decided —
-        # during the captains draft, or the same window in Balanced mode.
+        # during the captains draft, or the same window in Balanced mode, plus
+        # the 2-minute grace after teams finalize.
         parts = args.rsplit(" ", 1)
         map_name, amount = args, None
         if len(parts) == 2 and parts[1].isdigit():
             map_name, amount = parts[0], int(parts[1])
-        await self._gated_send(
-            ctx,
-            lambda: setmap_override(self.bot, str(ctx.author.id), map_name, amount),
-            requires_running_match=False,
+        rejection = command_available(
+            self.bot, requires_running_match=False
+        )
+        if rejection:
+            log.warning(
+                "Duck Coins command rejected for %s: %s",
+                ctx.author,
+                rejection,
+            )
+            await ctx.send(rejection)
+            return
+        await ctx.send(
+            await setmap_override(self.bot, str(ctx.author.id), map_name, amount)
         )
 
     async def _gated_send(

@@ -197,41 +197,41 @@ def demo():
     bot.map_override_last_by = None
     bot.match_ongoing = False
     DB["1"]["duck_coins"] = 100
-    reply = setmap_override(bot, "1", "Bind")
+    reply = asyncio.run(setmap_override(bot, "1", "Bind"))
     assert "now **Bind**" in reply and coins_of("1") == 100 - SETMAP_BASE_COST
     assert bot.selected_map == "Bind"
-    reply = setmap_override(bot, "1", "Haven")
+    reply = asyncio.run(setmap_override(bot, "1", "Haven"))
     assert "another player" in reply, "same player can't override twice in a row"
     DB["2"]["duck_coins"] = 100
-    reply = setmap_override(bot, "2", "Haven")
+    reply = asyncio.run(setmap_override(bot, "2", "Haven"))
     assert "now **Haven**" in reply and coins_of("2") == 100 - (SETMAP_BASE_COST + 1)
     assert bot.map_override_last == SETMAP_BASE_COST + 1
-    reply = setmap_override(bot, "1", "Nuke")
+    reply = asyncio.run(setmap_override(bot, "1", "Nuke"))
     assert "isn't in the All Maps pool" in reply
     bot.chosen_mode = "Balanced"
     bot.map_override_last = 0
     bot.map_override_last_by = None
     DB["1"]["duck_coins"] = 100
-    reply = setmap_override(bot, "1", "Bind")
+    reply = asyncio.run(setmap_override(bot, "1", "Bind"))
     # Issue #195: overrides now work in Balanced mode too.
     assert "now **Bind**" in reply, "override must work in balanced mode"
     bot.chosen_mode = "Weird"
     bot.map_override_last = 0
     bot.map_override_last_by = None
     DB["1"]["duck_coins"] = 100
-    reply = setmap_override(bot, "1", "Haven")
+    reply = asyncio.run(setmap_override(bot, "1", "Haven"))
     assert "Captains or Balanced" in reply, "override outside both modes must fail"
     bot.chosen_mode = "Captains"
     bot.match_ongoing = False
     bot.map_override_last = 0
     bot.map_override_last_by = None
-    reply = setmap_override(bot, "1", "Ascent")
+    reply = asyncio.run(setmap_override(bot, "1", "Ascent"))
     assert "now **Ascent**" in reply
 
     # Once teams are decided (match ongoing) no more overrides
     bot.match_ongoing = True
     DB["1"]["duck_coins"] = 100
-    reply = setmap_override(bot, "1", "Haven")
+    reply = asyncio.run(setmap_override(bot, "1", "Haven"))
     assert "before the teams are fully decided" in reply
     assert coins_of("1") == 100, "override after draft end must not charge"
 
@@ -240,12 +240,12 @@ def demo():
     bot.map_override_last = 4
     bot.map_override_last_by = "other"
     DB["1"]["duck_coins"] = 100
-    reply = setmap_override(bot, "1", "Haven", 2)
+    reply = asyncio.run(setmap_override(bot, "1", "Haven", 2))
     assert "minimum override wager is 3" in reply, "below-min wager must be denied"
     assert coins_of("1") == 100, "denied wager must not charge"
-    reply = setmap_override(bot, "1", "Haven", 4)
+    reply = asyncio.run(setmap_override(bot, "1", "Haven", 4))
     assert "already wagered 4" in reply, "tie with last wager must be denied"
-    reply = setmap_override(bot, "1", "Haven", 5)
+    reply = asyncio.run(setmap_override(bot, "1", "Haven", 5))
     assert "<@1> paid 5" in reply and bot.map_override_last == 5
     assert coins_of("1") == 95, "explicit wager must charge exactly that amount"
 
