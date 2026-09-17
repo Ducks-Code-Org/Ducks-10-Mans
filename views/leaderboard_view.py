@@ -23,6 +23,22 @@ def _has_played(doc: dict) -> bool:
     return (doc.get("wins", 0) + doc.get("losses", 0)) > 0
 
 
+def sort_key_for(sort_by: str):
+    """Sort key for a leaderboard column, highest first.
+
+    `avg_rating` uses the round-weighted average VLR rating; players without
+    a recorded rating sort to the bottom.
+    """
+    if sort_by == "avg_rating":
+
+        def key(doc):
+            rating = avg_rating_of(doc)
+            return rating if rating is not None else float("-inf")
+
+        return key
+    return lambda doc: doc.get(sort_by, 0)
+
+
 def _rank_display(player_data: dict, sort_by: str, fallback_rank: int) -> str:
     """Format the rank column, showing gain/loss since the player's last match."""
     if sort_by != "mmr":
@@ -116,6 +132,7 @@ class LeaderboardView(View):
     def make_content(self, data, page_count):
         sort_by_to_title = {
             "mmr": "MMR",
+            "avg_rating": "Avg Rating",
             "average_combat_score": "ACS",
             "kill_death_ratio": "K/D",
             "wins": "Wins",
@@ -230,7 +247,9 @@ class LeaderboardView(View):
 
     async def on_refresh(self, interaction: discord.Interaction):
         self.sorted_data = sorted(
-            mmr_collection.find(), key=lambda x: x.get(self.sort_by, 0), reverse=True
+            mmr_collection.find(),
+            key=sort_key_for(self.sort_by),
+            reverse=True,
         )
         self.sorted_data = [d for d in self.sorted_data if _has_played(d)]
 

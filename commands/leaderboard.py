@@ -8,6 +8,7 @@ from commands import BotCommands
 from database import mmr_collection
 from views.leaderboard_view import (
     LeaderboardView,
+    sort_key_for,
 )
 
 log = logging.getLogger(__name__)
@@ -22,6 +23,8 @@ class LeaderboardCommand(BotCommands):
     def generate_leaderboard(bot, ctx=None, sort_by: str = "mmr"):
         valid_sort_map = {
             "mmr": "mmr",
+            "rating": "avg_rating",
+            "avg_rating": "avg_rating",
             "acs": "average_combat_score",
             "kd": "kill_death_ratio",
             "wins": "wins",
@@ -39,7 +42,7 @@ class LeaderboardCommand(BotCommands):
         sort_by_internal = valid_sort_map[sort_by]
         cursor = mmr_collection.find()
         sorted_data = list(cursor)
-        sorted_data.sort(key=lambda x: x.get(sort_by_internal, 0), reverse=True)
+        sorted_data.sort(key=sort_key_for(sort_by_internal), reverse=True)
 
         leaderboard_view = LeaderboardView(
             ctx,

@@ -28,7 +28,7 @@ class HelpCommand(commands.Cog):
                 "**!interest <time>** - Plan a time to play 10 mans (`!interest list` for upcoming)\n"
                 "**!pingrecent** - Ping everyone from the most recent queue\n"
                 "**!leaderboard <type>** - View the leaderboard\n"
-                "↪ _Available types: `mmr` (default), `wins`, `losses`, `kd`, `acs`, `coins`_\n"
+                "↪ _Available types: `mmr` (default), `rating`, `wins`, `losses`, `kd`, `acs`, `coins`_\n"
                 "**!bet attackers|defenders <amount>** - Bet Duck Coins on the match\n"
                 "**!doubledown** - Spend 5 Duck Coins to double your MMR change\n"
                 "**!setmap <map> <amount>** - Wager Duck Coins (min 3) to override the chosen map\n"
