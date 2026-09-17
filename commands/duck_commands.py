@@ -56,9 +56,7 @@ class DuckCommands(BotCommands):
         map_name, amount = args, None
         if len(parts) == 2 and parts[1].isdigit():
             map_name, amount = parts[0], int(parts[1])
-        rejection = command_available(
-            self.bot, requires_running_match=False
-        )
+        rejection = command_available(self.bot, requires_running_match=False)
         if rejection:
             log.warning(
                 "Duck Coins command rejected for %s: %s",
