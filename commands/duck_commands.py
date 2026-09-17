@@ -42,12 +42,22 @@ class DuckCommands(BotCommands):
         await self._gated_send(ctx, lambda: doubledown(self.bot, str(ctx.author.id)))
 
     @commands.command(name="setmap")
-    async def setmap_command(self, ctx: commands.Context, *, map_name: str = ""):
-        # Overrides must land after map voting and before teams are decided,
-        # i.e. during the captains draft — when no match is running yet.
+    async def setmap_command(self, ctx: commands.Context, *, args: str = ""):
+        """!setmap <map> [amount] — wager coins to override the chosen map.
+
+        Without an amount the cost escalates one coin over the last override
+        (min 3). With an amount, you pay exactly that much and it must beat
+        the previous override wager.
+        """
+        # Overrides must land after map voting and before teams are decided —
+        # during the captains draft, or the same window in Balanced mode.
+        parts = args.rsplit(" ", 1)
+        map_name, amount = args, None
+        if len(parts) == 2 and parts[1].isdigit():
+            map_name, amount = parts[0], int(parts[1])
         await self._gated_send(
             ctx,
-            lambda: setmap_override(self.bot, str(ctx.author.id), map_name),
+            lambda: setmap_override(self.bot, str(ctx.author.id), map_name, amount),
             requires_running_match=False,
         )
 

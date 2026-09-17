@@ -213,7 +213,14 @@ def demo():
     bot.map_override_last_by = None
     DB["1"]["duck_coins"] = 100
     reply = setmap_override(bot, "1", "Bind")
-    assert "Captains mode" in reply, "override outside captains mode must fail"
+    # Issue #195: overrides now work in Balanced mode too.
+    assert "now **Bind**" in reply, "override must work in balanced mode"
+    bot.chosen_mode = "Weird"
+    bot.map_override_last = 0
+    bot.map_override_last_by = None
+    DB["1"]["duck_coins"] = 100
+    reply = setmap_override(bot, "1", "Haven")
+    assert "Captains or Balanced" in reply, "override outside both modes must fail"
     bot.chosen_mode = "Captains"
     bot.match_ongoing = False
     bot.map_override_last = 0
@@ -227,6 +234,20 @@ def demo():
     reply = setmap_override(bot, "1", "Haven")
     assert "before the teams are fully decided" in reply
     assert coins_of("1") == 100, "override after draft end must not charge"
+
+    # Explicit-amount overrides (issue #195): min 3, must beat the last wager
+    bot.match_ongoing = False
+    bot.map_override_last = 4
+    bot.map_override_last_by = "other"
+    DB["1"]["duck_coins"] = 100
+    reply = setmap_override(bot, "1", "Haven", 2)
+    assert "minimum override wager is 3" in reply, "below-min wager must be denied"
+    assert coins_of("1") == 100, "denied wager must not charge"
+    reply = setmap_override(bot, "1", "Haven", 4)
+    assert "already wagered 4" in reply, "tie with last wager must be denied"
+    reply = setmap_override(bot, "1", "Haven", 5)
+    assert "<@1> paid 5" in reply and bot.map_override_last == 5
+    assert coins_of("1") == 95, "explicit wager must charge exactly that amount"
 
     # Command gating: the !setmap window (captains draft) is exactly when no
     # match is running, so its gate must not require a running match.
