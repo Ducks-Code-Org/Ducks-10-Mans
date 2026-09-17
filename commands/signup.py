@@ -13,7 +13,6 @@ from database import mmr_collection, users
 from game.identity import ensure_current_riot_identity
 from game.recent_queue import get_recent_queue, pingrecent_message
 from services.riot_api import (
-    RiotApiInconclusive,
     get_account_by_puuid,
     riot_account_exists_async,
 )
@@ -91,13 +90,13 @@ async def purge_invalid_riot_ids(bot=None) -> list[str]:
         # Resolve via puuid before destroying any stats (issue #182).
         puuid = (doc.get("puuid") or "").strip()
         if puuid:
-            acc = None
             try:
                 acc = await get_account_by_puuid(session, puuid)
-            except (RiotApiInconclusive, Exception) as e:
-                log.warning(
-                    "PUUID resolve failed for %s during purge: %s", puuid, e
-                )
+            except Exception as e:
+                # Network/API errors are inconclusive, never "account gone";
+                # keep the link so a flaky response can't wipe stats.
+                log.warning("PUUID resolve failed for %s during purge: %s", puuid, e)
+                continue
             if acc and acc.get("gameName") and acc.get("tagLine"):
                 new_name = acc["gameName"].lower().strip()
                 new_tag = acc["tagLine"].lower().strip()
