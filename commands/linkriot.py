@@ -50,11 +50,21 @@ class LinkRiotCommand(BotCommands):
 
         discord_id = str(ctx.author.id)
 
+        # Persist the puuid so a later Riot ID rename can be resolved back to
+        # this account instead of looking like a dead link (issue #182).
+        new_puuid = (payload.get("puuid") or "").strip()
+
         # Riot IDs can only be linked to one Discord account: remove any
-        # stale duplicate links from other users
-        for stale in users.find(
-            {"name": riot_name.lower().strip(), "tag": riot_tag.lower().strip()}
-        ):
+        # stale duplicate links from other users. Match on the Riot ID and,
+        # when known, the puuid — a renamed account is the same account.
+        stale_query = {
+            "$or": [
+                {"name": riot_name.lower().strip(), "tag": riot_tag.lower().strip()}
+            ]
+        }
+        if new_puuid:
+            stale_query["$or"].append({"puuid": new_puuid})
+        for stale in users.find(stale_query):
             if str(stale.get("discord_id")) != discord_id:
                 users.delete_one({"_id": stale["_id"]})
                 mmr_collection.delete_one({"player_id": stale.get("discord_id")})
@@ -65,15 +75,16 @@ class LinkRiotCommand(BotCommands):
                     stale.get("discord_id"),
                 )
 
+        set_fields = {
+            "discord_id": discord_id,
+            "name": riot_name.lower().strip(),
+            "tag": riot_tag.lower().strip(),
+        }
+        if new_puuid:
+            set_fields["puuid"] = new_puuid
         users.update_one(
             {"discord_id": discord_id},
-            {
-                "$set": {
-                    "discord_id": discord_id,
-                    "name": riot_name.lower().strip(),
-                    "tag": riot_tag.lower().strip(),
-                }
-            },
+            {"$set": set_fields},
             upsert=True,
         )
 
