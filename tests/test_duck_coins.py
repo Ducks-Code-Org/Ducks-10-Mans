@@ -197,36 +197,103 @@ def demo():
     bot.map_override_last_by = None
     bot.match_ongoing = False
     DB["1"]["duck_coins"] = 100
-    reply = setmap_override(bot, "1", "Bind")
+    reply = asyncio.run(setmap_override(bot, "1", "Bind"))
     assert "now **Bind**" in reply and coins_of("1") == 100 - SETMAP_BASE_COST
     assert bot.selected_map == "Bind"
-    reply = setmap_override(bot, "1", "Haven")
+    reply = asyncio.run(setmap_override(bot, "1", "Haven"))
     assert "another player" in reply, "same player can't override twice in a row"
     DB["2"]["duck_coins"] = 100
-    reply = setmap_override(bot, "2", "Haven")
+    reply = asyncio.run(setmap_override(bot, "2", "Haven"))
     assert "now **Haven**" in reply and coins_of("2") == 100 - (SETMAP_BASE_COST + 1)
     assert bot.map_override_last == SETMAP_BASE_COST + 1
-    reply = setmap_override(bot, "1", "Nuke")
+    reply = asyncio.run(setmap_override(bot, "1", "Nuke"))
     assert "isn't in the All Maps pool" in reply
     bot.chosen_mode = "Balanced"
     bot.map_override_last = 0
     bot.map_override_last_by = None
     DB["1"]["duck_coins"] = 100
-    reply = setmap_override(bot, "1", "Bind")
-    assert "Captains mode" in reply, "override outside captains mode must fail"
+    reply = asyncio.run(setmap_override(bot, "1", "Bind"))
+    # Issue #195: overrides now work in Balanced mode too.
+    assert "now **Bind**" in reply, "override must work in balanced mode"
+    bot.chosen_mode = "Weird"
+    bot.map_override_last = 0
+    bot.map_override_last_by = None
+    DB["1"]["duck_coins"] = 100
+    reply = asyncio.run(setmap_override(bot, "1", "Haven"))
+    assert "Captains or Balanced" in reply, "override outside both modes must fail"
     bot.chosen_mode = "Captains"
     bot.match_ongoing = False
     bot.map_override_last = 0
     bot.map_override_last_by = None
-    reply = setmap_override(bot, "1", "Ascent")
+    reply = asyncio.run(setmap_override(bot, "1", "Ascent"))
     assert "now **Ascent**" in reply
 
     # Once teams are decided (match ongoing) no more overrides
     bot.match_ongoing = True
     DB["1"]["duck_coins"] = 100
-    reply = setmap_override(bot, "1", "Haven")
+    reply = asyncio.run(setmap_override(bot, "1", "Haven"))
     assert "before the teams are fully decided" in reply
     assert coins_of("1") == 100, "override after draft end must not charge"
+
+    # Explicit-amount overrides (issue #195): min 3, must beat the last wager
+    bot.match_ongoing = False
+    bot.map_override_last = 4
+    bot.map_override_last_by = "other"
+    DB["1"]["duck_coins"] = 100
+    reply = asyncio.run(setmap_override(bot, "1", "Haven", 2))
+    assert "minimum override wager is 3" in reply, "below-min wager must be denied"
+    assert coins_of("1") == 100, "denied wager must not charge"
+    reply = asyncio.run(setmap_override(bot, "1", "Haven", 4))
+    assert "already wagered 4" in reply, "tie with last wager must be denied"
+    reply = asyncio.run(setmap_override(bot, "1", "Haven", 5))
+    assert "<@1> paid 5" in reply and bot.map_override_last == 5
+    assert coins_of("1") == 95, "explicit wager must charge exactly that amount"
+
+    # Grace window after teams finalize: overrides still work for 2 minutes
+    # and retitle the posted teams embed; they expire after the deadline.
+    # (Deadlines are set inside a coroutine: asyncio.get_event_loop() needs a
+    # running loop on Python 3.12+.)
+    class _FakeTeamsMessage:
+        def __init__(self):
+            self.embeds = [types.SimpleNamespace(title="Teams on Ascent")]
+            self.edits = []
+
+        async def edit(self, embed=None):
+            self.edits.append(embed)
+
+    async def _run_grace_checks():
+        now = asyncio.get_event_loop().time()
+        bots = []
+        for _ in range(3):
+            b = FakeBot()
+            b.match_ongoing = True
+            b.map_override_deadline = now + 120
+            b.map_override_last = 0
+            b.map_override_last_by = None
+            b.current_teams_message = _FakeTeamsMessage()
+            b.emojis = []
+            bots.append(b)
+            DB["1"]["duck_coins"] = 100
+        # Inside the window: charged, map set, embed retitled.
+        reply = await setmap_override(bots[0], "1", "Bind")
+        assert "now **Bind**" in reply, "grace-window override must be accepted"
+        assert bots[0].selected_map == "Bind"
+        assert bots[0].current_teams_message.edits, "teams embed must be edited"
+        assert bots[0].current_teams_message.embeds[0].title == "Teams on Bind"
+        assert coins_of("1") == 97, "grace-window override must charge"
+        # Past the deadline: rejected without charge.
+        bots[1].map_override_deadline = now - 1
+        reply = await setmap_override(bots[1], "1", "Haven")
+        assert "before the teams are fully decided" in reply, "expired grace must deny"
+        assert not bots[1].current_teams_message.edits
+        # Before teams finalize there is no teams embed yet and no edit attempt.
+        bots[2].match_ongoing = False
+        bots[2].map_override_deadline = None
+        reply = await setmap_override(bots[2], "1", "Haven")
+        assert "now **Haven**" in reply
+        assert not bots[2].current_teams_message.edits, "no embed edit before finalize"
+
+    asyncio.run(_run_grace_checks())
 
     # Command gating: the !setmap window (captains draft) is exactly when no
     # match is running, so its gate must not require a running match.

@@ -14,6 +14,9 @@ log = logging.getLogger(__name__)
 BET_WINDOW_SECONDS = 300
 DOUBLEDOWN_COST = 5
 SETMAP_BASE_COST = 3
+# After teams finalize (match_ongoing flips True), !setmap stays usable this
+# long — a grace window for last-second map swaps in both modes.
+SETMAP_GRACE_SECONDS = 120
 
 
 def duck_coins_enabled() -> bool:
@@ -78,6 +81,7 @@ def clear_season_coin_state(bot) -> None:
     bot.double_downs = set()
     bot.map_override_last = 0
     bot.map_override_last_by = None
+    bot.map_override_deadline = None
 
 
 def reset_all_coins() -> None:
@@ -95,6 +99,36 @@ def award_match_coins(player_ids) -> None:
 def insufficient(bot, balance: int, needed: int) -> str:
     e = duck_emote(bot)
     return f"You have {balance} {e} but need {needed} {e} for that."
+
+
+def open_map_override_grace(bot) -> None:
+    """Allow !setmap for SETMAP_GRACE_SECONDS after teams finalize (issue #195)."""
+    bot.map_override_deadline = asyncio.get_event_loop().time() + SETMAP_GRACE_SECONDS
+    log.info(
+        "!setmap grace window open for %ss after team finalization",
+        SETMAP_GRACE_SECONDS,
+    )
+
+
+def _in_grace_window(bot) -> bool:
+    """True when match is ongoing and the 2-minute setmap grace is still open."""
+    if not bot.match_ongoing:
+        return False
+    deadline = getattr(bot, "map_override_deadline", None)
+    return deadline is not None and asyncio.get_event_loop().time() <= deadline
+
+
+async def _refresh_teams_embed(bot, new_map: str) -> None:
+    """Retitle the posted teams embed after a grace-window map override."""
+    message = getattr(bot, "current_teams_message", None)
+    if message is None:
+        return
+    try:
+        embed = message.embeds[0]
+        embed.title = f"Teams on {new_map}"
+        await message.edit(embed=embed)
+    except (discord.NotFound, discord.HTTPException, AttributeError, IndexError) as e:
+        log.warning("Could not update teams embed after map override: %s", e)
 
 
 def _match_players(bot) -> set[str]:
@@ -285,14 +319,24 @@ def doubledown_multiplier_of(bot, player_id) -> int:
     return 2 if str(player_id) in bot.double_downs else 1
 
 
-def setmap_override(bot, user_id: str, map_name: str) -> str:
-    """Override the voted map; each repeat costs one more coin than the last."""
-    if bot.chosen_mode != "Captains":
+async def setmap_override(bot, user_id: str, map_name: str, amount: int = None) -> str:
+    """Override the voted map.
+
+    With `amount` unset the cost escalates by one coin over the last override
+    (legacy behavior, min SETMAP_BASE_COST). With `amount` set the player pays
+    exactly that much, which must beat the last override amount.
+    """
+    if bot.chosen_mode not in ("Captains", "Balanced"):
         return (
-            "Map overrides only work in Captains mode, after map voting has finished."
+            "Map overrides only work in Captains or Balanced mode, after map "
+            "voting has finished."
         )
-    if not bot.selected_map or bot.match_ongoing:
-        return "Map overrides only work before the teams are fully decided."
+    if not bot.selected_map:
+        return "Map overrides only work after map voting has finished."
+    if bot.match_ongoing:
+        deadline = getattr(bot, "map_override_deadline", None)
+        if deadline is None or asyncio.get_event_loop().time() > deadline:
+            return "Map overrides only work before the teams are fully decided."
     wanted = (map_name or "").strip().lower()
     pool = get_standard_maps()
     canonical = next((m for m in pool if m.lower() == wanted), None)
@@ -300,7 +344,20 @@ def setmap_override(bot, user_id: str, map_name: str) -> str:
         return f"`{map_name}` isn't in the All Maps pool. Choose one of: {', '.join(pool)}."
     if bot.map_override_last_by == str(user_id):
         return "Wait for another player to override before you override again."
-    cost = SETMAP_BASE_COST if not bot.map_override_last else bot.map_override_last + 1
+    last = bot.map_override_last
+    if amount is None:
+        cost = SETMAP_BASE_COST if not last else last + 1
+    else:
+        if amount < SETMAP_BASE_COST:
+            e = duck_emote(bot)
+            return f"The minimum override wager is {SETMAP_BASE_COST} {e}."
+        if amount <= last:
+            e = duck_emote(bot)
+            return (
+                f"Another player already wagered {last} {e}; wager more to take "
+                "the override."
+            )
+        cost = amount
     balance = coins_of(user_id)
     if balance < cost:
         return insufficient(bot, balance, cost)
@@ -310,4 +367,8 @@ def setmap_override(bot, user_id: str, map_name: str) -> str:
     bot.map_override_last_by = str(user_id)
     e = duck_emote(bot)
     log.info("%s paid %s coins to override the map to %s", user_id, cost, canonical)
+    if _in_grace_window(bot):
+        # The teams/match summary embed is already posted; retitle it so it
+        # reflects the overridden map (issue #195).
+        await _refresh_teams_embed(bot, canonical)
     return f"<@{user_id}> paid {cost} {e} — the map is now **{canonical}**!"

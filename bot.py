@@ -28,6 +28,7 @@ class CustomBot(commands.Bot):
         self.team2: list[dict] = []
         self.signup_active = False
         self.current_signup_message = None
+        self.current_teams_message = None
         self.queue: list[dict] = []
         self.captain1: dict | None = None
         self.captain2: dict | None = None
@@ -50,6 +51,7 @@ class CustomBot(commands.Bot):
         self.double_downs: set[str] = set()
         self.map_override_last: int = 0
         self.map_override_last_by: str | None = None
+        self.map_override_deadline: float | None = None
 
         self.load_mmr_data()
         seasons.update_one(
@@ -267,11 +269,13 @@ class CustomBot(commands.Bot):
 
     async def setup_hook(self):
         await self.load_extension("commands.admin_commands")
+        await self.load_extension("commands.coins")
         await self.load_extension("commands.help")
         await self.load_extension("commands.interest")
         await self.load_extension("commands.leaderboard")
         await self.load_extension("commands.linkriot")
         await self.load_extension("commands.maintenance_commands")
+        await self.load_extension("commands.ranks")
         await self.load_extension("commands.report")
         await self.load_extension("commands.signup")
         await self.load_extension("commands.stats")

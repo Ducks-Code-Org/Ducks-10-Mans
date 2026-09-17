@@ -409,12 +409,13 @@ class CaptainsDraftingView(discord.ui.View):
             [p.get("name") for p in self.bot.team1],
             [p.get("name") for p in self.bot.team2],
         )
-        await self.ctx.send(embed=teams_embed)
+        self.bot.current_teams_message = await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match and use `!report` to finalize results.")
 
-        from game.duck_coins import on_teams_announced
+        from game.duck_coins import on_teams_announced, open_map_override_grace
 
         await on_teams_announced(self.bot, self.ctx)
+        open_map_override_grace(self.bot)
 
         if voice_presence_enabled() and self.ctx.guild:
             await move_teams_to_voice(self.ctx.guild, self.bot.team1, self.bot.team2)
