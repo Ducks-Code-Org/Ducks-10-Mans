@@ -386,6 +386,8 @@ class ReportCommand(BotCommands):
         # Get top players
         self.bot.player_mmr = {str(k): v for k, v in self.bot.player_mmr.items()}
         pre_update_mmr = copy.deepcopy(self.bot.player_mmr)
+        # Per-player match ratings for the post-match summary embed.
+        player_ratings: dict[str, float] = {}
 
         # Doubledown multipliers are snapshotted before any MMR changes so
         # update_stats can apply them to the match delta only.
@@ -548,6 +550,8 @@ class ReportCommand(BotCommands):
 
             p_puuid = (player_stats.get("puuid") or "").strip().lower()
             rating_info = match_ratings.get(p_puuid) or {}
+            if isinstance(rating_info.get("rating"), (int, float)):
+                player_ratings[p_discord_id] = float(rating_info["rating"])
 
             update_stats(
                 player_stats,
@@ -592,10 +596,11 @@ class ReportCommand(BotCommands):
                 log.error("Bet settlement failed: %s", e, exc_info=e)
 
         # Build a per-player MMR gain/loss summary
+        match_name = getattr(self.bot, "match_name", "") or "match-?"
         mmr_lines = []
-        for label, team in (
-            ("Attackers", self.bot.team1),
-            ("Defenders", self.bot.team2),
+        for label, team, rounds in (
+            ("Attackers", self.bot.team1, team1_rounds),
+            ("Defenders", self.bot.team2, team2_rounds),
         ):
             entries = []
             for p in team:
@@ -609,12 +614,14 @@ class ReportCommand(BotCommands):
                     if u
                     else p.get("name", "Unknown")
                 )
+                rating = player_ratings.get(pid)
+                rating_part = f"({rating:.2f})" if rating is not None else ""
                 sign = "+" if delta >= 0 else ""
-                entries.append(f"{name}: {sign}{delta}")
-            mmr_lines.append((label, "\n".join(entries)))
+                entries.append(f"{name}{rating_part}: {sign}{delta}")
+            mmr_lines.append((f"{label} ({rounds})", "\n".join(entries)))
 
         results_embed = discord.Embed(
-            title="Match Reported — MMR Changes",
+            title=f"Match Summary | {match_name}",
             color=discord.Color.green(),
         )
         for label, entries_text in mmr_lines:
