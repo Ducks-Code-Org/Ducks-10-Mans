@@ -85,7 +85,7 @@ class AdminCommands(BotCommands):
                     break
         message = (
             f"**<@&1311935865626431529> Season {doc['season_number']}** started.\n"
-            f"<@{winner_doc['player_id']}> has been awarded the **Season {doc['season_number'] - 1} SSR** role!\n"
+            f"<@{winner_doc['player_id']}> has been awarded the {ssr_role.mention} role!\n"
             f"{'All player MMR + stats were reset.' if reset else 'Player stats were preserved (no reset).'}\n"
             f"{'Duck Coins were reset for the new season.' if reset else 'Duck Coins were preserved (no reset).'}"
         )

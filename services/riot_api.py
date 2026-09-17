@@ -231,10 +231,12 @@ async def get_account_by_puuid(
     status, data = await _henrik_get_json(
         session, url, timeout=timeout, retries=retries, priority=priority
     )
-    if status == 404 or data is None or status == 0:
+    # Only a confirmed 404 means the account is gone. Network errors (status
+    # 0), auth failures, and unexpected statuses (e.g. 503) are inconclusive,
+    # so callers never mistake them for a deleted account.
+    if status == 404:
         return None
-    if status != 200:
-        # Unexpected API status (e.g. 503): inconclusive, not "account gone".
+    if status != 200 or data is None:
         raise RiotApiInconclusive(f"Henrik API returned {status} for {url}")
     return _normalize_account_payload(data)
 
