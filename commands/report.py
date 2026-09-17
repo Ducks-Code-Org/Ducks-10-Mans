@@ -699,9 +699,7 @@ class ReportCommand(BotCommands):
                                 announcement_channel = channel
                                 break
                     ssr = role_mention(ctx.guild, SSR_NAME)
-                    message = (
-                        f"{tracker_link(riot_name, riot_tag)} is now {ssr}!"
-                    )
+                    message = f"{tracker_link(riot_name, riot_tag)} is now {ssr}!"
                     if announcement_channel:
                         await announcement_channel.send(message)
                     else:
