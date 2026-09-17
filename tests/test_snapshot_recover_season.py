@@ -301,10 +301,12 @@ def demo():
     assert mc._chunk_embed_lines([]) == ["—"]
 
     # --- adminhelp: curated help map constraints ---------------------------
-    # Every description must be 10 words or fewer (the embed contract).
-    for name, (usage_args, desc) in mc.ADMIN_COMMAND_HELP.items():
+    # Every description must be 10 words or fewer (the embed contract), and
+    # every entry must carry a section for the grouped layout.
+    for name, (section, usage_args, desc) in mc.ADMIN_COMMAND_HELP.items():
         assert len(desc.split()) <= 10, (name, desc)
         assert usage_args == usage_args.strip(), name
+        assert section, name
     # Fallbacks: a command absent from the map derives usage from its
     # signature and truncates its docstring to 10 words.
     import inspect

@@ -63,6 +63,8 @@ class LeaderboardCommand(BotCommands):
             await ctx.send(error)
             return
         self.leaderboard_view = leaderboard_view
-        self.leaderboard_message = await ctx.send(
+        # Reply directly to the invoker so concurrent users don't pile onto
+        # the same button set (issue #183). Each invocation gets its own view.
+        self.leaderboard_message = await ctx.reply(
             content=content, view=leaderboard_view
         )
