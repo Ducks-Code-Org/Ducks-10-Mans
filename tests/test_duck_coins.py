@@ -56,7 +56,21 @@ class _FakeEmbed:
 _discord_stub = types.ModuleType("discord")
 _discord_stub.Embed = _FakeEmbed
 _discord_stub.Color = types.SimpleNamespace(gold=lambda: None)
-_discord_stub.utils = types.SimpleNamespace(get=lambda *a, **k: None)
+
+
+# Mirror discord.utils.get: iterate `iterable` and return the first item the
+# `name`-matching predicate accepts (used to find channels by name).
+def _fake_utils_get(iterable=None, **kw):
+    wanted = kw.get("name")
+    if iterable is None or wanted is None:
+        return None
+    for item in iterable:
+        if getattr(item, "name", None) == wanted:
+            return item
+    return None
+
+
+_discord_stub.utils = types.SimpleNamespace(get=_fake_utils_get)
 _discord_stub.NotFound = type("NotFound", (Exception,), {})
 _discord_stub.HTTPException = type("HTTPException", (Exception,), {})
 sys.modules["discord"] = _discord_stub
@@ -126,6 +140,7 @@ class FakeBot:
         self.selected_map = "Ascent"
         self.bet_session = None
         self.emojis = []
+        self.match_channel = None
 
 
 class FakeChannel:
@@ -462,6 +477,95 @@ def demo():
     ), "settlement must clear the journal"
     recover_orphaned_escrow(bot)
     assert coins_of("9") == 10, "settled bets must never be re-refunded"
+
+    # --- Bet announcement: match channel only + setmap section ------------
+    from game.duck_coins import _announcement, on_teams_announced
+
+    # The message must mention !setmap so players know about coin overrides.
+    text = _announcement(bot, 300)
+    assert "!setmap" in text and "Override" in text, text
+    assert "!bet attackers" in text and "!doubledown" in text, text
+
+    class _FakeFeatureGlobals:
+        pass
+
+    async def _run_announcement_routing():
+        # bot.match_channel set: the announcement goes there and nowhere else.
+        match_ch = FakeChannel()
+        bot.match_channel = match_ch
+        # ctx carries its own .channel in production; give the fake one.
+        ctx = types.SimpleNamespace(channel=FakeChannel(), guild=None)
+        await duck_coins.on_teams_announced(bot, ctx)
+        assert (
+            len(match_ch.messages) == 1
+        ), "announcement must post once to the match channel"
+        assert "!setmap" in match_ch.messages[0]
+        assert ctx.channel.messages == [], "no duplicate announcement via ctx"
+
+        # When match_channel is unset, fall back to ctx.channel (simulate path).
+        bot2 = FakeBot()
+        bot2.match_channel = None
+        ctx2 = types.SimpleNamespace(channel=FakeChannel(), guild=None)
+        await duck_coins.on_teams_announced(bot2, ctx2)
+        assert len(ctx2.channel.messages) == 1, "fallback must use ctx.channel"
+        assert "!setmap" in ctx2.channel.messages[0]
+
+    asyncio.run(_run_announcement_routing())
+
+    # --- Cancel refunds EVERY coin spent on the match ----------------------
+    from game.duck_coins import announce_cancellation_async, refund_match_coins
+
+    DB["1"]["duck_coins"] = 20
+    DB["2"]["duck_coins"] = 20
+    DB["5"]["duck_coins"] = 20
+    bot.current_teams_message = None
+    session = open_window(bot)
+    # Escrow directly into the session (the same place place_bet writes), so
+    # this check is independent of any earlier balance churn in the demo.
+    session["bets"]["attackers"]["5"] = 4
+    DB["5"]["duck_coins"] = 16  # as if player 5 paid 4 for the bet
+    bot.double_downs = {"1"}
+    DB["1"]["duck_coins"] = 15  # as if player 1 paid 5 for the doubledown
+    bot.map_override_last = 4
+    bot.map_override_last_by = "2"
+    DB["2"]["duck_coins"] = 16  # as if player 2 paid 4 for the override
+
+    guild_captured = []
+
+    async def _capturing_send(content=None, **kw):
+        guild_captured.append(content)
+
+    fake_10mans = types.SimpleNamespace(name="10-mans", send=_capturing_send)
+    guild = types.SimpleNamespace(text_channels=[fake_10mans])
+
+    total = refund_match_coins(bot)
+    # 4 bet + 5 doubledown + 4 override = 13
+    assert total == 13, f"total refund wrong: {total}"
+    assert coins_of("5") == 20, f"bettor refund wrong: {coins_of('5')}"
+    assert coins_of("1") == 20, f"doubledown refund wrong: {coins_of('1')}"
+    assert coins_of("2") == 20, f"override refund wrong: {coins_of('2')}"
+    assert bot.bet_session is None
+    assert bot.double_downs == set()
+    assert bot.map_override_last == 0 and bot.map_override_last_by is None
+
+    # The #10-mans notice — only when coins were actually refunded.
+    asyncio.run(announce_cancellation_async(bot, guild))
+    assert len(guild_captured) == 1
+    assert "Match cancelled" in guild_captured[0] and "returned" in guild_captured[0]
+
+    # Nothing spent → nothing refunded → callers must NOT post the notice.
+    DB["1"]["duck_coins"] = 50
+    total2 = refund_match_coins(bot)
+    assert total2 == 0, f"empty state must refund nothing: {total2}"
+    guild_captured.clear()
+    if total2:
+        asyncio.run(announce_cancellation_async(bot, guild))
+    assert guild_captured == [], "no coins refunded → no cancellation notice"
+
+    # Guild without a #10-mans channel: notice skipped silently.
+    asyncio.run(
+        announce_cancellation_async(bot, types.SimpleNamespace(text_channels=[]))
+    )
 
     print("all duck coins self-checks passed")
 

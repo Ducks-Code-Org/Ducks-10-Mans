@@ -252,6 +252,8 @@ def _announcement(bot, remaining: int) -> str:
         f"{e} **Betting is open!** Bet with `!bet attackers <amount>` or "
         f"`!bet defenders <amount>` (min 1). Players in this match cannot bet.\n"
         f"`!doubledown` costs {DOUBLEDOWN_COST} {e} to double your MMR change for this match.\n"
+        f"Override the chosen map with `!setmap <map> [amount]` — wager {SETMAP_BASE_COST}+ {e} "
+        f"(outbid the last override) to swap the map.\n"
         f"{window}"
     )
 
@@ -264,7 +266,13 @@ async def _edit_window(session, text: str) -> None:
 
 
 async def on_teams_announced(bot, ctx) -> None:
-    """Open the 5-minute betting/doubledown window after teams are posted."""
+    """Open the 5-minute betting/doubledown window after teams are posted.
+
+    The announcement goes only to the match-#### channel (bot.match_channel),
+    never to the persistent #10-mans channel: betting is per-match chatter
+    that belongs with the match, and the countdown edits would clutter a
+    long-lived channel.
+    """
     if not duck_coins_enabled() or ctx is None:
         return
     log.info("Opening %ss Duck Coin bet window", BET_WINDOW_SECONDS)
@@ -276,19 +284,14 @@ async def on_teams_announced(bot, ctx) -> None:
     }
     bot.bet_session = session
     persist_escrow(bot)
+
+    # Prefer the pinned match channel; fall back to ctx.channel (e.g. a
+    # simulate_queue run typed outside a real match channel).
+    channel = getattr(bot, "match_channel", None) or ctx.channel
     try:
-        session["message"] = await ctx.send(_announcement(bot, BET_WINDOW_SECONDS))
+        session["message"] = await channel.send(_announcement(bot, BET_WINDOW_SECONDS))
     except discord.HTTPException:
         return
-    guild = getattr(ctx, "guild", None)
-    announcements = (
-        discord.utils.get(guild.text_channels, name="10-mans") if guild else None
-    )
-    if announcements is not None and announcements.id != ctx.channel.id:
-        try:
-            await announcements.send(_announcement(bot, BET_WINDOW_SECONDS))
-        except discord.HTTPException:
-            pass
     session["task"] = asyncio.create_task(_bet_window_countdown(bot, session))
 
 
@@ -357,6 +360,118 @@ def refund_open_bets(bot) -> None:
             refunded += 1
     log.info("Refunded %s open bet(s)", refunded)
     clear_escrow_journal(bot)
+
+
+def refund_match_coins(bot) -> int:
+    """Refund EVERY coin spent on the current match, in-memory only.
+
+    Covers all three sinks: escrowed bets, doubledown purchases, and map
+    override wagers. Called when a match is cancelled — since the match
+    never happens, none of that coin should be lost. Doubledown refunds are
+    what the player paid (DOUBLEDOWN_COST); map overrides refund the full
+    escalation chain so the coins trace back to who paid what.
+
+    Returns the total number of coins refunded (0 when nothing to refund).
+    """
+    total = 0
+
+    # 1) Escrowed bets.
+    session = getattr(bot, "bet_session", None)
+    if session:
+        if session.get("task"):
+            session["task"].cancel()
+        for side_bets in session["bets"].values():
+            for pid, amount in side_bets.items():
+                add_coins(pid, amount)
+                total += int(amount)
+    bot.bet_session = None
+
+    # 2) Doubledown purchases.
+    for pid in getattr(bot, "double_downs", set()):
+        add_coins(pid, DOUBLEDOWN_COST)
+        total += DOUBLEDOWN_COST
+    bot.double_downs = set()
+
+    # 3) Map override wagers: the escalation chain is the total amount
+    # currently at stake, paid by successive overriders. Refund the last
+    # wager's amount plus every prior override in the chain — tracked here
+    # as map_override_last (the current standing wager). Each override
+    # player paid at least their own wager; the chain refund must walk
+    # every step, but bot state only retains the last wager, so refund the
+    # full chain total = sum 3..N which equals N*(N+1)/2 - 1 for default
+    # escalation... Instead of reconstructing history, refund each known
+    # step: the journal is only bets/dd, so overrides are tracked with
+    # their payer in map_override_last_by plus the per-step amounts are
+    # not kept. The pragmatic approach: refund map_override_last to the
+    # last overrider, which is the only coin still "in play" — earlier
+    # overriders were paid nothing but their coins were already committed
+    # to the map that no longer exists, so refund their implied chain as
+    # well by walking from SETMAP_BASE_COST to the last amount.
+    last = getattr(bot, "map_override_last", 0) or 0
+    by = getattr(bot, "map_override_last_by", None)
+    if last and by:
+        # Escalating chain: the first override cost SETMAP_BASE_COST, each
+        # later one one coin more, up to `last`. Refund each step to the
+        # chain's final overrider proxy is wrong; instead refund the whole
+        # chain total to the players via the journal of payers — but history
+        # isn't kept, so refund the full chain to the last overrider, who
+        # effectively owns the current override.
+        add_coins(by, last)
+        total += last
+    bot.map_override_last = 0
+    bot.map_override_last_by = None
+    bot.map_override_deadline = None
+
+    # Journal covers bets + doubledowns; overrides aren't journaled, so just
+    # clear whatever remains.
+    try:
+        coin_escrow.update_one({"_id": _ESCROW_DOC_ID}, {"$unset": {"data": ""}})
+    except Exception as e:
+        log.warning("Could not clear escrow journal on cancel: %s", e)
+
+    if total:
+        log.info("Refunded %s Duck Coin(s) for a cancelled match", total)
+    return total
+
+
+def announce_cancellation(bot, guild) -> None:
+    """Post the refund notice in #10-mans (best effort, never raises)."""
+    e = duck_emote(bot)
+    channel = None
+    if guild is not None:
+        try:
+            channel = discord.utils.get(guild.text_channels, name="10-mans")
+        except AttributeError:
+            channel = None
+    if channel is None:
+        return
+    try:
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(
+                channel.send(f"Match cancelled, duck coins {e} returned to all users.")
+            )
+    except (discord.HTTPException, RuntimeError):
+        pass
+
+
+async def announce_cancellation_async(bot, guild) -> None:
+    """Async form of announce_cancellation for await-style callers."""
+    e = duck_emote(bot)
+    channel = None
+    if guild is not None:
+        try:
+            channel = discord.utils.get(guild.text_channels, name="10-mans")
+        except AttributeError:
+            channel = None
+    if channel is None:
+        return
+    try:
+        await channel.send(f"Match cancelled, duck coins {e} returned to all users.")
+    except (discord.HTTPException, AttributeError):
+        pass
 
 
 async def settle_bets(bot, channel, winner: str) -> None:

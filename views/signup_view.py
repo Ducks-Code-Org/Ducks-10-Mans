@@ -205,12 +205,14 @@ class SignupView(discord.ui.View):
         self.bot.chosen_mode = None
         self.bot.selected_map = None
 
-        from game.duck_coins import refund_open_bets
+        from game.duck_coins import (
+            announce_cancellation_async,
+            refund_match_coins,
+        )
 
-        refund_open_bets(self.bot)
-        self.bot.double_downs = set()
-        self.bot.map_override_last = 0
-        self.bot.map_override_last_by = None
+        refunded = refund_match_coins(self.bot)
+        if refunded:
+            await announce_cancellation_async(self.bot, self.ctx.guild)
 
         # Delete role and channel
         try:

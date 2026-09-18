@@ -10,7 +10,10 @@ from commands.maintenance_commands import resolve_user_arg
 from commands.report import cleanup_match_resources
 from commands.signup import cancel_background_purge
 from database import mmr_collection
-from game.duck_coins import refund_open_bets
+from game.duck_coins import (
+    announce_cancellation_async,
+    refund_match_coins,
+)
 from game.ranks import remove_all_rank_roles
 from game.recent_queue import remember_recent_queue
 from game.stats_helper import DEFAULT_MMR
@@ -284,11 +287,9 @@ class AdminCommands(BotCommands):
             self.bot.team2 = []
             self.bot.queue.clear()
 
-            refund_open_bets(self.bot)
-            self.bot.double_downs = set()
-            self.bot.map_override_last = 0
-            self.bot.map_override_last_by = None
-            self.bot.map_override_deadline = None
+            refunded = refund_match_coins(self.bot)
+            if refunded:
+                await announce_cancellation_async(self.bot, ctx.guild)
 
             await ctx.send(
                 "Canceled active signup. Feel free to start a new one with `!signup`."
@@ -308,11 +309,9 @@ class AdminCommands(BotCommands):
             self.bot.captain2 = None
             self.bot.team1 = []
             self.bot.team2 = []
-            refund_open_bets(self.bot)
-            self.bot.double_downs = set()
-            self.bot.map_override_last = 0
-            self.bot.map_override_last_by = None
-            self.bot.map_override_deadline = None
+            refunded = refund_match_coins(self.bot)
+            if refunded:
+                await announce_cancellation_async(self.bot, ctx.guild)
             await ctx.send(
                 "Cancelled active match. Feel free to start a new one with `!signup`."
             )
@@ -331,11 +330,9 @@ class AdminCommands(BotCommands):
             self.bot.captain2 = None
             self.bot.team1 = []
             self.bot.team2 = []
-            refund_open_bets(self.bot)
-            self.bot.double_downs = set()
-            self.bot.map_override_last = 0
-            self.bot.map_override_last_by = None
-            self.bot.map_override_deadline = None
+            refunded = refund_match_coins(self.bot)
+            if refunded:
+                await announce_cancellation_async(self.bot, ctx.guild)
             await ctx.send(
                 "Cancelled match setup. Feel free to start a new one with `!signup`."
             )

@@ -52,6 +52,7 @@ class FakeCtx:
     def __init__(self):
         self.messages = []
         self.guild = None
+        self.channel = self
 
     async def send(self, content=None, **kwargs):
         self.messages.append(content)

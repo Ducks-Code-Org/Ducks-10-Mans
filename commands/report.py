@@ -794,6 +794,10 @@ class ReportCommand(BotCommands):
         self.bot.map_override_last = 0
         self.bot.map_override_last_by = None
         self.bot.map_override_deadline = None
+        # Bets were already settled above; this just clears an empty session
+        # (and refunds a stray bet if settlement never ran). Map override
+        # coins are NOT refunded here: the match happened, the coins bought
+        # the map that was played.
         refund_open_bets(self.bot)
         await cleanup_match_resources(self.bot)
         # The match is fully committed and cleaned up; tell the caller the
