@@ -289,6 +289,14 @@ class CustomBot(commands.Bot):
     async def on_ready(self):
         log.info("Bot connected as %s.", self.user)
 
+        # Crash safety: refund any bets/doubledowns the previous run left
+        # escrowed (e.g. the process died mid betting window). Journal is
+        # written after every mutation and cleared on settle/refund, so a
+        # surviving journal means settlement never happened.
+        from game.duck_coins import recover_orphaned_escrow
+
+        recover_orphaned_escrow(self)
+
         # Start flushing WARNING+ records into #bot-logs now that guilds
         # are cached (the handler is created in main.py before run()).
         handler = getattr(self, "discord_log_handler", None)

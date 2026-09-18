@@ -17,6 +17,29 @@ _database_stub.mmr_collection = types.SimpleNamespace(
 _database_stub.seasons = types.SimpleNamespace()
 _database_stub.all_matches = types.SimpleNamespace()
 _database_stub.recent_queue = types.SimpleNamespace()
+
+# Fake coin_escrow collection backed by a dict: mirrors Mongo's upsert/$unset
+# contract closely enough for the escrow-journal self-checks.
+_ESCROW_DOCS: dict = {}
+
+
+def _escrow_update_one(query, update, upsert=False):
+    _id = query["_id"]
+    if "$set" in update:
+        _ESCROW_DOCS[_id] = {"_id": _id, **update["$set"]}
+    elif "$unset" in update:
+        doc = _ESCROW_DOCS.get(_id)
+        if doc:
+            for field in update["$unset"]:
+                doc.pop(field, None)
+    elif upsert and _id not in _ESCROW_DOCS:
+        _ESCROW_DOCS[_id] = {"_id": _id}
+
+
+_database_stub.coin_escrow = types.SimpleNamespace(
+    update_one=_escrow_update_one,
+    find_one=lambda query: _ESCROW_DOCS.get(query["_id"]),
+)
 sys.modules["database"] = _database_stub
 
 _maps_stub = types.ModuleType("services.maps_service")
@@ -47,6 +70,7 @@ from game.duck_coins import (
     doubledown,
     doubledown_multiplier_of,
     duck_emote,
+    persist_escrow,
     place_bet,
     refund_open_bets,
     setmap_override,
@@ -392,6 +416,53 @@ def demo():
     assert (
         bot.map_override_last == 0 and bot.map_override_last_by is None
     ), "map-override escalation must reset"
+    assert "data" not in _ESCROW_DOCS.get("open_bets", {}), (
+        "escrow journal must be wiped on season reset so a later restart "
+        "never refunds coins the reset already voided"
+    )
+
+    # --- Crash-safety journal: persist + startup recovery -----------------
+    from game.duck_coins import recover_orphaned_escrow
+
+    DB["9"] = {"player_id": "9", "duck_coins": 10}
+    DB["8"] = {"player_id": "8", "duck_coins": 10}
+    session = open_window(bot)
+    place_bet(bot, "9", "attackers", 4)
+    # Make player 8 a match player so the real doubledown() path applies.
+    bot.team1.append({"id": "8", "name": "p8"})
+    reply = doubledown(bot, "8")
+    assert "doubled" in reply
+    assert coins_of("8") == 5, "doubledown must charge before the crash"
+    # The journal (written inside doubledown) must hold the escrow + dd.
+    journal = _ESCROW_DOCS["open_bets"]["data"]
+    assert journal["bets"]["attackers"]["9"] == 4, journal
+    assert journal["double_downs"] == ["8"], journal
+
+    # Simulated crash: nothing in memory, but the journal survived.
+    bot.bet_session = None
+    bot.double_downs = set()
+    recover_orphaned_escrow(bot)
+    assert coins_of("9") == 10, "bet escrow must be refunded on startup"
+    assert coins_of("8") == 10, "doubledown must be refunded on startup"
+    assert "data" not in _ESCROW_DOCS.get(
+        "open_bets", {}
+    ), "journal must be cleared after recovery"
+    # Second recovery call is a no-op (no double refund).
+    recover_orphaned_escrow(bot)
+    assert coins_of("9") == 10 and coins_of("8") == 10, "no double refund"
+
+    # Settlement clears the journal: a crash after !report must NOT refund.
+    session = open_window(bot)
+    place_bet(bot, "9", "attackers", 2)
+    DB["9"]["duck_coins"] = 8
+    bot.channel = FakeChannel()
+    asyncio.run(duck_coins.settle_bets(bot, bot.channel, "attackers"))
+    assert coins_of("9") == 10, "settlement must pay the winning bettor"
+    assert "data" not in _ESCROW_DOCS.get(
+        "open_bets", {}
+    ), "settlement must clear the journal"
+    recover_orphaned_escrow(bot)
+    assert coins_of("9") == 10, "settled bets must never be re-refunded"
 
     print("all duck coins self-checks passed")
 

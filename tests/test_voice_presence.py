@@ -13,6 +13,9 @@ _database_stub.mmr_collection = types.SimpleNamespace()
 _database_stub.seasons = types.SimpleNamespace()
 _database_stub.all_matches = types.SimpleNamespace()
 _database_stub.recent_queue = types.SimpleNamespace()
+_database_stub.coin_escrow = types.SimpleNamespace(
+    update_one=lambda *a, **k: None, find_one=lambda *a, **k: None
+)
 sys.modules["database"] = _database_stub
 
 import discord

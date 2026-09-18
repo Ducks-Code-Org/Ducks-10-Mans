@@ -577,6 +577,11 @@ class MaintenanceCommands(BotCommands):
         if duck_coins_enabled() and out_pid in self.bot.double_downs:
             self.bot.double_downs.discard(out_pid)
             add_coins(out_pid, DOUBLEDOWN_COST)
+            # Keep the crash-recovery journal in sync: a stale journal would
+            # double-refund this doubledown on the next restart.
+            from game.duck_coins import persist_escrow
+
+            persist_escrow(self.bot)
 
         # Swap match roles and move the incoming player to their team voice
         # channel (best effort).

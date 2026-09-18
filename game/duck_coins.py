@@ -5,7 +5,7 @@ import logging
 
 import discord
 
-from database import mmr_collection
+from database import coin_escrow, mmr_collection
 from globals import feature_enabled
 from services.maps_service import get_standard_maps
 
@@ -21,6 +21,99 @@ SETMAP_GRACE_SECONDS = 120
 
 def duck_coins_enabled() -> bool:
     return feature_enabled("duck_coins")
+
+
+# ---------------------------------------------------------------------------
+# Crash-safety journal: the bet escrow / doubledown set live only in the bot
+# object, so a crash mid-window would silently void escrowed coins (no refund,
+# no payout — the coins were already deducted). The journal mirrors that state
+# into Mongo after every mutation; on startup, recover_orphaned_escrow()
+# refunds anything still journaled from before the restart.
+# ---------------------------------------------------------------------------
+
+_ESCROW_DOC_ID = "open_bets"
+
+
+def persist_escrow(bot) -> None:
+    """Mirror the current bet session + doubledown set into Mongo.
+
+    Best-effort: persistence failures are logged and swallowed so a transient
+    DB hiccup can never break an in-progress bet or doubledown.
+    """
+    session = getattr(bot, "bet_session", None)
+    try:
+        if session is None:
+            coin_escrow.update_one({"_id": _ESCROW_DOC_ID}, {"$unset": {"data": ""}})
+            return
+        coin_escrow.update_one(
+            {"_id": _ESCROW_DOC_ID},
+            {
+                "$set": {
+                    "data": {
+                        "bets": session["bets"],
+                        "open": bool(session.get("open")),
+                        "double_downs": sorted(getattr(bot, "double_downs", set())),
+                    }
+                }
+            },
+            upsert=True,
+        )
+    except Exception as e:
+        log.warning("Could not persist Duck Coin escrow journal: %s", e)
+
+
+def clear_escrow_journal(bot) -> None:
+    """Delete the journal after settle/refund/cancel; failures are harmless
+    (a stale journal can only cause an extra startup refund, never a loss)."""
+    session = getattr(bot, "bet_session", None)
+    bot.bet_session = None
+    if session and session.get("task"):
+        session["task"].cancel()
+    try:
+        coin_escrow.update_one({"_id": _ESCROW_DOC_ID}, {"$unset": {"data": ""}})
+    except Exception as e:
+        log.warning("Could not clear Duck Coin escrow journal: %s", e)
+
+
+def recover_orphaned_escrow(bot) -> None:
+    """Refund bets and doubledowns journaled by a previous bot run.
+
+    Called once at startup: if the process died while coins were escrowed
+    (open bet window) or doubled down, those coins are returned here —
+    settlement can never happen after a restart, so refund is the only
+    fair outcome. No-op when there is no journal (fresh database).
+    """
+    try:
+        doc = coin_escrow.find_one({"_id": _ESCROW_DOC_ID})
+    except Exception as e:
+        log.warning("Could not read Duck Coin escrow journal: %s", e)
+        return
+    if not doc or "data" not in doc:
+        return
+    data = doc["data"] or {}
+    bets = data.get("bets") or {}
+    refunded = 0
+    for side_bets in bets.values():
+        for pid, amount in side_bets.items():
+            add_coins(pid, amount)
+            refunded += amount
+    dd_refunded = 0
+    for pid in data.get("double_downs") or []:
+        add_coins(pid, DOUBLEDOWN_COST)
+        dd_refunded += DOUBLEDOWN_COST
+    try:
+        coin_escrow.update_one({"_id": _ESCROW_DOC_ID}, {"$unset": {"data": ""}})
+    except Exception as e:
+        log.warning("Could not clear Duck Coin escrow journal after recovery: %s", e)
+    total = refunded + dd_refunded
+    if total:
+        log.warning(
+            "Recovered %s escrowed Duck Coin(s) from before the last restart "
+            "(%s bet coin(s), %s doubledown coin(s)); refunded to players",
+            total,
+            refunded,
+            dd_refunded,
+        )
 
 
 def command_available(bot, *, requires_running_match: bool = True) -> str | None:
@@ -70,7 +163,8 @@ def clear_season_coin_state(bot) -> None:
     into the new season: escrowed bet coins would pay out at the next
     !report, stale doubledowns would still apply, and the map-override
     escalation would carry over. Open bets are dropped, not refunded, since
-    coins reset anyway.
+    coins reset anyway; the escrow journal is wiped too so a subsequent
+    restart never refunds coins that a reset already voided.
     """
     session = getattr(bot, "bet_session", None)
     bot.bet_session = None
@@ -82,6 +176,10 @@ def clear_season_coin_state(bot) -> None:
     bot.map_override_last = 0
     bot.map_override_last_by = None
     bot.map_override_deadline = None
+    try:
+        coin_escrow.update_one({"_id": _ESCROW_DOC_ID}, {"$unset": {"data": ""}})
+    except Exception as e:
+        log.warning("Could not clear Duck Coin escrow journal: %s", e)
 
 
 def reset_all_coins() -> None:
@@ -177,6 +275,7 @@ async def on_teams_announced(bot, ctx) -> None:
         "task": None,
     }
     bot.bet_session = session
+    persist_escrow(bot)
     try:
         session["message"] = await ctx.send(_announcement(bot, BET_WINDOW_SECONDS))
     except discord.HTTPException:
@@ -231,6 +330,7 @@ def place_bet(bot, user_id: str, side: str, amount: int) -> str:
     session["bets"][side][str(user_id)] = (
         session["bets"][side].get(str(user_id), 0) + amount
     )
+    persist_escrow(bot)
     e = duck_emote(bot)
     pool = sum(session["bets"][side].values())
     log.info(
@@ -246,7 +346,6 @@ def place_bet(bot, user_id: str, side: str, amount: int) -> str:
 def refund_open_bets(bot) -> None:
     """Return escrowed bets (e.g. on cancel); safe to call at any time."""
     session = getattr(bot, "bet_session", None)
-    bot.bet_session = None
     if not session:
         return
     if session.get("task"):
@@ -257,12 +356,12 @@ def refund_open_bets(bot) -> None:
             add_coins(pid, amount)
             refunded += 1
     log.info("Refunded %s open bet(s)", refunded)
+    clear_escrow_journal(bot)
 
 
 async def settle_bets(bot, channel, winner: str) -> None:
     """Pay out the parimutuel pool to bettors on the winning team."""
     session = getattr(bot, "bet_session", None)
-    bot.bet_session = None
     if not session:
         return
     if session.get("task"):
@@ -278,6 +377,7 @@ async def settle_bets(bot, channel, winner: str) -> None:
         await channel.send(
             f"No one bet on {winner} — the {total} {e} pool goes unclaimed."
         )
+        clear_escrow_journal(bot)
         return
     lines = []
     for pid, amount in sorted(winners.items(), key=lambda item: -item[1]):
@@ -285,6 +385,7 @@ async def settle_bets(bot, channel, winner: str) -> None:
         add_coins(pid, payout)
         lines.append(f"<@{pid}> bet {amount} → wins **{payout}** {e}")
     log.info("Settled %s bets on %s (%s coin pool)", len(winners), winner, total)
+    clear_escrow_journal(bot)
     embed = discord.Embed(
         title=f"{_side_name(winner)} won! ({total} {e} pool)",
         description="\n".join(lines),
@@ -309,6 +410,7 @@ def doubledown(bot, user_id: str) -> str:
         return insufficient(bot, balance, DOUBLEDOWN_COST)
     add_coins(user_id, -DOUBLEDOWN_COST)
     bot.double_downs.add(str(user_id))
+    persist_escrow(bot)
     e = duck_emote(bot)
     log.info("Doubledown purchased by %s for %s coins", user_id, DOUBLEDOWN_COST)
     return f"Paid {DOUBLEDOWN_COST} {e} — your MMR change for this match is doubled!"
