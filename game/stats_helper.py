@@ -14,15 +14,6 @@ A, B, C, E = 20 / 7, 60 / 7, 20 / 7, 30 / 7
 # seeds real MMR from 100*VLR rating.
 DEFAULT_MMR = 0
 
-# Result guarantee (issue #159): a win must always gain MMR and a loss must
-# always lose MMR, even when the performance terms (VLR skill, team-MMR
-# expectation) point the other way. The system stays intentionally
-# inflationary; this only floors the extreme cells where a loss would have
-# netted positive or a win negative. 1.0 keeps the rounded MMR moving at
-# least 1 point in the result's direction (the 0 floor still applies to a
-# player already at 0).
-MIN_RESULT_DELTA = 1.0
-
 
 # Round-weighted VLR rating accumulation helpers -----------------------------
 # "avg_rating" is the round-weighted mean of every recorded per-match rating:
@@ -108,16 +99,6 @@ def _seed_mmr(rating) -> float:
     return float(DEFAULT_MMR)
 
 
-def _result_delta(delta: float, won: bool) -> float:
-    """The performance delta, sign-guaranteed by the match result.
-
-    A win can never net negative MMR and a loss can never net positive MMR,
-    regardless of the team-MMR expectation or VLR terms. Everything else
-    about the calibration is preserved; only the extreme cells are floored.
-    """
-    return max(delta, MIN_RESULT_DELTA) if won else min(delta, -MIN_RESULT_DELTA)
-
-
 # Update stats
 def update_stats(
     player_stats,
@@ -144,24 +125,11 @@ def update_stats(
 
     discord_id = str(discord_id)
 
-    # Get the stats with proper defaults. The API occasionally returns a
-    # null/non-dict `stats` block or non-numeric counters; coerce here so a
-    # mid-report AttributeError/TypeError can't abort the loop after some
-    # players' MMR was already written (partial writes are unrecoverable once
-    # the report claim is consumed).
-    stats = player_stats.get("stats")
-    if not isinstance(stats, dict):
-        stats = {}
-
-    def _num(value) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return 0.0
-
-    score = _num(stats.get("score", 0))
-    kills = _num(stats.get("kills", 0))
-    deaths = _num(stats.get("deaths", 0))
+    # Get the stats with proper defaults
+    stats = player_stats.get("stats", {})
+    score = stats.get("score", 0)
+    kills = stats.get("kills", 0)
+    deaths = stats.get("deaths", 0)
 
     if discord_id in player_mmr:
         player_data = player_mmr[discord_id]
@@ -225,8 +193,6 @@ def update_stats(
                 opp_mmr=float(opp_avg_mmr),
                 vlr=float(rating) if isinstance(rating, (int, float)) else 1.0,
             )
-            # A win must never lose MMR and a loss must never gain MMR.
-            delta = _result_delta(delta, won)
             # The multiplier (e.g. doubledown) doubles only this match's
             # delta, never the first-match seed.
             new_mmr = max(0, round(base + delta * mmr_multiplier))
@@ -314,9 +280,6 @@ def update_stats(
                 opp_mmr=float(opp_avg_mmr),
                 vlr=float(rating) if isinstance(rating, (int, float)) else 1.0,
             )
-            # Same result guarantee as the veteran path. The first-match seed
-            # still dominates, so a placement loss seeds below the win case.
-            delta = _result_delta(delta, won)
             player_mmr[discord_id]["mmr"] = max(0, round(seed + delta * mmr_multiplier))
             if won:
                 player_mmr[discord_id]["wins"] = 1

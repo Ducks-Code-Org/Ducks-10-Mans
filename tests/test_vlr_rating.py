@@ -261,27 +261,6 @@ def main():
     with_lead = d(13, 10, 500, 500, 1.3) - d(13, 10, 500, 500, 1.0)
     assert no_lead > 0 and with_lead > no_lead
 
-    # --- result guarantee: winners gain, losers lose ----------------------
-    # The raw formula is intentionally inflationary, but a loss must never
-    # net positive MMR and a win must never net negative — even in the
-    # extreme cells (huge favorite losing big with a hot VLR, or a huge
-    # underdog winning while playing badly).
-    rd = stats_helper._result_delta
-    assert rd(d(13, 0, 5000, 100, 1.3), won=True) >= 1.0
-    assert rd(d(0, 13, 100, 5000, 0.4), won=False) <= -1.0
-    # A loss at equal MMR / equal VLR (raw delta positive in the old system)
-    # is floored to a small loss instead of a gain.
-    assert d(9, 13, 500, 500, 1.0) > 0, "raw formula is inflationary by design"
-    assert rd(d(9, 13, 500, 500, 1.0), won=False) == -1.0
-    # A win with terrible stats is still a (tiny) gain.
-    assert rd(d(13, 9, 500, 500, 0.5), won=True) >= 1.0
-    # Ordinary (already sign-correct) cells are untouched.
-    ordinary_win = d(13, 9, 500, 500, 1.3)
-    ordinary_loss = d(9, 13, 500, 500, 0.5)
-    assert ordinary_win > 0 and ordinary_loss < 0
-    assert rd(ordinary_win, won=True) == ordinary_win
-    assert rd(ordinary_loss, won=False) == ordinary_loss
-
     # --- issue #159: first-match seeding + 0 floor ------------------------
     # First match: MMR seeded to 100*VLR then delta applied (always > 0 seed)
     store5 = {}
