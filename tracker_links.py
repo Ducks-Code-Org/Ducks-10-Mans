@@ -67,6 +67,21 @@ def tracker_link_for(user_data, guild=None, discord_id: str = None) -> str | Non
     return None
 
 
+def profile_url_for(user_data) -> str | None:
+    """The tracker.gg profile URL for a linked player, else None.
+
+    Unlike tracker_link_for this returns the bare URL (no markdown), for
+    embed surfaces that take a URL directly — e.g. Embed.set_author(url=...),
+    which renders the author name as a hyperlink but does NOT parse markdown.
+    """
+    if user_data:
+        name = (user_data.get("name") or "").strip()
+        tag = (user_data.get("tag") or "").strip()
+        if name and tag:
+            return f"{TRACKER_PROFILE_URL}/{quote(name)}%23{quote(tag)}/overview"
+    return None
+
+
 def display_line_for(user_data, guild=None, discord_id: str = None) -> str:
     """A tracker link, or a plain Discord display name when unlinked.
 

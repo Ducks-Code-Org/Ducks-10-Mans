@@ -10,7 +10,11 @@ from database import users
 from game.ranks import SSR_NAME, role_mention, tier_for_player
 from game.ranking import position_of
 from game.stats_helper import DEFAULT_MMR, avg_rating_of
-from tracker_links import display_name_for
+from tracker_links import (
+    display_line_for,
+    display_name_for,
+    profile_url_for,
+)
 
 log = logging.getLogger(__name__)
 
@@ -79,11 +83,15 @@ class StatsCommand(BotCommands):
         stats_data = self.bot.player_mmr[player_id]
 
         user_data = users.find_one({"discord_id": str(player_id)})
-        # Linked players show their Riot ID; unlinked players (dead Riot
-        # account, stats preserved) fall back to their Discord display name.
-        full_riot_id = display_name_for(
+        # The author name is the player's display name; when they have a
+        # linked Riot ID the author line ALSO links to their tracker.gg
+        # profile via set_author(url=...) — author lines render as hyperlinks
+        # but do NOT parse markdown, which is why the URL must be passed
+        # directly instead of as a [text](url) string.
+        riot_display = display_name_for(
             user_data, guild=ctx.guild, discord_id=str(player_id)
         )
+        profile_url = profile_url_for(user_data)
 
         mmr_value = stats_data.get("mmr", DEFAULT_MMR)
         wins = stats_data.get("wins", 0)
@@ -121,7 +129,11 @@ class StatsCommand(BotCommands):
             title=f"{display_name}'s Stats",
             color=discord.Color.blurple(),
         )
-        embed.set_author(name=full_riot_id)
+        # The Riot ID line: linked players get a clickable tracker link here
+        # (embed descriptions DO render markdown, unlike the author line).
+        embed.description = (
+            f"{display_line_for(user_data, guild=ctx.guild, discord_id=str(player_id))}"
+        )
         embed.add_field(name="Rank", value=rank_line, inline=False)
         embed.add_field(name="MMR", value=str(mmr_value), inline=True)
         embed.add_field(name="Win/Loss", value=f"{wins}/{losses}", inline=True)
@@ -132,4 +144,4 @@ class StatsCommand(BotCommands):
         embed.set_footer(text="Use !stats @user or !stats Name#Tag")
 
         await ctx.send(embed=embed)
-        log.info("Stats lookup: %s by %s", full_riot_id, ctx.author)
+        log.info("Stats lookup: %s by %s", riot_display, ctx.author)

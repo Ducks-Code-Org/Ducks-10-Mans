@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tracker_links import (  # noqa: E402
     display_line_for,
     display_name_for,
+    profile_url_for,
     tracker_link_for,
 )
 
@@ -55,6 +56,16 @@ def demo():
 
     # Riot-id-less user doc but no member: still N/A (no crash on int()).
     assert display_name_for({"discord_id": "abc"}) == "N/A"
+
+    # profile_url_for: bare URL for set_author(url=...), None when unlinked.
+    url = profile_url_for(LINKED)
+    assert url and url.startswith("https://tracker.gg/valorant/profile/riot/")
+    assert "%23" in url, "the tag separator must be URL-encoded"
+    assert profile_url_for(UNLINKED) is None
+    assert profile_url_for(None) is None
+    # The URL inside the markdown link matches the bare URL exactly.
+    link = tracker_link_for(LINKED)
+    assert link and link.endswith(f"]({url})")
 
     print("all tracker-link display self-checks passed")
 

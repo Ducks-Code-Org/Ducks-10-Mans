@@ -88,17 +88,17 @@ async def _reserve_rate_slot(*, priority: bool = False) -> None:
 class RiotApiInconclusive(RuntimeError):
     """The Riot/Henrik API could not give a definitive answer.
 
-    Raised when a request stays rate limited (429) after retries or the API
-    returns an unexpected status. Callers must treat this as "verification
-    skipped" — it must never purge data or block a signup.
+    Raised when a request is rate limited (429) or the API returns an
+    unexpected status. Callers must treat this as "verification skipped" —
+    it must never purge data or block a signup.
     """
 
 
 def _retry_delay(headers, attempt: int) -> float:
     """Backoff before a 429 retry, honoring Retry-After when provided.
 
-    The delay is capped so interactive paths (signup) stay responsive; if the
-    limit persists after retries the caller gets RiotApiInconclusive.
+    Kept for callers that explicitly opt into retries via ``retries``; the
+    default is now a single attempt (see _henrik_get_json).
     """
     retry_after = None
     if headers is not None:
@@ -116,17 +116,20 @@ async def _henrik_get_json(
     url: str,
     *,
     timeout: int = 10,
-    retries: int = 2,
+    retries: int = 0,
     priority: bool = False,
 ) -> tuple[int, dict[str, Any] | None]:
     """GET a HenrikDev endpoint through the shared 30 req/min rate limiter.
 
     Returns (status, parsed_json): (200, data) on success, (404, None) when
     the resource is confirmed missing, (0, None) on network errors, and
-    (other_status, None) for unexpected API responses. Retries 429s with
-    backoff and raises RiotApiInconclusive once retries are exhausted.
-    Interactive callers set priority=True so a saturated window resolves
-    quickly to RiotApiInconclusive instead of blocking them.
+    (other_status, None) for unexpected API responses.
+
+    429s are NOT retried by default: one attempt is made, and a rate-limited
+    response surfaces immediately as RiotApiInconclusive. Retrying just burns
+    more of the same 30 req/min budget that is already exhausted, so the
+    shared limiter (which spaces requests out to begin with) is the real
+    defense. Callers that genuinely need a retry can still pass retries=N.
     """
     for attempt in range(retries + 1):
         await _reserve_rate_slot(priority=priority)
@@ -150,7 +153,7 @@ async def _henrik_get_json(
                         )
                         await asyncio.sleep(_retry_delay(r.headers, attempt))
                         continue
-                    log.warning("Riot API 429 rate limit persisted for %s", url)
+                    log.warning("Riot API rate limited (429) for %s", url)
                     raise RiotApiInconclusive(f"429 rate limit persisted for {url}")
                 log.warning(
                     "Riot API returned unexpected status %s for %s", r.status, url
@@ -201,7 +204,7 @@ async def get_account_by_riot_id(
     tag: str,
     *,
     timeout: int = 10,
-    retries: int = 2,
+    retries: int = 0,
     priority: bool = False,
 ) -> dict[str, Any] | None:
     safe_name = quote((name or "").strip(), safe="")
@@ -221,7 +224,7 @@ async def get_account_by_puuid(
     puuid: str,
     *,
     timeout: int = 10,
-    retries: int = 2,
+    retries: int = 0,
     priority: bool = False,
 ) -> dict[str, Any] | None:
 
@@ -247,7 +250,7 @@ async def riot_account_exists_async(
     tag: str,
     *,
     timeout: int = 10,
-    retries: int = 2,
+    retries: int = 0,
 ) -> bool | None:
     """Async version of riot_account_exists, routed through the shared
     30 req/min rate limiter.
@@ -289,7 +292,7 @@ async def verify_riot_account_async(
 
     Runs with priority=True so a saturated rate-limit window can never block
     the signup button for more than INTERACTIVE_MAX_WAIT. A rate limit (429)
-    is inconclusive, never a failure: on persistent 429 this returns
+    is inconclusive, never a failure: it is not retried and returns
     (True, ...) so the signup proceeds. Unexpected statuses are also
     non-blocking. Network errors are likewise skipped.
     """
@@ -305,7 +308,7 @@ async def verify_riot_account_async(
             session, url, timeout=timeout, priority=True
         )
     except RiotApiInconclusive:
-        # Rate limit persisted after retries: skip verification, don't block.
+        # Rate limited (no retry): skip verification, don't block.
         return (True, "rate limited (verification skipped)")
 
     if status == 200:
@@ -330,7 +333,7 @@ async def get_recent_matches_async(
     region: str = "na",
     platform: str = "pc",
     timeout: int = 30,
-    retries: int = 2,
+    retries: int = 0,
     priority: bool = False,
 ) -> dict[str, Any] | None:
     """GET the most recent matches for a Riot ID through the shared
@@ -338,7 +341,7 @@ async def get_recent_matches_async(
 
     Returns the parsed payload for HTTP 200, None when the Riot ID has no
     recent matches (404), and raises RiotApiInconclusive on network errors,
-    auth failures, persistent 429s or unexpected statuses.
+    auth failures, rate limits (429, no retry) or unexpected statuses.
     """
     q_name, q_tag = quote((name or "").strip(), safe=""), quote(
         (tag or "").strip(), safe=""
@@ -363,14 +366,14 @@ async def get_match_by_id_async(
     *,
     region: str = "na",
     timeout: int = 30,
-    retries: int = 2,
+    retries: int = 0,
     priority: bool = False,
 ) -> dict[str, Any] | None:
     """GET one match by its id through the shared 30 req/min rate limiter.
 
     Returns the match payload for HTTP 200, None when the match is not found
-    (404), and raises RiotApiInconclusive on network errors, persistent 429s
-    or unexpected statuses.
+    (404), and raises RiotApiInconclusive on network errors, rate limits
+    (429, no retry) or unexpected statuses.
     """
     safe_id = quote((match_id or "").strip(), safe="")
     url = f"{HENRIK_BASE}/v4/match/{region}/{safe_id}"

@@ -9,8 +9,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.riot_api import (
     RiotApiInconclusive,
     _get_rate_lock,
+    _henrik_get_json,
     _rate_slots,
     _reserve_rate_slot,
+    get_account_by_riot_id,
     riot_account_exists_async,
     verify_riot_account_async,
 )
@@ -51,10 +53,65 @@ async def test_account_exists_missing():
     assert result is not True
 
 
+async def test_429_is_not_retried():
+    """A 429 must surface after exactly ONE HTTP request (no retries)."""
+    calls = {"count": 0}
+
+    class _FakeResp:
+        def __init__(self):
+            self.status = 429
+            self.headers = {}
+
+        async def __aenter__(self):
+            calls["count"] += 1
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _FakeSession:
+        def get(self, url, **kw):
+            return _FakeResp()
+
+    import services.riot_api as ra
+
+    orig_headers = ra._headers
+    ra._headers = lambda: {}
+    try:
+        await ra._henrik_get_json(_FakeSession(), "https://x/y")
+    except RiotApiInconclusive:
+        pass
+    else:
+        raise AssertionError("429 must surface as RiotApiInconclusive")
+    assert (
+        calls["count"] == 1
+    ), f"429 must not be retried (default retries=0); made {calls['count']} calls"
+    ra._headers = orig_headers
+
+    # The account lookup helper inherits the no-retry default too.
+    calls["count"] = 0
+    ra._headers = lambda: {}
+    try:
+        await get_account_by_riot_id(_FakeSession(), "a", "b")
+    except RiotApiInconclusive:
+        pass
+    assert calls["count"] == 1, "get_account_by_riot_id must not retry 429s"
+    ra._headers = orig_headers
+
+    # Explicit opt-in still retries (the escape hatch is preserved).
+    calls["count"] = 0
+    try:
+        await ra._henrik_get_json(_FakeSession(), "https://x/y", retries=2)
+    except RiotApiInconclusive:
+        pass
+    assert calls["count"] == 3, "retries=2 must mean 3 total attempts"
+
+
 async def _main():
     await test_rate_limiter_slots()
     await test_verify_missing_account_returns_false()
     await test_account_exists_missing()
+    await test_429_is_not_retried()
 
 
 def demo():

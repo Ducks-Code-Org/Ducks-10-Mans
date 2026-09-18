@@ -449,7 +449,7 @@ class SignupView(discord.ui.View):
         embed = discord.Embed(
             title="Signup Queue",
             description=(
-                "Click a button to manage your queue status!\n\n"
+                "Click a button to manage your queue status!\n"
                 "_Note: Pressing the button more than once does not help you "
                 "join the queue faster._"
             ),
