@@ -8,7 +8,6 @@ from commands import BotCommands
 from commands.stats import _resolve_player
 from database import users
 from game.duck_coins import coins_of, duck_coins_enabled, duck_emote
-from game.ranking import position_of
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ class CoinsCommand(BotCommands):
         player_id = _resolve_player(self.bot, ctx, target)
         if player_id is None:
             await ctx.send(
-                "Could not find that player. Use a Riot ID (`Name#Tag`) or " "@mention."
+                "Could not find that player. Use a Riot ID (`Name#Tag`) or @mention."
             )
             return
 
@@ -38,13 +37,10 @@ class CoinsCommand(BotCommands):
             else ctx.author.name
         )
 
-        position = position_of(self.bot.player_mmr, player_id)
-        title = f"{display_name} ({position})" if position else display_name
-
         coins = coins_of(player_id)
         emote = duck_emote(self.bot)
         await ctx.reply(
-            f"**{title}** has **{coins}** Duck Coins {emote}",
+            f"**{display_name}** has **{coins}** Duck Coins {emote}",
             mention_author=False,
         )
         log.info("Coins lookup for %s by %s: %s coins", player_id, ctx.author, coins)

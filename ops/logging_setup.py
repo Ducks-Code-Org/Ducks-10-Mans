@@ -108,11 +108,35 @@ class DiscordLogHandler(logging.Handler):
         return None
 
 
+class _VoiceExtrasNotInstalledFilter(logging.Filter):
+    """Silence the one-shot 'voice will NOT be supported' startup warnings.
+
+    discord.py logs these from discord.client when PyNaCl/davey are missing,
+    but this bot only moves members between channels (game/voice_presence.py)
+    and never joins a channel itself, so voice support is intentionally not
+    installed. Only those exact messages are dropped; any other voice log
+    (e.g. a real VoiceClient error) still gets through.
+    """
+
+    _SUPPRESSED = (
+        "PyNaCl is not installed, voice will NOT be supported",
+        "davey is not installed, voice will NOT be supported",
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.getMessage() not in self._SUPPRESSED
+
+
 def setup_logging() -> DiscordLogHandler | None:
     """Configure the root logger. Returns the Discord mirror (if enabled)."""
     formatter = logging.Formatter(LOG_FORMAT)
     stream = logging.StreamHandler()
     stream.setFormatter(formatter)
+    # Drop the one-shot voice-extras warnings (bot never joins voice). This
+    # must live on handlers, not the "discord" logger: logger filters are not
+    # inherited by child loggers like discord.client, but handler filters
+    # apply to every record that passes through.
+    stream.addFilter(_VoiceExtrasNotInstalledFilter())
 
     root = logging.getLogger()
     root.setLevel(configured_level())
@@ -122,6 +146,7 @@ def setup_logging() -> DiscordLogHandler | None:
     discord_handler = None
     if discord_mirror_enabled():
         discord_handler = DiscordLogHandler()
+        discord_handler.addFilter(_VoiceExtrasNotInstalledFilter())
         root.addHandler(discord_handler)
 
     # Discord.py has its own verbose logger; keep it on our level so its
