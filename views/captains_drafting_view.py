@@ -346,6 +346,26 @@ class CaptainsDraftingView(discord.ui.View):
             )
             target.append(self.remaining_players.pop(0))
 
+        # Hard guarantee: never announce unbalanced teams. A one-player gap is
+        # legitimate when the queue lost someone mid-setup; anything larger
+        # means a pick went to the wrong side, so move the latest picks back.
+        while len(self.bot.team1) > len(self.bot.team2) + 1:
+            self.bot.team2.append(self.bot.team1.pop())
+            log.warning(
+                "Draft teams were unbalanced; moved %s to Defenders (now %s/%s)",
+                self.bot.team2[-1].get("name"),
+                len(self.bot.team1),
+                len(self.bot.team2),
+            )
+        while len(self.bot.team2) > len(self.bot.team1) + 1:
+            self.bot.team1.append(self.bot.team2.pop())
+            log.warning(
+                "Draft teams were unbalanced; moved %s to Attackers (now %s/%s)",
+                self.bot.team1[-1].get("name"),
+                len(self.bot.team1),
+                len(self.bot.team2),
+            )
+
         for msg_attr in (
             "remaining_players_message",
             "drafting_message",
@@ -791,9 +811,13 @@ class CaptainsDraftingView(discord.ui.View):
         if not self.draft_finished:
             # If only one player left, auto-assign and finalize
             if len(self.remaining_players) == 1:
+                # Re-read the turn: a stale-menu pick can commit while the
+                # message edits above are suspended, advancing pick_count past
+                # current_captain_id and misrouting the last pick (4/6 teams).
+                current_captain_id = str(self.pick_order[self.pick_count]["id"])
                 player_dict = self.remaining_players[0]
                 captain1 = getattr(self.bot, "captain1", None)
-                if captain1 and str(current_captain_id) == str(captain1["id"]):
+                if captain1 and current_captain_id == str(captain1["id"]):
                     self.bot.team1.append(player_dict)
                 else:
                     self.bot.team2.append(player_dict)

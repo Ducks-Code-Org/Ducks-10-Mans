@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import sys
 import types
@@ -160,6 +161,79 @@ async def demo():
     assert (
         view.draft_finished and len(bot.team1) + len(bot.team2) == 2
     ), "cancelled setup should not auto-pick"
+
+    # --- Last-player shortcut routes by the live turn, not the captured one ---
+    # Regression for the 4/6 draft: while send_current_draft_view is suspended
+    # on its message edits, the current captain can commit a pick from the
+    # still-attached (stale) menu as an independent task. pick_count then
+    # advances, and the last-player shortcut must assign the final player to
+    # the *current* turn's captain (5/5), not the stale captured captain (4/6).
+    bot = FakeBot()
+    ctx, view = make_draft_view(bot, single_pick=False)
+    pool = list(view.remaining_players)  # ids "2".."9"
+    view.pick_count = 6  # double-pick turn 6 belongs to captain2
+    bot.team1 = [bot.captain1] + pool[0:3]
+    bot.team2 = [bot.captain2] + pool[3:6]
+    view.remaining_players = pool[6:8]
+    assert len(bot.team1) == 4 and len(bot.team2) == 4
+
+    raced = {"fired": False}
+
+    async def racing_pick():
+        async def fake_send(*args, **kwargs):
+            pass
+
+        async def fake_defer(**kwargs):
+            await asyncio.sleep(0)
+
+        interaction = types.SimpleNamespace(
+            response=types.SimpleNamespace(
+                is_done=lambda: False, defer=fake_defer, send_message=fake_send
+            ),
+            user=types.SimpleNamespace(id="1"),  # captain2
+            message=None,
+        )
+        view.player_select = types.SimpleNamespace(values=[pool[6]["id"]])
+        await view.select_callback(interaction)
+
+    class RacingMessage:
+        async def edit(self, **kwargs):
+            if not raced["fired"]:
+                raced["fired"] = True
+                # discord.py dispatches the button/select interaction as its
+                # own task, so it runs concurrently with this suspended render.
+                asyncio.get_event_loop().create_task(racing_pick())
+            await asyncio.sleep(0)
+
+        async def delete(self):
+            await asyncio.sleep(0)
+
+    view.remaining_players_message = RacingMessage()
+    view.drafting_message = RacingMessage()
+    view.captain_pick_message = RacingMessage()
+
+    warnings = []
+
+    class CaptureWarnings(logging.Handler):
+        def emit(self, record):
+            if record.levelno >= logging.WARNING:
+                warnings.append(record.getMessage())
+
+    draft_log = logging.getLogger("views.captains_drafting_view")
+    handler = CaptureWarnings()
+    draft_log.addHandler(handler)
+    try:
+        await view.send_current_draft_view()
+    finally:
+        draft_log.removeHandler(handler)
+
+    assert view.draft_finished, "stale-render race left the draft unfinished"
+    assert (
+        len(bot.team1) == 5 and len(bot.team2) == 5
+    ), f"stale-render race misrouted the last pick: {len(bot.team1)}/{len(bot.team2)}"
+    assert not any(
+        "unbalanced" in message for message in warnings
+    ), f"shortcut misrouted the last pick; only the safety net fixed it: {warnings}"
 
     print("all captain-timeout auto-decide self-checks passed")
 
