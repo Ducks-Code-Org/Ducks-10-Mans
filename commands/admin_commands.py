@@ -6,6 +6,7 @@ import discord
 from discord.ext import commands
 
 from commands import BotCommands
+from commands.maintenance_commands import resolve_user_arg
 from commands.report import cleanup_match_resources
 from commands.signup import cancel_background_purge
 from database import mmr_collection
@@ -150,6 +151,74 @@ class AdminCommands(BotCommands):
 
         mode_vote = ModeVoteView(ctx, self.bot, self.bot.setup_generation)
         await mode_vote.send_view()
+
+    @commands.command(name="setcaptain")
+    @commands.has_permissions(administrator=True)
+    async def setcaptain(self, ctx, slot: str = "", *, target: str = ""):
+        """Manually set a draft captain (Captains mode, before map vote ends).
+        Usage: !setcaptain <1|2> <@user|Name#Tag>
+        Valid between the mode vote picking Captains and the map vote ending:
+        assign_captains() (map vote end) skips auto-assignment only when both
+        slots are pre-filled; once selected_map exists the draft is running and
+        captains are locked in.
+        """
+        slot = (slot or "").strip()
+        target = (target or "").strip()
+        if slot not in {"1", "2"} or not target:
+            await ctx.send("Usage: `!setcaptain <1|2> <@user|Name#Tag>`")
+            return
+        if self.bot.match_ongoing or self.bot.match_not_reported:
+            await ctx.send(
+                "A match is already ongoing or awaiting report — captains are locked in."
+            )
+            return
+        if self.bot.chosen_mode != "Captains":
+            await ctx.send(
+                "Captains can only be set once the mode vote has picked Captains."
+            )
+            return
+        if self.bot.selected_map:
+            await ctx.send(
+                "The map vote already ended — the captain draft has started, "
+                "so captains can no longer be changed."
+            )
+            return
+        if not self.bot.queue:
+            await ctx.send("There is no queue to set captains from.")
+            return
+
+        pid = resolve_user_arg(target, ctx.guild)
+        if not pid:
+            await ctx.send(
+                f"Could not resolve player `{target}` — use an @mention or a linked `Name#Tag`."
+            )
+            return
+        player = next((p for p in self.bot.queue if str(p["id"]) == str(pid)), None)
+        if player is None:
+            await ctx.send("That player is not in the current queue.")
+            return
+
+        attr = "captain1" if slot == "1" else "captain2"
+        other = self.bot.captain2 if slot == "1" else self.bot.captain1
+        if other and str(other["id"]) == str(pid):
+            await ctx.send(f"**{player['name']}** is already the other captain.")
+            return
+
+        previous = getattr(self.bot, attr)
+        setattr(self.bot, attr, player)
+
+        mention = f" (<@{pid}>)" if pid.isdigit() else ""
+        replaced = f" (replacing {previous['name']})" if previous else ""
+        warn = (
+            " — set the other slot too, otherwise both captains are re-randomized"
+            " when the map vote ends."
+            if other is None
+            else ""
+        )
+        log.info("%s set %s to %s%s", ctx.author, attr, player["name"], replaced)
+        await ctx.send(
+            f"Captain {slot} set to **{player['name']}**{mention}{replaced}{warn}"
+        )
 
     # Set the bot to development mode
     @commands.command()

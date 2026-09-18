@@ -111,6 +111,7 @@ ADMIN_COMMAND_HELP: dict[str, tuple[str, str, str]] = {
     "rollback": ("Match", "", "Undo the most recent reported match"),
     "cancel": ("Match", "", "Cancel the active signup or match"),
     "substitute": ("Match", "<@out> <@in>", "Swap a substitute into the current match"),
+    "setcaptain": ("Match", "<1|2> <@user|Name#Tag>", "Manually set a draft captain"),
     "fixmap": ("Match", "<map>", "Force-set the current match's map"),
     "forcereport": ("Match", "<match-id-or-URL>", "Report a specific match by id"),
     "matchinfo": ("Match", "", "Dump internal match and queue state"),
