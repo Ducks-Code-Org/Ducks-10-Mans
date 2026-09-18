@@ -9,6 +9,7 @@ import discord
 from discord.ext import commands
 
 from commands import BotCommands
+from commands.report import cleanup_match_resources
 from database import mmr_collection, users
 from game.identity import ensure_current_riot_identity
 from game.recent_queue import get_recent_queue, pingrecent_message
@@ -197,6 +198,26 @@ class SignupCommand(BotCommands):
             if self.bot.signup_view is not None:
                 self.bot.signup_view.cleanup()
                 self.bot.signup_view = None
+
+            # Recover from a stuck previous match: if a report never
+            # completed (e.g. the match was never visible on the Riot API and
+            # the report claim blocked retrying), the old match channel/role
+            # and per-match flags are still set. Cleaning them up here lets
+            # the new signup start from a blank slate instead of piling a new
+            # signup on top of the old match channel. The new signup's
+            # generation bump (below) also invalidates any stale views.
+            if (
+                self.bot.match_channel is not None
+                or self.bot.match_role is not None
+                or self.bot.current_teams_message is not None
+            ):
+                log.warning(
+                    "Stale match resources found at signup: channel=%r role=%r — cleaning up",
+                    self.bot.match_channel,
+                    self.bot.match_role,
+                )
+                await cleanup_match_resources(self.bot, cancelled=True)
+                self.bot.current_teams_message = None
 
         # Fire off the invalid-Riot-ID purge in the background so the signup
         # isn't blocked by the (potentially slow) round of API checks. It

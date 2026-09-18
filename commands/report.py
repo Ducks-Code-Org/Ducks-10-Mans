@@ -191,7 +191,35 @@ class ReportCommand(BotCommands):
         # After this point we hold the sole right to write to the DB.
         # Everything outside the lock reads match state that won't change
         # until this handler finishes (cleanup at the end resets flags).
+        #
+        # CLAIM RELEASE ON FAILURE: the claim above is only "consumed" once
+        # the report actually writes to the database (after that, the full
+        # reset below runs). Every earlier failure path — match not yet
+        # visible on the API (404), network errors, map mismatch, missing
+        # players — must restore match_not_reported so the user can simply
+        # retry once the match appears. Without this, a premature report
+        # attempt permanently blocked retrying with "already been reported".
         # ------------------------------------------------------------
+        claim_consumed = False
+        try:
+            claim_consumed = await self._report_claimed(ctx, name, tag)
+        finally:
+            if not claim_consumed:
+                self.bot.match_not_reported = True
+                log.info(
+                    "Report claim released for retry (report did not complete): %s",
+                    ctx.author,
+                )
+
+    async def _report_claimed(self, ctx, name: str, tag: str) -> bool:
+        """Body of !report after the atomic claim has been taken.
+
+        Returns True only when the report is committed to the database (the
+        claim is then consumed by the full state reset at the end); on every
+        early return it returns False and the caller's finally releases the
+        claim so the reporter can retry (e.g. once the match shows up on the
+        Riot API).
+        """
 
         def _norm_map(s: str) -> str:
             m = (s or "").strip().lower()
@@ -217,15 +245,18 @@ class ReportCommand(BotCommands):
         except (RiotApiInconclusive, aiohttp.ClientError, asyncio.TimeoutError) as e:
             log.error("Network error fetching recent matches: %s", e, exc_info=e)
             await ctx.send(f"Network error reaching HenrikDev API: {e}")
-            return
+            return False
 
         if data is None:
-            await ctx.send("No recent matches found for your Riot ID (404).")
-            return
+            await ctx.send(
+                "No recent matches found for your Riot ID yet — the game may "
+                "still be processing on the Riot API. Try again in a minute."
+            )
+            return False
 
         if not data.get("data"):
             await ctx.send("Could not retrieve match data.")
-            return
+            return False
 
         match = data["data"][0]
         metadata = match.get("metadata") or {}
@@ -245,7 +276,7 @@ class ReportCommand(BotCommands):
             await ctx.send(
                 "Map doesn't match your most recent match. Unable to report it."
             )
-            return
+            return False
 
         # Get total rounds played from the match data
         teams = match.get("teams", [])
@@ -257,12 +288,12 @@ class ReportCommand(BotCommands):
             total_rounds = int(total_rounds)
         else:
             await ctx.send("No team data found in match data.")
-            return
+            return False
 
         match_players = match.get("players", [])
         if not match_players:
             await ctx.send("No players found in match data.")
-            return
+            return False
 
         # Resolve every queued player to their Discord id (the persistent
         # identity) plus their current Riot name/tag (only a lookup label).
@@ -333,13 +364,13 @@ class ReportCommand(BotCommands):
             mismatch_message += "If you changed your Riot ID, please use `!linkriot NewName#NewTag` to update it."
 
             await ctx.send(mismatch_message)
-            return
+            return False
 
         # Determine which team won
         teams = match.get("teams", [])
         if not teams:
             await ctx.send("No team data found in match data.")
-            return
+            return False
 
         winning_team_id = None
         for team in teams:
@@ -350,7 +381,7 @@ class ReportCommand(BotCommands):
         log.debug("Winning team: %s", winning_team_id)
         if not winning_team_id:
             await ctx.send("Could not determine the winning team.")
-            return
+            return False
 
         match_team_players = {"red": {}, "blue": {}}
         for player_info in match_players:
@@ -378,7 +409,7 @@ class ReportCommand(BotCommands):
             ]
         else:
             await ctx.send("Could not match the winning team to our teams.")
-            return
+            return False
 
         for player_id in playing_team_ids:
             self.bot.ensure_player_mmr(player_id, self.bot.player_names)
@@ -765,6 +796,9 @@ class ReportCommand(BotCommands):
         self.bot.map_override_deadline = None
         refund_open_bets(self.bot)
         await cleanup_match_resources(self.bot)
+        # The match is fully committed and cleaned up; tell the caller the
+        # claim is consumed so it does not restore match_not_reported.
+        return True
 
 
 def rounds_to_int(value: object) -> int:
