@@ -21,6 +21,13 @@ from views.signup_view import SignupView
 
 log = logging.getLogger(__name__)
 
+# Riot ID shown for players whose account vanished from Riot's side (account
+# deleted, region migrated, or Riot data corruption). Their MMR stats are
+# preserved — only the link is unset — and are restored as soon as they
+# re-link with `!linkriot` (which matches on discord_id and keeps the mmr doc).
+UNLINKED_NAME = "N/A"
+UNLINKED_TAG = "N/A"
+
 
 def _remove_user_everywhere(doc) -> str:
     """Delete a user doc and its mmr doc. Returns the Riot ID string."""
@@ -31,6 +38,36 @@ def _remove_user_everywhere(doc) -> str:
     tag = (doc.get("tag") or "").strip()
     riot_id = f"{name}#{tag}"
     log.info("Removed invalid Riot ID %s (%s)", riot_id, discord_id)
+    return riot_id
+
+
+def _unlink_user(doc) -> str:
+    """Unset a dead Riot link but keep the player's MMR stats.
+
+    The user doc keeps its discord_id but name/tag/puuid are dropped, so the
+    player shows as N/A on leaderboards and cannot rejoin the queue (signup
+    requires a linked Riot ID) until they run `!linkriot Name#Tag` again.
+    `!linkriot` updates the same users doc keyed by discord_id, so the
+    historic mmr_data doc (keyed by player_id) is picked up automatically —
+    nothing is deleted and no stats are lost.
+    Returns the now-dead Riot ID string for the purge announcement.
+    """
+    discord_id = str(doc.get("discord_id"))
+    name = (doc.get("name") or "").strip()
+    tag = (doc.get("tag") or "").strip()
+    riot_id = f"{name}#{tag}"
+    users.update_one(
+        {"_id": doc["_id"]},
+        {
+            "$unset": {"name": "", "tag": "", "puuid": ""},
+            "$set": {"discord_id": discord_id},
+        },
+    )
+    log.info(
+        "Unlinked dead Riot ID %s (%s); MMR stats preserved until re-link",
+        riot_id,
+        discord_id,
+    )
     return riot_id
 
 
@@ -49,16 +86,18 @@ def _kick_from_queue(bot, discord_id: str) -> None:
 
 
 async def purge_invalid_riot_ids(bot=None) -> list[str]:
-    """Remove linked Riot accounts that no longer exist on Riot's side.
+    """Unlink Riot accounts that no longer exist on Riot's side.
 
     All account checks are issued in parallel against the API. Returns the
-    display names of the removed players. Inconclusive checks (network/API
+    display names of the unlinked players. Inconclusive checks (network/API
     errors) are skipped so flaky API responses never purge data.
 
     A confirmed 404 on the stored Riot ID no longer deletes anything right
     away: the stored puuid is checked first, and when it still resolves the
     link is treated as a rename and refreshed (issue #182). Only an account
-    that is gone entirely (no puuid or puuid also 404s) gets purged.
+    that is gone entirely (no puuid or puuid also 404s) is unlinked: the
+    Riot ID fields are cleared but the player's MMR stats are kept — they
+    reappear (restored) as soon as they re-link with `!linkriot`.
     """
     docs = [
         doc
@@ -114,7 +153,7 @@ async def purge_invalid_riot_ids(bot=None) -> list[str]:
                     doc.get("discord_id"),
                 )
                 continue
-        removed.append(_remove_user_everywhere(doc))
+        removed.append(_unlink_user(doc))
         if bot is not None:
             _kick_from_queue(bot, str(doc.get("discord_id")))
 
@@ -128,9 +167,10 @@ async def _run_background_purge(bot, ctx) -> None:
         if removed:
             try:
                 await ctx.send(
-                    "Removed "
+                    "Unlinked "
                     + ", ".join(f"`{r}`" for r in removed)
-                    + " from the database (Riot account no longer exists)."
+                    + " (Riot account no longer exists). Their stats are kept; "
+                    "re-link with `!linkriot Name#Tag` to play again."
                 )
             except discord.HTTPException:
                 pass

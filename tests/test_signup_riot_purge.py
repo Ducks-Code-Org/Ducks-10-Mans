@@ -31,6 +31,8 @@ class FakeCollection:
     def update_one(self, f, update, upsert=False):
         for doc in self.docs:
             if self._match(doc, f):
+                for field in update.get("$unset", {}):
+                    doc.pop(field, None)
                 doc.update(update.get("$set", {}))
                 return
 
@@ -144,21 +146,43 @@ async def demo():
         removed = await su.purge_invalid_riot_ids()
         assert removed == [], "inconclusive Riot ID check purged a player"
 
-        # 6. Riot ID 404 + puuid also 404: genuinely gone, purged.
+        # 6. Riot ID 404 + puuid also 404: genuinely gone, unlinked but
+        #    MMR stats preserved (re-link restores the same mmr doc).
         reset()
         patch_primary(False)
         patch_puuid_response(404, None)
         removed = await su.purge_invalid_riot_ids()
         assert removed == ["oldname#oldtag"], removed
-        assert su.users.docs == [] and su.mmr_collection.docs == [], "not purged"
+        # users doc survives with name/tag/puuid cleared; stats are untouched.
+        assert len(su.users.docs) == 1, "user doc must not be deleted"
+        unlinked = su.users.docs[0]
+        assert unlinked["discord_id"] == "111", unlinked
+        assert "name" not in unlinked and "tag" not in unlinked, unlinked
+        assert "puuid" not in unlinked, unlinked
+        assert su.mmr_collection.docs == [MMR_DOC], "stats must be preserved"
 
-        # 7. No stored puuid + Riot ID 404: purged (nothing to resolve with).
+        # 7. No stored puuid + Riot ID 404: unlinked (nothing to resolve with).
         reset({**USER_DOC, "puuid": ""})
         patch_primary(False)
         patch_puuid_response(200, RENAMED)
         removed = await su.purge_invalid_riot_ids()
         assert removed == ["oldname#oldtag"], removed
-        assert su.mmr_collection.docs == []
+        assert su.mmr_collection.docs == [MMR_DOC], "stats must be preserved"
+
+        # 8. Re-linking after an unlink restores the player: !linkriot's
+        # upsert keyed by discord_id must pick the preserved mmr doc back up.
+        reset()
+        patch_primary(False)
+        patch_puuid_response(404, None)
+        await su.purge_invalid_riot_ids()
+        assert su.mmr_collection.docs == [MMR_DOC], "stats must survive the unlink"
+        # Simulate !linkriot: user doc gets name/tag back (keyed by discord_id);
+        # the mmr doc keyed by player_id is then found by every lookup path.
+        su.users.update_one({"discord_id": "111"}, {"$set": {"name": "b", "tag": "t"}})
+        relinked = su.users.find_one({"name": "b", "tag": "t"})
+        assert relinked and relinked["discord_id"] == "111"
+        mmr = su.mmr_collection.find_one({"player_id": relinked["discord_id"]})
+        assert mmr == MMR_DOC, "re-linked player must keep their historic stats"
     finally:
         riot_api._henrik_get_json = _orig_get_json
 

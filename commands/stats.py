@@ -10,6 +10,7 @@ from database import users
 from game.ranks import SSR_NAME, role_mention, tier_for_player
 from game.ranking import position_of
 from game.stats_helper import DEFAULT_MMR, avg_rating_of
+from tracker_links import display_name_for
 
 log = logging.getLogger(__name__)
 
@@ -78,12 +79,11 @@ class StatsCommand(BotCommands):
         stats_data = self.bot.player_mmr[player_id]
 
         user_data = users.find_one({"discord_id": str(player_id)})
-        if user_data:
-            riot_name = user_data.get("name", "Unknown")
-            riot_tag = user_data.get("tag", "Unknown")
-        else:
-            riot_name, riot_tag = ctx.author.name, ""
-        full_riot_id = f"{riot_name}#{riot_tag}"
+        # Linked players show their Riot ID; unlinked players (dead Riot
+        # account, stats preserved) fall back to their Discord display name.
+        full_riot_id = display_name_for(
+            user_data, guild=ctx.guild, discord_id=str(player_id)
+        )
 
         mmr_value = stats_data.get("mmr", DEFAULT_MMR)
         wins = stats_data.get("wins", 0)
@@ -132,4 +132,4 @@ class StatsCommand(BotCommands):
         embed.set_footer(text="Use !stats @user or !stats Name#Tag")
 
         await ctx.send(embed=embed)
-        log.info("Stats lookup: %s (%s) by %s", riot_name, riot_tag, ctx.author)
+        log.info("Stats lookup: %s by %s", full_riot_id, ctx.author)

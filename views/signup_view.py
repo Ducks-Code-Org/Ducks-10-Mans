@@ -11,7 +11,7 @@ from database import users
 from game.recent_queue import remember_recent_queue
 from services.riot_api import verify_riot_account_async
 from game.stats_helper import DEFAULT_MMR
-from tracker_links import tracker_link
+from tracker_links import tracker_link_for
 from views import safe_reply
 from views.mode_vote_view import ModeVoteView
 from game.voice_presence import voice_presence_enabled, wait_for_lobby
@@ -430,21 +430,21 @@ class SignupView(discord.ui.View):
     def get_signup_embed(self) -> discord.Embed:
         # Construct a signup embed, listing players, in order of signup as <discord_name>(<Riot_id>)
 
-        def get_user_data(player) -> tuple[str, str, str]:
+        def get_user_data(player) -> tuple[str, str | None]:
             user_data = users.find_one({"discord_id": str(player["id"])})
             member = self.ctx.guild.get_member(int(player["id"]))
             display_name = member.display_name if member else "Unknown"
-            riot_name = user_data.get("name", "Unknown") if user_data else "Unknown"
-            riot_tag = user_data.get("tag", "Unknown") if user_data else "Unknown"
+            # Only linked players get a tracker link; an unlinked player (dead
+            # Riot account) would otherwise link to a nonexistent profile.
+            link = tracker_link_for(user_data)
 
-            return display_name, riot_name, riot_tag
+            return display_name, link
 
         player_embed_lines = []
         for player in self.bot.queue:
-            display_name, riot_name, riot_tag = get_user_data(player)
-            player_embed_lines.append(
-                f"{display_name} ({tracker_link(riot_name, riot_tag)})"
-            )
+            display_name, link = get_user_data(player)
+            line = f"{display_name} ({link})" if link else f"{display_name} (N/A)"
+            player_embed_lines.append(line)
 
         embed = discord.Embed(
             title="Signup Queue",

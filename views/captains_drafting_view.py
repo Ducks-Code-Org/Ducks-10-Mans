@@ -8,7 +8,7 @@ from discord.ui import Select
 
 from database import users
 from game.stats_helper import DEFAULT_MMR
-from tracker_links import tracker_link
+from tracker_links import display_line_for, display_name_for
 from game.voice_presence import move_teams_to_voice, voice_presence_enabled
 
 log = logging.getLogger(__name__)
@@ -395,12 +395,7 @@ class CaptainsDraftingView(discord.ui.View):
                 .get(str(p["id"]), {})
                 .get("mmr", DEFAULT_MMR)
             )
-            if ud:
-                attackers.append(
-                    f"{tracker_link(ud.get('name', 'Unknown'), ud.get('tag', 'Unknown'))} (MMR:{mmr})"
-                )
-            else:
-                attackers.append(f"{p['name']} (MMR:{mmr})")
+            attackers.append(f"{display_line_for(ud)} (MMR:{mmr})")
 
         defenders = []
         for p in self.bot.team2:
@@ -410,12 +405,7 @@ class CaptainsDraftingView(discord.ui.View):
                 .get(str(p["id"]), {})
                 .get("mmr", DEFAULT_MMR)
             )
-            if ud:
-                defenders.append(
-                    f"{tracker_link(ud.get('name', 'Unknown'), ud.get('tag', 'Unknown'))} (MMR:{mmr})"
-                )
-            else:
-                defenders.append(f"{p['name']} (MMR:{mmr})")
+            defenders.append(f"{display_line_for(ud)} (MMR:{mmr})")
 
         teams_embed.add_field(
             name="**Attackers:**", value="\n".join(attackers) or "—", inline=False
@@ -702,10 +692,13 @@ class CaptainsDraftingView(discord.ui.View):
         options = []
         for player in self.remaining_players:
             user_data = users.find_one({"discord_id": str(player["id"])})
-            if user_data:
+            if user_data and user_data.get("name") and user_data.get("tag"):
                 label = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
             else:
-                label = player["name"]
+                # Unlinked players: Discord display name (best effort).
+                label = display_name_for(
+                    user_data, guild=self.ctx.guild, discord_id=str(player["id"])
+                )
             label = f"{label} (MMR: {self._player_mmr(player)})"
             options.append(discord.SelectOption(label=label, value=str(player["id"])))
         self.player_select.options = options
@@ -716,12 +709,9 @@ class CaptainsDraftingView(discord.ui.View):
         for player in self.remaining_players:
             user_data = users.find_one({"discord_id": str(player["id"])})
             mmr = self._player_mmr(player)
-            if user_data:
-                remaining_players_lines.append(
-                    f"{tracker_link(user_data.get('name', 'Unknown'), user_data.get('tag', 'Unknown'))} (MMR: {mmr})"
-                )
-            else:
-                remaining_players_lines.append(f"{player['name']} (MMR: {mmr})")
+            remaining_players_lines.append(
+                f"{display_line_for(user_data, guild=self.ctx.guild, discord_id=str(player['id']))} (MMR: {mmr})"
+            )
 
         if remaining_players_lines:
             remaining_players_text = "\n".join(remaining_players_lines)
@@ -740,12 +730,9 @@ class CaptainsDraftingView(discord.ui.View):
             for p in team:
                 ud = users.find_one({"discord_id": str(p["id"])})
                 mmr = self._player_mmr(p)
-                if ud:
-                    out.append(
-                        f"{tracker_link(ud.get('name', 'Unknown'), ud.get('tag', 'Unknown'))} (MMR: {mmr})"
-                    )
-                else:
-                    out.append(f"{p['name']} (MMR: {mmr})")
+                out.append(
+                    f"{display_line_for(ud, guild=self.ctx.guild, discord_id=str(p['id']))} (MMR: {mmr})"
+                )
             return "\n".join(out) if out else "No players yet"
 
         drafting_embed = discord.Embed(

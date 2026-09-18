@@ -7,7 +7,7 @@ from discord.ui import Button
 
 from database import users
 from game.stats_helper import DEFAULT_MMR
-from tracker_links import tracker_link
+from tracker_links import display_line_for
 from views import safe_reply
 from views.captains_drafting_view import SecondCaptainChoiceView
 from game.voice_presence import move_teams_to_voice, voice_presence_enabled
@@ -322,23 +322,13 @@ class MapVoteView(discord.ui.View):
         for p in self.bot.team1:
             ud = users.find_one({"discord_id": str(p["id"])})
             mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", DEFAULT_MMR)
-            if ud:
-                attackers.append(
-                    f"{tracker_link(ud.get('name', 'Unknown'), ud.get('tag', 'Unknown'))} (MMR:{mmr})"
-                )
-            else:
-                attackers.append(f"{p['name']} (MMR:{mmr})")
+            attackers.append(f"{display_line_for(ud)} (MMR:{mmr})")
 
         defenders = []
         for p in self.bot.team2:
             ud = users.find_one({"discord_id": str(p["id"])})
             mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", DEFAULT_MMR)
-            if ud:
-                defenders.append(
-                    f"{tracker_link(ud.get('name', 'Unknown'), ud.get('tag', 'Unknown'))} (MMR:{mmr})"
-                )
-            else:
-                defenders.append(f"{p['name']} (MMR:{mmr})")
+            defenders.append(f"{display_line_for(ud)} (MMR:{mmr})")
 
         teams_embed.add_field(
             name="**Attackers:**", value="\n".join(attackers), inline=False

@@ -22,7 +22,7 @@ from game.ranks import SSR_NAME, role_mention, sync_player_rank
 from game.recent_queue import remember_recent_queue
 from services.riot_api import RiotApiInconclusive, get_recent_matches_async
 from game.stats_helper import update_stats
-from tracker_links import tracker_link
+from tracker_links import display_name_for, tracker_link
 from services.vlr_rating import estimate_ratings_v4
 
 log = logging.getLogger(__name__)
@@ -640,11 +640,9 @@ class ReportCommand(BotCommands):
                 new = self.bot.player_mmr.get(pid, {}).get("mmr", 0)
                 delta = new - old
                 u = users.find_one({"discord_id": pid})
-                name = (
-                    f"{u.get('name', 'Unknown')}#{u.get('tag', 'Unknown')}"
-                    if u
-                    else p.get("name", "Unknown")
-                )
+                # Linked players show their Riot ID; unlinked players (dead
+                # Riot account, stats preserved) show their Discord name.
+                name = display_name_for(u, guild=ctx.guild, discord_id=pid)
                 rating = player_ratings.get(pid)
                 rating_part = f"({rating:.2f})" if rating is not None else ""
                 sign = "+" if delta >= 0 else ""
@@ -726,7 +724,9 @@ class ReportCommand(BotCommands):
         if new_top_players:
             for new_top_player_id in new_top_players:
                 user_data = users.find_one({"discord_id": str(new_top_player_id)})
-                if user_data:
+                # A rank-1 announcement only makes sense with a linked account;
+                # unlinked players (no Riot ID) keep stats but skip the banner.
+                if user_data and user_data.get("name") and user_data.get("tag"):
                     riot_name = user_data.get("name", "Unknown").lower()
                     riot_tag = user_data.get("tag", "Unknown").lower()
                     # Try to send to 'announcements' channel if it exists

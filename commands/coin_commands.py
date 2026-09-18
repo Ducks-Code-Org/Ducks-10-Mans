@@ -17,6 +17,7 @@ from game.duck_coins import (
     place_bet,
     setmap_override,
 )
+from tracker_links import display_name_for
 
 log = logging.getLogger(__name__)
 
@@ -43,10 +44,10 @@ class CoinCommands(BotCommands):
             return
 
         user_data = users.find_one({"discord_id": str(player_id)})
-        display_name = (
-            f"{user_data.get('name', '?')}#{user_data.get('tag', '?')}"
-            if user_data
-            else ctx.author.name
+        # Linked players show their Riot ID; unlinked players (dead Riot
+        # account, stats preserved) fall back to their Discord display name.
+        display_name = display_name_for(
+            user_data, guild=ctx.guild, discord_id=str(player_id)
         )
 
         coins = coins_of(player_id)

@@ -12,6 +12,7 @@ from table2ascii import table2ascii as t2a
 
 from database import mmr_collection, users
 from game.stats_helper import DEFAULT_MMR, avg_rating_of
+from tracker_links import display_name_for
 
 log = logging.getLogger(__name__)
 
@@ -129,6 +130,10 @@ class LeaderboardView(View):
             self.total_pages,
         )
 
+    def _guild(self):
+        """The guild the leaderboard was requested in (best effort)."""
+        return getattr(self.ctx, "guild", None)
+
     def make_content(self, data, page_count):
         sort_by_to_title = {
             "mmr": "MMR",
@@ -162,10 +167,12 @@ class LeaderboardView(View):
             player_id = str(player_data["player_id"])
             user_data = users.find_one({"discord_id": player_id})
 
-            if user_data:
-                name = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
-            else:
-                name = "Unknown"
+            # Linked players show their Riot ID; unlinked players (dead Riot
+            # account, stats preserved) fall back to their Discord display
+            # name until they re-link.
+            name = display_name_for(
+                user_data, guild=self._guild(), discord_id=player_id
+            )
 
             rank = _rank_display(player_data, self.sort_by, idx + start_index)
 
