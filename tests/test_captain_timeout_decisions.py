@@ -47,6 +47,7 @@ class FakeBot:
 class FakeCtx:
     def __init__(self):
         self.messages = []
+        self.guild = None
 
     async def send(self, content=None, **kwargs):
         self.messages.append(content)
