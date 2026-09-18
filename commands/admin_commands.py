@@ -1,5 +1,6 @@
 "Admin commands for managing the bot and server."
 
+import asyncio
 import logging
 
 import discord
@@ -24,6 +25,9 @@ log = logging.getLogger(__name__)
 
 
 async def setup(bot):
+    # Shared with commands/report.py: whichever cog loads first creates it.
+    if not hasattr(bot, "report_lock"):
+        bot.report_lock = asyncio.Lock()
     await bot.add_cog(AdminCommands(bot))
 
 
@@ -258,6 +262,13 @@ class AdminCommands(BotCommands):
     @commands.command()
     @commands.has_role("Owner")
     async def cancel(self, ctx):
+        # Serialize against !report: a cancel must not tear down the match
+        # channel or refund coins while a report is mid-commit (and must not
+        # refund a doubledown/map override for a match that was played).
+        async with self.bot.report_lock:
+            await self._cancel_locked(ctx)
+
+    async def _cancel_locked(self, ctx):
         # Stop any in-flight background Riot-ID purge so it stops consuming
         # the rate-limit budget and can't delay a follow-up !signup.
         cancel_background_purge(self.bot)

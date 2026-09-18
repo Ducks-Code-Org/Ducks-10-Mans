@@ -52,6 +52,9 @@ class CustomBot(commands.Bot):
         self.map_override_last: int = 0
         self.map_override_last_by: str | None = None
         self.map_override_deadline: float | None = None
+        # Every override wager this match, in order: [{"payer", "amount"}].
+        # Used to refund the whole escalation chain on cancel/crash.
+        self.map_override_chain: list[dict] = []
 
         self.load_mmr_data()
         seasons.update_one(
@@ -287,10 +290,13 @@ class CustomBot(commands.Bot):
     async def on_ready(self):
         log.info("Bot connected as %s.", self.user)
 
-        # Crash safety: refund any bets/doubledowns the previous run left
-        # escrowed (e.g. the process died mid betting window). Journal is
-        # written after every mutation and cleared on settle/refund, so a
-        # surviving journal means settlement never happened.
+        # Crash safety: refund any bets/doubledowns/overrides the previous
+        # run left escrowed (e.g. the process died mid betting window).
+        # Journal is written after every mutation and cleared on
+        # settle/refund, so a surviving journal means settlement never
+        # happened. recover_orphaned_escrow is process-gated: on_ready also
+        # fires after a gateway reconnect, where a live window must NOT be
+        # refunded or its escrow would be paid out twice.
         from game.duck_coins import recover_orphaned_escrow
 
         recover_orphaned_escrow(self)
@@ -308,8 +314,19 @@ class CustomBot(commands.Bot):
                     self._flush_discord_logs(handler)
                 )
 
-        await self.purge_old_match_roles()
-        await self.purge_old_match_channels()
+        # Stale-resource cleanup must never run while a live signup/match
+        # owns channels or roles: it deletes every "match"-named channel and
+        # role, which would tear down an active match on a reconnect.
+        if self.signup_active or self.match_ongoing or self.match_channel:
+            log.info(
+                "Skipping old match resource purge: signup/match is active "
+                "(signup_active=%s match_ongoing=%s)",
+                self.signup_active,
+                self.match_ongoing,
+            )
+        else:
+            await self.purge_old_match_roles()
+            await self.purge_old_match_channels()
         await self.send_new_leaderboard()
 
     async def _flush_discord_logs(self, handler):

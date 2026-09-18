@@ -11,6 +11,12 @@ from database import mmr_collection, users
 from services.riot_api import RiotApiInconclusive, get_account_by_riot_id
 from tracker_links import tracker_link
 
+# Message reused by both the Riot-ID and puuid conflict checks.
+_ALREADY_LINKED = (
+    "That Riot account is already linked to another Discord account. "
+    "If it's yours, ask an admin to unlink it first."
+)
+
 log = logging.getLogger(__name__)
 
 
@@ -54,26 +60,27 @@ class LinkRiotCommand(BotCommands):
         # this account instead of looking like a dead link (issue #182).
         new_puuid = (payload.get("puuid") or "").strip()
 
-        # Riot IDs can only be linked to one Discord account: remove any
-        # stale duplicate links from other users. Match on the Riot ID and,
-        # when known, the puuid — a renamed account is the same account.
-        stale_query = {
+        # A Riot account may only be linked to one Discord account. Reject
+        # the link when another account owns it (by Riot ID or, when known,
+        # by puuid — a renamed account is still the same account). Never
+        # touch the other user's data: their MMR/stats stay intact.
+        conflict_query = {
             "$or": [
                 {"name": riot_name.lower().strip(), "tag": riot_tag.lower().strip()}
             ]
         }
         if new_puuid:
-            stale_query["$or"].append({"puuid": new_puuid})
-        for stale in users.find(stale_query):
-            if str(stale.get("discord_id")) != discord_id:
-                users.delete_one({"_id": stale["_id"]})
-                mmr_collection.delete_one({"player_id": stale.get("discord_id")})
-                log.info(
-                    "Removed stale Riot ID link %s#%s from discord id %s",
+            conflict_query["$or"].append({"puuid": new_puuid})
+        for owner in users.find(conflict_query):
+            if str(owner.get("discord_id")) != discord_id:
+                log.warning(
+                    "Link rejected: Riot ID %s#%s already linked to discord id %s",
                     riot_name,
                     riot_tag,
-                    stale.get("discord_id"),
+                    owner.get("discord_id"),
                 )
+                await ctx.send(_ALREADY_LINKED)
+                return
 
         set_fields = {
             "discord_id": discord_id,

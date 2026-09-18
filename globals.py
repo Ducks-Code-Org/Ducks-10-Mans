@@ -24,9 +24,10 @@ def feature_enabled(name: str, *, default: bool = True) -> bool:
 
     Falls back to `default` when the flag is absent or not a valid boolean,
     so a missing or typo'd line never crashes the feature that reads it.
+    configparser.Error covers malformed interpolation (`%`) and parse errors.
     """
     try:
         value = BOT_FEATURES.getboolean(name)
-    except (AttributeError, ValueError):
+    except (AttributeError, ValueError, configparser.Error):
         return default
     return default if value is None else value

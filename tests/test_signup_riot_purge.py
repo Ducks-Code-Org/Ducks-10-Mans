@@ -61,6 +61,10 @@ sys.modules["services.maps_service"] = _maps_stub
 import commands.signup as su  # noqa: E402
 import services.riot_api as riot_api  # noqa: E402
 
+# The purge no longer imports mmr_collection (nothing may delete stats), so
+# alias the stub here to keep asserting that stats are untouched.
+su.mmr_collection = _database_stub.mmr_collection
+
 USER_DOC = {
     "_id": "u1",
     "discord_id": "111",

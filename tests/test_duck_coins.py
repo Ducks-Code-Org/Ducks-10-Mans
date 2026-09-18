@@ -141,6 +141,7 @@ class FakeBot:
         self.bet_session = None
         self.emojis = []
         self.match_channel = None
+        self.map_override_chain = []
 
 
 class FakeChannel:
@@ -478,8 +479,50 @@ def demo():
     recover_orphaned_escrow(bot)
     assert coins_of("9") == 10, "settled bets must never be re-refunded"
 
+    # --- Map-override chain journals and recovers on startup --------------
+    # (Reset the once-per-process gate so this simulates a fresh process.)
+    duck_coins._escrow_recovered = False
+    DB["2"] = {"player_id": "2", "duck_coins": 100}
+    DB["6"] = {"player_id": "6", "duck_coins": 100}
+    bot.bet_session = None
+    bot.double_downs = set()
+    bot.map_override_chain = []
+    bot.map_override_last = 0
+    bot.map_override_last_by = None
+    bot.match_ongoing = False
+    bot.selected_map = "Ascent"
+    asyncio.run(setmap_override(bot, "2", "Bind"))
+    asyncio.run(setmap_override(bot, "6", "Haven"))
+    asyncio.run(setmap_override(bot, "2", "Split"))
+    journal = _ESCROW_DOCS["open_bets"]["data"]
+    assert journal["map_overrides"] == [
+        {"payer": "2", "amount": 3},
+        {"payer": "6", "amount": 4},
+        {"payer": "2", "amount": 5},
+    ], journal
+    # Simulated crash: journal survives, memory does not.
+    bot.map_override_chain = []
+    bot.bet_session = None
+    recover_orphaned_escrow(bot)
+    assert coins_of("2") == 100, "every override step must be refunded on crash"
+    assert coins_of("6") == 100, "the outbid overrider is refunded on crash too"
+
+    # A gateway reconnect must not refund a LIVE window (process-gated).
+    DB["9"]["duck_coins"] = 10
+    duck_coins._escrow_recovered = False
+    open_window(bot)
+    place_bet(bot, "9", "attackers", 2)  # 10 -> 8, escrowed
+    recover_orphaned_escrow(bot)  # the real process-start recovery
+    assert coins_of("9") == 10, "first recovery refunds the journaled bet"
+    session = open_window(bot)
+    place_bet(bot, "9", "attackers", 2)  # a new live window: 10 -> 8
+    recover_orphaned_escrow(bot)  # reconnect: on_ready fires again
+    assert (
+        coins_of("9") == 8
+    ), "reconnect must not refund a live window (double payout risk)"
+
     # --- Bet announcement: match channel only + setmap section ------------
-    from game.duck_coins import _announcement, on_teams_announced
+    from game.duck_coins import _announcement
 
     # The message must mention !setmap so players know about coin overrides.
     text = _announcement(bot, 300)
@@ -526,9 +569,18 @@ def demo():
     DB["5"]["duck_coins"] = 16  # as if player 5 paid 4 for the bet
     bot.double_downs = {"1"}
     DB["1"]["duck_coins"] = 15  # as if player 1 paid 5 for the doubledown
-    bot.map_override_last = 4
+    # Escalation chain: player 2 paid 3, player 6 paid 4 (outbid player 2),
+    # player 2 paid 5 to take it back. The whole chain is journaled, so a
+    # cancel refunds every payer — not just the last overrider.
+    bot.map_override_last = 5
     bot.map_override_last_by = "2"
-    DB["2"]["duck_coins"] = 16  # as if player 2 paid 4 for the override
+    bot.map_override_chain = [
+        {"payer": "2", "amount": 3},
+        {"payer": "6", "amount": 4},
+        {"payer": "2", "amount": 5},
+    ]
+    DB["2"]["duck_coins"] = 12  # as if player 2 paid 3 + 5
+    DB["6"]["duck_coins"] = 16  # as if player 6 paid 4
 
     guild_captured = []
 
@@ -539,14 +591,18 @@ def demo():
     guild = types.SimpleNamespace(text_channels=[fake_10mans])
 
     total = refund_match_coins(bot)
-    # 4 bet + 5 doubledown + 4 override = 13
-    assert total == 13, f"total refund wrong: {total}"
+    # 4 bet + 5 doubledown + 3+4+5 override chain = 21
+    assert total == 21, f"total refund wrong: {total}"
     assert coins_of("5") == 20, f"bettor refund wrong: {coins_of('5')}"
     assert coins_of("1") == 20, f"doubledown refund wrong: {coins_of('1')}"
-    assert coins_of("2") == 20, f"override refund wrong: {coins_of('2')}"
+    assert coins_of("2") == 20, f"first overrider refund wrong: {coins_of('2')}"
+    assert (
+        coins_of("6") == 20
+    ), f"outbid overrider must be refunded too: {coins_of('6')}"
     assert bot.bet_session is None
     assert bot.double_downs == set()
     assert bot.map_override_last == 0 and bot.map_override_last_by is None
+    assert bot.map_override_chain == [], "chain must be cleared after refund"
 
     # The #10-mans notice — only when coins were actually refunded.
     asyncio.run(announce_cancellation_async(bot, guild))
@@ -566,6 +622,32 @@ def demo():
     asyncio.run(
         announce_cancellation_async(bot, types.SimpleNamespace(text_channels=[]))
     )
+
+    # --- A played match must not leave a stale refund journal ---------------
+    # !report settles bets and clears per-match state; a stale journal would
+    # make the next restart refund coins for a match that actually happened.
+    duck_coins._escrow_recovered = False
+    DB["2"]["duck_coins"] = 10
+    bot.map_override_chain = [{"payer": "2", "amount": 3}]
+    duck_coins.persist_escrow(bot)
+    bot.map_override_chain = []
+    refund_open_bets(bot)  # what !report calls after settlement
+    recover_orphaned_escrow(bot)
+    assert (
+        coins_of("2") == 10
+    ), "a settled match must not refund overrides on the next restart"
+
+    # Outbid wagers are refunded ONLY on cancel/crash, never just for losing
+    # the outbid: refund_match_coins is the sole refund path and it is only
+    # called from cancel/recovery (source contract).
+    src = open(
+        os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "commands",
+            "admin_commands.py",
+        )
+    ).read()
+    assert "refund_match_coins(self.bot)" in src, "!cancel must refund on cancel"
 
     print("all duck coins self-checks passed")
 

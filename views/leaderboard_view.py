@@ -6,11 +6,11 @@ import math
 import discord
 import wcwidth
 from discord.ui import Button, View
-from table2ascii import Alignment
-from table2ascii import PresetStyle
+from table2ascii import Alignment, PresetStyle
 from table2ascii import table2ascii as t2a
 
 from database import mmr_collection, users
+from game.duck_coins import duck_coins_enabled
 from game.stats_helper import DEFAULT_MMR, avg_rating_of
 from tracker_links import display_name_for
 
@@ -145,7 +145,8 @@ class LeaderboardView(View):
             "duck_coins": "Duck Coins",
         }
 
-        show_coins = True
+        # The Duck Coins column only exists while the feature is enabled.
+        show_coins = duck_coins_enabled()
         headers = [
             "Rank",
             "User",

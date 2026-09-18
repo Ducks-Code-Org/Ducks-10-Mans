@@ -10,7 +10,6 @@ from discord.ext import commands
 
 from commands import BotCommands
 from database import all_matches, mmr_collection, seasons, users
-from globals import feature_enabled
 from game.duck_coins import (
     award_match_coins,
     doubledown_multiplier_of,
@@ -20,10 +19,11 @@ from game.duck_coins import (
 )
 from game.ranks import SSR_NAME, role_mention, sync_player_rank
 from game.recent_queue import remember_recent_queue
-from services.riot_api import RiotApiInconclusive, get_recent_matches_async
 from game.stats_helper import update_stats
-from tracker_links import display_name_for, tracker_link
+from globals import feature_enabled
+from services.riot_api import RiotApiInconclusive, get_recent_matches_async
 from services.vlr_rating import estimate_ratings_v4
+from tracker_links import display_name_for, tracker_link
 
 log = logging.getLogger(__name__)
 
@@ -193,32 +193,43 @@ class ReportCommand(BotCommands):
         # until this handler finishes (cleanup at the end resets flags).
         #
         # CLAIM RELEASE ON FAILURE: the claim above is only "consumed" once
-        # the report actually writes to the database (after that, the full
-        # reset below runs). Every earlier failure path — match not yet
-        # visible on the API (404), network errors, map mismatch, missing
-        # players — must restore match_not_reported so the user can simply
-        # retry once the match appears. Without this, a premature report
-        # attempt permanently blocked retrying with "already been reported".
+        # the report has committed ANY database write. Every earlier failure
+        # path — match not yet visible on the API (404), network errors, map
+        # mismatch, missing players — must restore match_not_reported so the
+        # user can simply retry once the match appears. Without this, a
+        # premature report attempt permanently blocked retrying with "already
+        # been reported".
+        #
+        # A failure AFTER the first write must NOT release the claim: stats
+        # and coins were already applied and a retry would apply them again.
+        # _report_claimed calls on_commit() immediately before its first
+        # database write; anything that fails before that point releases the
+        # claim so the reporter can retry.
         # ------------------------------------------------------------
-        claim_consumed = False
+        committed = False
+
+        def _on_commit():
+            nonlocal committed
+            committed = True
+
         try:
-            claim_consumed = await self._report_claimed(ctx, name, tag)
+            await self._report_claimed(ctx, name, tag, on_commit=_on_commit)
         finally:
-            if not claim_consumed:
+            if not committed:
                 self.bot.match_not_reported = True
                 log.info(
                     "Report claim released for retry (report did not complete): %s",
                     ctx.author,
                 )
 
-    async def _report_claimed(self, ctx, name: str, tag: str) -> bool:
+    async def _report_claimed(self, ctx, name: str, tag: str, on_commit=None) -> None:
         """Body of !report after the atomic claim has been taken.
 
-        Returns True only when the report is committed to the database (the
-        claim is then consumed by the full state reset at the end); on every
-        early return it returns False and the caller's finally releases the
-        claim so the reporter can retry (e.g. once the match shows up on the
-        Riot API).
+        Invokes ``on_commit()`` immediately before the first database write.
+        Early validation returns (and failures before that point) leave
+        on_commit uncalled, releasing the claim for a retry; failures after
+        it leave the claim consumed so a retry cannot double-apply stats or
+        coins.
         """
 
         def _norm_map(s: str) -> str:
@@ -245,21 +256,33 @@ class ReportCommand(BotCommands):
         except (RiotApiInconclusive, aiohttp.ClientError, asyncio.TimeoutError) as e:
             log.error("Network error fetching recent matches: %s", e, exc_info=e)
             await ctx.send(f"Network error reaching HenrikDev API: {e}")
-            return False
+            return
 
         if data is None:
             await ctx.send(
                 "No recent matches found for your Riot ID yet — the game may "
                 "still be processing on the Riot API. Try again in a minute."
             )
-            return False
+            return
 
         if not data.get("data"):
             await ctx.send("Could not retrieve match data.")
-            return False
+            return
 
         match = data["data"][0]
         metadata = match.get("metadata") or {}
+
+        # Idempotency: if this match id was already recorded (e.g. a retried
+        # report after a post-write failure), refuse instead of re-applying
+        # MMR/coins and inserting a duplicate match doc.
+        api_match_id = metadata.get("match_id")
+        if api_match_id and all_matches.find_one({"metadata.match_id": api_match_id}):
+            log.warning(
+                "Report ignored: match %s was already recorded",
+                api_match_id,
+            )
+            await ctx.send("This match has already been recorded.")
+            return
 
         map_field = metadata.get("map")
         if isinstance(map_field, dict):
@@ -276,7 +299,7 @@ class ReportCommand(BotCommands):
             await ctx.send(
                 "Map doesn't match your most recent match. Unable to report it."
             )
-            return False
+            return
 
         # Get total rounds played from the match data
         teams = match.get("teams", [])
@@ -285,15 +308,22 @@ class ReportCommand(BotCommands):
             if not total_rounds:
                 rounds_data = match.get("rounds") or []
                 total_rounds = len(rounds_data)
-            total_rounds = int(total_rounds)
+            try:
+                total_rounds = int(total_rounds)
+            except (TypeError, ValueError):
+                await ctx.send(
+                    "Could not read the round count from the match data; "
+                    "try again once the match finishes processing."
+                )
+                return
         else:
             await ctx.send("No team data found in match data.")
-            return False
+            return
 
         match_players = match.get("players", [])
         if not match_players:
             await ctx.send("No players found in match data.")
-            return False
+            return
 
         # Resolve every queued player to their Discord id (the persistent
         # identity) plus their current Riot name/tag (only a lookup label).
@@ -364,13 +394,13 @@ class ReportCommand(BotCommands):
             mismatch_message += "If you changed your Riot ID, please use `!linkriot NewName#NewTag` to update it."
 
             await ctx.send(mismatch_message)
-            return False
+            return
 
         # Determine which team won
         teams = match.get("teams", [])
         if not teams:
             await ctx.send("No team data found in match data.")
-            return False
+            return
 
         winning_team_id = None
         for team in teams:
@@ -381,7 +411,7 @@ class ReportCommand(BotCommands):
         log.debug("Winning team: %s", winning_team_id)
         if not winning_team_id:
             await ctx.send("Could not determine the winning team.")
-            return False
+            return
 
         match_team_players = {"red": {}, "blue": {}}
         for player_info in match_players:
@@ -409,7 +439,7 @@ class ReportCommand(BotCommands):
             ]
         else:
             await ctx.send("Could not match the winning team to our teams.")
-            return False
+            return
 
         for player_id in playing_team_ids:
             self.bot.ensure_player_mmr(player_id, self.bot.player_names)
@@ -564,6 +594,12 @@ class ReportCommand(BotCommands):
 
         team1_rounds = int(api_rounds.get(team1_api_color, 0))
         team2_rounds = int(api_rounds.get(team2_api_color, 0))
+
+        # All validation is done; every path below writes to the database.
+        # Consume the claim now: a failure from here on must NOT release it,
+        # because a retry would re-apply MMR/coins on top of the partial write.
+        if on_commit is not None:
+            on_commit()
 
         # Update stats for each player
         for player_stats in match_players:
@@ -794,15 +830,13 @@ class ReportCommand(BotCommands):
         self.bot.map_override_last = 0
         self.bot.map_override_last_by = None
         self.bot.map_override_deadline = None
+        self.bot.map_override_chain = []
         # Bets were already settled above; this just clears an empty session
         # (and refunds a stray bet if settlement never ran). Map override
         # coins are NOT refunded here: the match happened, the coins bought
         # the map that was played.
         refund_open_bets(self.bot)
         await cleanup_match_resources(self.bot)
-        # The match is fully committed and cleaned up; tell the caller the
-        # claim is consumed so it does not restore match_not_reported.
-        return True
 
 
 def rounds_to_int(value: object) -> int:

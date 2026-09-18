@@ -10,7 +10,7 @@ from discord.ext import commands
 
 from commands import BotCommands
 from commands.report import cleanup_match_resources
-from database import mmr_collection, users
+from database import users
 from game.identity import ensure_current_riot_identity
 from game.recent_queue import get_recent_queue, pingrecent_message
 from services.riot_api import (
@@ -27,18 +27,6 @@ log = logging.getLogger(__name__)
 # re-link with `!linkriot` (which matches on discord_id and keeps the mmr doc).
 UNLINKED_NAME = "N/A"
 UNLINKED_TAG = "N/A"
-
-
-def _remove_user_everywhere(doc) -> str:
-    """Delete a user doc and its mmr doc. Returns the Riot ID string."""
-    discord_id = str(doc.get("discord_id"))
-    users.delete_one({"_id": doc["_id"]})
-    mmr_collection.delete_one({"player_id": discord_id})
-    name = (doc.get("name") or "").strip()
-    tag = (doc.get("tag") or "").strip()
-    riot_id = f"{name}#{tag}"
-    log.info("Removed invalid Riot ID %s (%s)", riot_id, discord_id)
-    return riot_id
 
 
 def _unlink_user(doc) -> str:

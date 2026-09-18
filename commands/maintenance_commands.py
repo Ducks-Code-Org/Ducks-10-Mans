@@ -1,6 +1,7 @@
 "Admin maintenance commands (issue #166): rollback, editplayer, substitute, and friends."
 
 import asyncio
+import configparser
 import contextlib
 import gzip
 import inspect
@@ -19,7 +20,6 @@ from discord.ext import commands
 import globals as globals_mod
 from commands import BotCommands
 from database import all_matches, client, mmr_collection, seasons, users
-from globals import BOT_CONFIG
 from game.duck_coins import (
     DOUBLEDOWN_COST,
     add_coins,
@@ -28,15 +28,16 @@ from game.duck_coins import (
     duck_coins_enabled,
     duck_emote,
 )
+from game.stats_helper import DEFAULT_MMR, update_stats
+from game.voice_presence import move_teams_to_voice, voice_presence_enabled
+from globals import BOT_CONFIG
 from services.riot_api import (
     RiotApiInconclusive,
     get_account_by_riot_id,
     get_match_by_id_async,
     verify_riot_account_async,
 )
-from game.stats_helper import DEFAULT_MMR, update_stats
 from services.vlr_rating import estimate_ratings_v4
-from game.voice_presence import move_teams_to_voice, voice_presence_enabled
 
 log = logging.getLogger(__name__)
 
@@ -645,18 +646,43 @@ class MaintenanceCommands(BotCommands):
     @commands.command(name="setconfig")
     @commands.has_permissions(administrator=True)
     async def setconfig(self, ctx, key: str, value: str):
-        """Update a bot.ini setting; applies immediately without a restart."""
+        """Update a bot.ini feature flag; applies immediately without a restart."""
         if not re.fullmatch(r"[A-Za-z0-9_]+", key):
             await ctx.send("Invalid key name (letters, digits, underscores only).")
             return
-        set_ini_value(BOT_INI_PATH, "features", key, value)
+        # Only strict booleans are accepted: anything else can poison the ini
+        # (e.g. a `%` value raises configparser.InterpolationSyntaxError on
+        # the next read) and break every feature check until hand-edited.
+        normalized = (value or "").strip().lower()
+        if normalized not in {"true", "false", "1", "0", "yes", "no", "on", "off"}:
+            await ctx.send(
+                "Value must be a boolean: `true`/`false` (also accepts "
+                "`1`/`0`, `yes`/`no`, `on`/`off`)."
+            )
+            return
+        # Validate the whole file BEFORE writing: a malformed value can raise
+        # configparser errors on the next read and break every feature check,
+        # so refuse anything that would not round-trip.
+        previous = BOT_INI_PATH.read_text(encoding="utf-8")
+        try:
+            set_ini_value(BOT_INI_PATH, "features", key, normalized)
+            probe = configparser.ConfigParser()
+            probe.read(BOT_INI_PATH)
+            probe["features"].getboolean(key)
+        except Exception as e:
+            BOT_INI_PATH.write_text(previous, encoding="utf-8")
+            log.error("!setconfig rejected a value that breaks bot.ini: %s", e)
+            await ctx.send(f"Refusing `{key} = {value}` — it would break bot.ini.")
+            return
         # Live reload: re-read the file, then rebind the features proxy so
         # feature_enabled() sees the new value even if [features] was missing.
         BOT_CONFIG.read(BOT_INI_PATH)
         if BOT_CONFIG.has_section("features"):
             globals_mod.BOT_FEATURES = BOT_CONFIG["features"]
-        log.info("%s set bot.ini [features] %s = %s", ctx.author, key, value)
-        await ctx.send(f"Set [features] `{key}` = `{value}` (applied immediately).")
+        log.info("%s set bot.ini [features] %s = %s", ctx.author, key, normalized)
+        await ctx.send(
+            f"Set [features] `{key}` = `{normalized}` (applied immediately)."
+        )
 
     @commands.command(name="showconfig")
     @commands.has_permissions(administrator=True)
@@ -797,6 +823,16 @@ class MaintenanceCommands(BotCommands):
             self.bot.map_override_last = 0
             self.bot.map_override_last_by = None
             self.bot.map_override_deadline = None
+        self.bot.map_override_chain = [
+            e
+            for e in getattr(self.bot, "map_override_chain", [])
+            if e.get("payer") != pid
+        ]
+        # Keep the crash-safety journal in sync: without this a restart would
+        # refund a doubledown/override whose coins were just reset.
+        from game.duck_coins import persist_escrow
+
+        persist_escrow(self.bot)
         log.info("%s reset season stats for %s", ctx.author, pid)
         await ctx.send(f"Reset season stats and MMR for <@{pid}>.")
 
@@ -1199,34 +1235,48 @@ class MaintenanceCommands(BotCommands):
                 safety_path.write_text(json.dumps(safety), encoding="utf-8")
 
             try:
-                for name in ("matches", "mmr_data", "seasons"):
-                    docs = collections.get(name) or []
-                    coll = {
-                        "matches": all_matches,
-                        "mmr_data": mmr_collection,
-                        "seasons": seasons,
-                    }[name]
-                    # Complete overwrite: drop existing docs (matches scoped
-                    # to this season) then write exactly what the snapshot
-                    # contains. Seasons use replace_one so the "current" doc
-                    # is swapped in place (archived seasons never inserted
-                    # by snapshots can't collide on _id).
-                    if name == "matches":
-                        season_num = (
-                            int(season_doc.get("season_number", 0)) if season_doc else 0
-                        )
-                        coll.delete_many(_season_match_filter(season_num))
-                        for raw in docs:
-                            coll.insert_one(_dejsonify(raw))
-                    elif name == "mmr_data":
-                        coll.delete_many({})
-                        for raw in docs:
-                            coll.insert_one(_dejsonify(raw))
-                    else:
-                        for raw in docs:
-                            doc = _dejsonify(raw)
-                            coll.replace_one({"_id": doc["_id"]}, doc, upsert=True)
-                    counts[name] = len(docs)
+                # One transaction over all three collections: any failure
+                # aborts every write, so the season can't be left half-wiped.
+                with client.start_session() as session, session.start_transaction():
+                    for name in ("matches", "mmr_data", "seasons"):
+                        docs = collections.get(name) or []
+                        coll = {
+                            "matches": all_matches,
+                            "mmr_data": mmr_collection,
+                            "seasons": seasons,
+                        }[name]
+                        # Complete overwrite: drop existing docs (matches
+                        # scoped to this season) then write exactly what
+                        # the snapshot contains. Seasons use replace_one so
+                        # the "current" doc is swapped in place (archived
+                        # seasons never inserted by snapshots can't
+                        # collide on _id).
+                        if name == "matches":
+                            season_num = (
+                                int(season_doc.get("season_number", 0))
+                                if season_doc
+                                else 0
+                            )
+                            coll.delete_many(
+                                _season_match_filter(season_num),
+                                session=session,
+                            )
+                            for raw in docs:
+                                coll.insert_one(_dejsonify(raw), session=session)
+                        elif name == "mmr_data":
+                            coll.delete_many({}, session=session)
+                            for raw in docs:
+                                coll.insert_one(_dejsonify(raw), session=session)
+                        else:
+                            for raw in docs:
+                                doc = _dejsonify(raw)
+                                coll.replace_one(
+                                    {"_id": doc["_id"]},
+                                    doc,
+                                    upsert=True,
+                                    session=session,
+                                )
+                        counts[name] = len(docs)
             except Exception as e:
                 log.error("Season recovery failed: %s", e, exc_info=True)
                 safety_note = (
@@ -1236,7 +1286,9 @@ class MaintenanceCommands(BotCommands):
                     if safety_path
                     else ""
                 )
-                await ctx.send(f"Recovery failed partway ({e}).{safety_note}")
+                await ctx.send(
+                    f"Recovery failed and was rolled back ({e}).{safety_note}"
+                )
                 return
 
             clear_season_coin_state(self.bot)

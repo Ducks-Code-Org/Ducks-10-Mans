@@ -35,14 +35,16 @@ _ESCROW_DOC_ID = "open_bets"
 
 
 def persist_escrow(bot) -> None:
-    """Mirror the current bet session + doubledown set into Mongo.
+    """Mirror in-memory coin state (bet session, doubledowns, map-override
+    escalation chain) into Mongo.
 
     Best-effort: persistence failures are logged and swallowed so a transient
-    DB hiccup can never break an in-progress bet or doubledown.
+    DB hiccup can never break an in-progress bet, doubledown, or override.
     """
     session = getattr(bot, "bet_session", None)
+    chain = getattr(bot, "map_override_chain", [])
     try:
-        if session is None:
+        if session is None and not chain:
             coin_escrow.update_one({"_id": _ESCROW_DOC_ID}, {"$unset": {"data": ""}})
             return
         coin_escrow.update_one(
@@ -50,9 +52,10 @@ def persist_escrow(bot) -> None:
             {
                 "$set": {
                     "data": {
-                        "bets": session["bets"],
-                        "open": bool(session.get("open")),
+                        "bets": session["bets"] if session else {},
+                        "open": bool(session.get("open")) if session else False,
                         "double_downs": sorted(getattr(bot, "double_downs", set())),
+                        "map_overrides": [dict(entry) for entry in chain],
                     }
                 }
             },
@@ -75,20 +78,32 @@ def clear_escrow_journal(bot) -> None:
         log.warning("Could not clear Duck Coin escrow journal: %s", e)
 
 
-def recover_orphaned_escrow(bot) -> None:
-    """Refund bets and doubledowns journaled by a previous bot run.
+# Process-wide flag: recovery must run once per process, not once per
+# on_ready (which Discord fires again after every gateway reconnect).
+_escrow_recovered = False
 
-    Called once at startup: if the process died while coins were escrowed
-    (open bet window) or doubled down, those coins are returned here —
-    settlement can never happen after a restart, so refund is the only
-    fair outcome. No-op when there is no journal (fresh database).
+
+def recover_orphaned_escrow(bot) -> None:
+    """Refund bets, doubledowns, and map overrides journaled by a previous
+    bot run.
+
+    Runs exactly once per process, on startup: if the process died while
+    coins were escrowed (open bet window), doubled down, or spent on a map
+    override, those coins are returned here — settlement/reporting can never
+    happen after a restart, so refund is the only fair outcome. No-op when
+    there is no journal (fresh database) or when already recovered (gateway
+    reconnects re-fire on_ready).
     """
+    global _escrow_recovered
+    if _escrow_recovered:
+        return
     try:
         doc = coin_escrow.find_one({"_id": _ESCROW_DOC_ID})
     except Exception as e:
         log.warning("Could not read Duck Coin escrow journal: %s", e)
         return
     if not doc or "data" not in doc:
+        _escrow_recovered = True
         return
     data = doc["data"] or {}
     bets = data.get("bets") or {}
@@ -101,18 +116,32 @@ def recover_orphaned_escrow(bot) -> None:
     for pid in data.get("double_downs") or []:
         add_coins(pid, DOUBLEDOWN_COST)
         dd_refunded += DOUBLEDOWN_COST
+    # Refund the full map-override escalation chain to each payer (issue #195).
+    overrides_refunded = 0
+    for entry in data.get("map_overrides") or []:
+        try:
+            pid = str(entry["payer"])
+            amount = int(entry["amount"])
+        except (KeyError, TypeError, ValueError):
+            log.warning("Skipping malformed map-override journal entry: %r", entry)
+            continue
+        add_coins(pid, amount)
+        overrides_refunded += amount
     try:
         coin_escrow.update_one({"_id": _ESCROW_DOC_ID}, {"$unset": {"data": ""}})
     except Exception as e:
         log.warning("Could not clear Duck Coin escrow journal after recovery: %s", e)
-    total = refunded + dd_refunded
+    _escrow_recovered = True
+    total = refunded + dd_refunded + overrides_refunded
     if total:
         log.warning(
             "Recovered %s escrowed Duck Coin(s) from before the last restart "
-            "(%s bet coin(s), %s doubledown coin(s)); refunded to players",
+            "(%s bet coin(s), %s doubledown coin(s), %s map-override coin(s)); "
+            "refunded to players",
             total,
             refunded,
             dd_refunded,
+            overrides_refunded,
         )
 
 
@@ -176,6 +205,7 @@ def clear_season_coin_state(bot) -> None:
     bot.map_override_last = 0
     bot.map_override_last_by = None
     bot.map_override_deadline = None
+    bot.map_override_chain = []
     try:
         coin_escrow.update_one({"_id": _ESCROW_DOC_ID}, {"$unset": {"data": ""}})
     except Exception as e:
@@ -275,6 +305,11 @@ async def on_teams_announced(bot, ctx) -> None:
     """
     if not duck_coins_enabled() or ctx is None:
         return
+    # Never clobber a live escrow: opening a new window over an unfinished
+    # one would silently void the previous bets' coins. Refund them first.
+    if getattr(bot, "bet_session", None):
+        log.warning("Bet window reopened with a live session; refunding it first")
+        refund_open_bets(bot)
     log.info("Opening %ss Duck Coin bet window", BET_WINDOW_SECONDS)
     session = {
         "open": True,
@@ -347,18 +382,22 @@ def place_bet(bot, user_id: str, side: str, amount: int) -> str:
 
 
 def refund_open_bets(bot) -> None:
-    """Return escrowed bets (e.g. on cancel); safe to call at any time."""
+    """Return escrowed bets (e.g. on cancel); safe to call at any time.
+
+    Always clears the crash-safety journal even when there is no session:
+    after a match is reported/settled, a stale journal would otherwise
+    refund bets or overrides from a match that actually happened.
+    """
     session = getattr(bot, "bet_session", None)
-    if not session:
-        return
-    if session.get("task"):
-        session["task"].cancel()
-    refunded = 0
-    for side_bets in session["bets"].values():
-        for pid, amount in side_bets.items():
-            add_coins(pid, amount)
-            refunded += 1
-    log.info("Refunded %s open bet(s)", refunded)
+    if session:
+        if session.get("task"):
+            session["task"].cancel()
+        refunded = 0
+        for side_bets in session["bets"].values():
+            for pid, amount in side_bets.items():
+                add_coins(pid, amount)
+                refunded += 1
+        log.info("Refunded %s open bet(s)", refunded)
     clear_escrow_journal(bot)
 
 
@@ -392,42 +431,21 @@ def refund_match_coins(bot) -> int:
         total += DOUBLEDOWN_COST
     bot.double_downs = set()
 
-    # 3) Map override wagers: the escalation chain is the total amount
-    # currently at stake, paid by successive overriders. Refund the last
-    # wager's amount plus every prior override in the chain — tracked here
-    # as map_override_last (the current standing wager). Each override
-    # player paid at least their own wager; the chain refund must walk
-    # every step, but bot state only retains the last wager, so refund the
-    # full chain total = sum 3..N which equals N*(N+1)/2 - 1 for default
-    # escalation... Instead of reconstructing history, refund each known
-    # step: the journal is only bets/dd, so overrides are tracked with
-    # their payer in map_override_last_by plus the per-step amounts are
-    # not kept. The pragmatic approach: refund map_override_last to the
-    # last overrider, which is the only coin still "in play" — earlier
-    # overriders were paid nothing but their coins were already committed
-    # to the map that no longer exists, so refund their implied chain as
-    # well by walking from SETMAP_BASE_COST to the last amount.
-    last = getattr(bot, "map_override_last", 0) or 0
-    by = getattr(bot, "map_override_last_by", None)
-    if last and by:
-        # Escalating chain: the first override cost SETMAP_BASE_COST, each
-        # later one one coin more, up to `last`. Refund each step to the
-        # chain's final overrider proxy is wrong; instead refund the whole
-        # chain total to the players via the journal of payers — but history
-        # isn't kept, so refund the full chain to the last overrider, who
-        # effectively owns the current override.
-        add_coins(by, last)
-        total += last
+    # 3) Map override wagers: refund every step of the escalation chain to
+    # the player who paid it. Losing an outbid wager is NOT refunded here
+    # (that's the point of an outbid); only a cancelled match returns coins.
+    for entry in getattr(bot, "map_override_chain", []):
+        pid = entry.get("payer")
+        amount = int(entry.get("amount", 0))
+        if pid and amount:
+            add_coins(pid, amount)
+            total += amount
     bot.map_override_last = 0
     bot.map_override_last_by = None
     bot.map_override_deadline = None
+    bot.map_override_chain = []
 
-    # Journal covers bets + doubledowns; overrides aren't journaled, so just
-    # clear whatever remains.
-    try:
-        coin_escrow.update_one({"_id": _ESCROW_DOC_ID}, {"$unset": {"data": ""}})
-    except Exception as e:
-        log.warning("Could not clear escrow journal on cancel: %s", e)
+    clear_escrow_journal(bot)
 
     if total:
         log.info("Refunded %s Duck Coin(s) for a cancelled match", total)
@@ -582,6 +600,11 @@ async def setmap_override(bot, user_id: str, map_name: str, amount: int = None) 
     bot.selected_map = canonical
     bot.map_override_last = cost
     bot.map_override_last_by = str(user_id)
+    # Journal each step of the escalation chain so a cancel or crash can
+    # refund every payer (issue #195). Outbid wagers stay journaled too:
+    # they are only refunded on a cancelled match, never when simply outbid.
+    bot.map_override_chain.append({"payer": str(user_id), "amount": cost})
+    persist_escrow(bot)
     e = duck_emote(bot)
     log.info("%s paid %s coins to override the map to %s", user_id, cost, canonical)
     if _in_grace_window(bot):

@@ -238,7 +238,70 @@ def demo():
         "clear_season_coin_state(self.bot)" in resetseason_src
     ), "!resetseason must drop per-match coin state"
 
+    # --- !setconfig validation --------------------------------------------
+    # A value like "100%" poisons configparser on the next read (interpolation
+    # error), so only strict booleans may be written and the whole file must
+    # round-trip before the write is accepted.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ini = os.path.join(tmp, "bot.ini")
+        _write_test_ini(ini)
+        mc.set_ini_value(ini, "features", "duck_coins", "false")
+        probe = mc.configparser.ConfigParser()
+        probe.read(ini)
+        assert probe["features"].getboolean("duck_coins") is False
+        assert "# comment" in open(ini, encoding="utf-8").read(), "comments preserved"
+        # A value that would break parsing is rejected by the command before
+        # it is left on disk: simulate the command's validate-then-restore.
+        before = open(ini, encoding="utf-8").read()
+        mc.set_ini_value(ini, "features", "duck_coins", "100%")
+        try:
+            bad = mc.configparser.ConfigParser()
+            bad.read(ini)
+            bad["features"].getboolean("duck_coins")
+            broke = False
+        except Exception:
+            broke = True
+        assert broke, "the probe must detect a poisoned value"
+        open(ini, "w", encoding="utf-8").write(before)
+        good = mc.configparser.ConfigParser()
+        good.read(ini)
+        assert good["features"].getboolean("duck_coins") is False, "file restored"
+
+    # globals.feature_enabled must survive a poisoned value rather than
+    # raising configparser.InterpolationSyntaxError at every call site.
+    import globals as globals_mod
+
+    class _Poisoned:
+        def getboolean(self, name):
+            raise mc.configparser.InterpolationSyntaxError(
+                "duck_coins", "features", "100%"
+            )
+
+    original_features = globals_mod.BOT_FEATURES
+    globals_mod.BOT_FEATURES = _Poisoned()
+    try:
+        assert globals_mod.feature_enabled("duck_coins", default=True) is True
+        assert globals_mod.feature_enabled("voice_presence", default=False) is False
+    finally:
+        globals_mod.BOT_FEATURES = original_features
+
+    # --- !recoverseason is transactional (rollback on failure) -------------
+    # A mid-recovery exception must not leave any collection half-wiped.
+    recoverseason_src = resetseason_src.split("async def recoverseason", 1)[1]
+    assert "start_session" in recoverseason_src, "recoverseason must use a session"
+    assert (
+        "start_transaction" in recoverseason_src
+    ), "recoverseason must be transactional"
+    assert "rolled back" in recoverseason_src, "failure reply must mention rollback"
+
     print("all maintenance_commands self-checks passed")
+
+
+def _write_test_ini(path: str) -> None:
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("[features]\n# comment\nduck_coins = true\n")
 
 
 if __name__ == "__main__":

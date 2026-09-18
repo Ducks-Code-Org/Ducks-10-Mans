@@ -24,7 +24,7 @@ _database_stub.mmr_collection = types.SimpleNamespace(
     find=lambda *a, **k: [],
 )
 _database_stub.seasons = types.SimpleNamespace()
-_database_stub.all_matches = types.SimpleNamespace()
+_database_stub.all_matches = types.SimpleNamespace(find_one=lambda *a, **k: None)
 _database_stub.recent_queue = types.SimpleNamespace(
     update_one=lambda *a, **k: None,
 )
@@ -130,10 +130,15 @@ def make_reporter(bot, *, fetch_result="raise", data_result=None):
     report_mod.get_recent_matches_async = _fake_fetch
     report_mod.aiohttp.ClientSession = _FakeSession
 
-    # DB stubs: the reporter's Riot account is linked.
-    report_mod.users.find_one = lambda q: (
-        {"name": "reporter", "tag": "tag"} if q.get("discord_id") == "999" else None
-    )
+    # DB stubs: the reporter and both queue players are linked. Queue players
+    # resolve to their Discord ids by puuid so the report flow gets far enough
+    # to write stats (used by the post-commit failure check).
+    _linked = {
+        "999": {"discord_id": "999", "name": "reporter", "tag": "tag"},
+        "1": {"discord_id": "1", "name": "p1", "tag": "t", "puuid": "a"},
+        "2": {"discord_id": "2", "name": "p2", "tag": "t", "puuid": "b"},
+    }
+    report_mod.users.find_one = lambda q: _linked.get(str(q.get("discord_id")))
     return cog
 
 
@@ -219,11 +224,16 @@ def demo():
         # First reporter takes the claim and fails on the API.
         async with bot.report_lock:
             bot.match_not_reported = False
-        claim_consumed = False
+        committed = False
+
+        def _mark_commit():
+            nonlocal committed
+            committed = True
+
         try:
-            claim_consumed = await cog._report_claimed(FakeCtx(), "r", "t")
+            await cog._report_claimed(FakeCtx(), "r", "t", on_commit=_mark_commit)
         finally:
-            if not claim_consumed:
+            if not committed:
                 bot.match_not_reported = True
         assert bot.match_not_reported is True, "claim released after failure"
 
@@ -233,6 +243,78 @@ def demo():
         assert bot.match_not_reported is True, "retry also released (API still 404)"
 
     asyncio.run(_claim_then_fail_then_retry())
+
+    # --- A failure AFTER the first DB write must NOT release the claim -----
+    # Once stats/coins are applied, releasing the claim would let a retry
+    # double-apply them. on_commit fires just before the write loop, so a
+    # post-commit exception must leave match_not_reported consumed.
+    bot = FakeBot()
+    cog = make_reporter(
+        bot,
+        fetch_result="ok",
+        data_result={
+            "data": [
+                {
+                    "metadata": {"map": "Ascent", "rounds_played": 17},
+                    "players": [
+                        {"name": "p1", "tag": "t", "puuid": "a", "team_id": "Red"},
+                        {"name": "p2", "tag": "t", "puuid": "b", "team_id": "Blue"},
+                    ],
+                    "teams": [
+                        {"team_id": "Red", "won": True, "rounds_won": 13},
+                        {"team_id": "Blue", "won": False, "rounds_won": 4},
+                    ],
+                    "rounds": [],
+                }
+            ]
+        },
+    )
+    # Make the first DB write raise, after on_commit fires.
+    _orig_update_stats = report_mod.update_stats
+
+    def _boom(*a, **k):
+        raise RuntimeError("disk full")
+
+    report_mod.update_stats = _boom
+    try:
+        ctx = FakeCtx()
+        try:
+            asyncio.run(cog.report(ctx))
+        except RuntimeError as e:
+            assert "disk full" in str(e)  # surfaced by on_command_error in prod
+    finally:
+        report_mod.update_stats = _orig_update_stats
+    assert bot.match_not_reported is False, (
+        "a failure after the first write must leave the claim consumed so a "
+        "retry cannot double-apply MMR/coins"
+    )
+
+    # --- Already-recorded match id must be refused (idempotency) -----------
+    bot = FakeBot()
+    cog = make_reporter(
+        bot,
+        fetch_result="ok",
+        data_result={
+            "data": [
+                {
+                    "metadata": {
+                        "map": "Ascent",
+                        "rounds_played": 17,
+                        "match_id": "already-seen",
+                    },
+                    "players": [],
+                    "teams": [],
+                }
+            ]
+        },
+    )
+    report_mod.all_matches.find_one = lambda q: (
+        {"_id": "x"} if q.get("metadata.match_id") == "already-seen" else None
+    )
+    ctx = FakeCtx()
+    asyncio.run(cog.report(ctx))
+    assert any("already been recorded" in str(m) for m in ctx.sent), ctx.sent
+    assert bot.match_not_reported is True, "a duplicate report releases the claim"
 
     # --- Stale match resources are cleared by a new !signup ----------------
     # After the incident: the failed report left match_channel/match_role

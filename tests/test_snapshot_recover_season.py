@@ -28,7 +28,58 @@ _database_stub.recent_queue = types.SimpleNamespace()
 _database_stub.coin_escrow = types.SimpleNamespace(
     update_one=lambda *a, **k: None, find_one=lambda *a, **k: None
 )
-_database_stub.client = types.SimpleNamespace()
+
+
+class _FakeTransaction:
+    """Restores every collection's docs when the session exits with error.
+
+    Mirrors MongoDB's abort semantics so a mid-recovery failure leaves the
+    collections exactly as they were (the property !recoverseason relies on).
+    """
+
+    def __init__(self, collections):
+        self._collections = collections
+        self._snapshots = None
+
+    def __enter__(self):
+        self._snapshots = {
+            name: [dict(d) for d in coll.docs]
+            for name, coll in self._collections.items()
+        }
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is not None:
+            for name, coll in self._collections.items():
+                coll.docs[:] = [dict(d) for d in self._snapshots[name]]
+        return False
+
+
+class _FakeSession:
+    def __init__(self, collections):
+        self._collections = collections
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def start_transaction(self):
+        return _FakeTransaction(self._collections)
+
+
+# The test swaps mc.all_matches / mc.mmr_collection / mc.seasons for its own
+# FakeCollections, so start_session must resolve them lazily at call time.
+_database_stub.client = types.SimpleNamespace(
+    start_session=lambda: _FakeSession(
+        {
+            "matches": mc.all_matches,
+            "mmr_data": mc.mmr_collection,
+            "seasons": mc.seasons,
+        }
+    )
+)
 sys.modules["database"] = _database_stub
 
 
@@ -89,16 +140,16 @@ class FakeCollection:
                 return d
         return None
 
-    def delete_many(self, f=None):
+    def delete_many(self, f=None, session=None):
         before = len(self.docs)
         self.docs = [d for d in self.docs if not self._match(d, f or {})]
         return types.SimpleNamespace(deleted_count=before - len(self.docs))
 
-    def insert_one(self, doc):
+    def insert_one(self, doc, session=None):
         self.docs.append(doc)
         return types.SimpleNamespace(inserted_id=doc.get("_id"))
 
-    def replace_one(self, f, doc, upsert=False):
+    def replace_one(self, f, doc, upsert=False, session=None):
         for i, d in enumerate(self.docs):
             if self._match(d, f):
                 self.docs[i] = doc
