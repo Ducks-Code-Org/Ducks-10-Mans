@@ -19,7 +19,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    import subprocess
+    import sys
+
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "numpy"])
+    import numpy as np
 
 # Closed-form parsimonious formula (robust fallback when the timeline is missing)
 W_KDR = 1.02754
