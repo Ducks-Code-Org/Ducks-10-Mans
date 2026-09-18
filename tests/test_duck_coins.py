@@ -70,7 +70,6 @@ from game.duck_coins import (
     doubledown,
     doubledown_multiplier_of,
     duck_emote,
-    persist_escrow,
     place_bet,
     refund_open_bets,
     setmap_override,

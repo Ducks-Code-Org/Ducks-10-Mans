@@ -281,7 +281,6 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.signup")
         await self.load_extension("commands.stats")
         self.tree.on_error = self._on_app_command_error
-        self.tree.on_error = self._on_app_command_error
         await self.tree.sync()
         log.info("Bot is ready and cogs are loaded.")
 
