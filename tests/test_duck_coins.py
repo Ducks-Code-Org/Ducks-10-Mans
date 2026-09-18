@@ -386,7 +386,7 @@ def demo():
         os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "commands",
-            "duck_commands.py",
+            "coin_commands.py",
         )
     ).read()
     setmap_body = command_src.split("async def setmap_command")[1].split(

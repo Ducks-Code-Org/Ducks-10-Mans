@@ -1,20 +1,65 @@
-"""Prefix commands for Duck Coins: betting, doubledown, and map overrides (issue #34)."""
+"""Prefix commands for Duck Coins (issue #34, #193): balance, betting,
+doubledown, and map overrides."""
 
 import logging
 
 from discord.ext import commands
 
 from commands import BotCommands
-from game.duck_coins import command_available, doubledown, place_bet, setmap_override
+from commands.stats import _resolve_player
+from database import users
+from game.duck_coins import (
+    coins_of,
+    command_available,
+    duck_coins_enabled,
+    duck_emote,
+    doubledown,
+    place_bet,
+    setmap_override,
+)
 
 log = logging.getLogger(__name__)
 
 
 async def setup(bot):
-    await bot.add_cog(DuckCommands(bot))
+    await bot.add_cog(CoinCommands(bot))
 
 
-class DuckCommands(BotCommands):
+class CoinCommands(BotCommands):
+    # ------------------------------------------------------------------
+    # !coins (from commands/coins.py, issue #193)
+    # ------------------------------------------------------------------
+    @commands.command(name="coins")
+    async def coins(self, ctx, *, target: str = None):
+        """Show a player's Duck Coin balance. Optional: Riot ID or @mention."""
+        if not duck_coins_enabled():
+            return
+
+        player_id = _resolve_player(self.bot, ctx, target)
+        if player_id is None:
+            await ctx.send(
+                "Could not find that player. Use a Riot ID (`Name#Tag`) or @mention."
+            )
+            return
+
+        user_data = users.find_one({"discord_id": str(player_id)})
+        display_name = (
+            f"{user_data.get('name', '?')}#{user_data.get('tag', '?')}"
+            if user_data
+            else ctx.author.name
+        )
+
+        coins = coins_of(player_id)
+        emote = duck_emote(self.bot)
+        await ctx.reply(
+            f"**{display_name}** has **{coins}** Duck Coins {emote}",
+            mention_author=False,
+        )
+        log.info("Coins lookup for %s by %s: %s coins", player_id, ctx.author, coins)
+
+    # ------------------------------------------------------------------
+    # Betting / doubledown / map overrides (issue #34)
+    # ------------------------------------------------------------------
     @commands.group(name="bet", invoke_without_command=True)
     async def bet(self, ctx: commands.Context):
         """!bet attackers|defenders <amount> — bet Duck Coins on the match."""

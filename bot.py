@@ -269,7 +269,8 @@ class CustomBot(commands.Bot):
 
     async def setup_hook(self):
         await self.load_extension("commands.admin_commands")
-        await self.load_extension("commands.coins")
+        await self.load_extension("commands.bug")
+        await self.load_extension("commands.coin_commands")
         await self.load_extension("commands.help")
         await self.load_extension("commands.interest")
         await self.load_extension("commands.leaderboard")
@@ -279,8 +280,6 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.report")
         await self.load_extension("commands.signup")
         await self.load_extension("commands.stats")
-        await self.load_extension("commands.bug")
-        await self.load_extension("commands.duck_commands")
         self.tree.on_error = self._on_app_command_error
         self.tree.on_error = self._on_app_command_error
         await self.tree.sync()
