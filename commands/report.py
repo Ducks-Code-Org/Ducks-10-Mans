@@ -23,7 +23,7 @@ from game.stats_helper import update_stats
 from globals import feature_enabled
 from services.riot_api import RiotApiInconclusive, get_recent_matches_async
 from services.vlr_rating import estimate_ratings_v4
-from tracker_links import display_name_for, tracker_link
+from tracker_links import tracker_link
 
 log = logging.getLogger(__name__)
 
@@ -678,14 +678,14 @@ class ReportCommand(BotCommands):
                 old = pre_update_mmr.get(pid, {}).get("mmr", 0)
                 new = self.bot.player_mmr.get(pid, {}).get("mmr", 0)
                 delta = new - old
-                u = users.find_one({"discord_id": pid})
-                # Linked players show their Riot ID; unlinked players (dead
-                # Riot account, stats preserved) show their Discord name.
-                name = display_name_for(u, guild=ctx.guild, discord_id=pid)
                 rating = player_ratings.get(pid)
                 rating_part = f"({rating:.2f})" if rating is not None else ""
                 sign = "+" if delta >= 0 else ""
-                entries.append(f"{name}{rating_part}: {sign}{delta}")
+                # Mention by Discord ID (<@id>) rather than the Riot ID: the
+                # summary posts in #10-mans, where a live mention is the
+                # clearest way to see who gained/lost MMR (and it survives
+                # Riot renames and purged links).
+                entries.append(f"<@{pid}>{rating_part}: {sign}{delta}")
             mmr_lines.append((f"{label} ({rounds})", "\n".join(entries)))
 
         results_embed = discord.Embed(
