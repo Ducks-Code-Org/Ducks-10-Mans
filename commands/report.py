@@ -655,10 +655,13 @@ class ReportCommand(BotCommands):
         winner_side = (
             "attackers" if winning_match_team_ids == team1_ids_set else "defenders"
         )
+        bet_settlement_embed = None
         if duck_coins_enabled():
             award_match_coins(playing_team_ids)
             try:
-                await settle_bets(self.bot, ctx.channel, winner_side)
+                # Pays out immediately; returns the summary embed to post
+                # after the match results embed (kept for display order).
+                bet_settlement_embed = await settle_bets(self.bot, winner_side)
             except Exception as e:
                 log.error("Bet settlement failed: %s", e, exc_info=e)
 
@@ -705,6 +708,18 @@ class ReportCommand(BotCommands):
             await results_channel.send(embed=results_embed)
         else:
             await ctx.send(embed=results_embed)
+
+        # Bet settlement summary right after the match results embed, so
+        # winnings/losses read as part of the same match wrap-up. Coins were
+        # already paid during settlement; this post is display only.
+        if bet_settlement_embed is not None:
+            try:
+                if results_channel:
+                    await results_channel.send(embed=bet_settlement_embed)
+                else:
+                    await ctx.send(embed=bet_settlement_embed)
+            except discord.HTTPException:
+                log.warning("Could not post the bet settlement summary")
 
         self.bot.save_mmr_data()
         log.info("MMR data saved")

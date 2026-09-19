@@ -205,21 +205,54 @@ def demo():
 
     # Parimutuel payout: attackers pool 4 (3+1) vs defenders 1 → total 5.
     # Payouts: 3*5//4=3 for "5", 1*5//4=1 for "7"; dust stays in the pool.
+    # (A small losing pool means break-even nets here: 3-3=0, 1-1=0.)
     session["bets"]["attackers"]["5"] = 3
     session["bets"]["attackers"]["7"] = 1
     session["bets"]["defenders"]["6"] = 1
-    bot.channel = FakeChannel()
-    asyncio.run(duck_coins.settle_bets(bot, bot.channel, "attackers"))
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
     assert coins_of("5") == 6, f"bettor payout wrong: {coins_of('5')}"
     assert coins_of("7") == 1, f"second bettor payout wrong: {coins_of('7')}"
     assert coins_of("6") == 0, "losing side must not be paid"
     assert bot.bet_session is None
+    # The summary embed must list winners AND losers with net results.
+    assert embed is not None, "settlement must produce a summary embed"
+    assert "Winners" in embed.fields[0]["name"], embed.fields
+    assert "Lost" in embed.fields[1]["name"], embed.fields
+    assert "<@5>" in embed.fields[0]["value"], embed.fields
+    assert "<@7>" in embed.fields[0]["value"], embed.fields
+    assert "<@6>" in embed.fields[1]["value"], embed.fields
+    assert "bet 3" in embed.fields[0]["value"], embed.fields
+    assert "(+0)" in embed.fields[0]["value"], embed.fields
+    assert "lost 1" in embed.fields[1]["value"], embed.fields
+    assert "Attackers won" in embed.title, embed.title
+
+    # A bigger losing pool yields a real profit: winners pool 4, losers 6,
+    # total 10 → payout 2x per coin (3*10//4=7, 1*10//4=2).
+    DB["5"]["duck_coins"] = 0
+    DB["7"]["duck_coins"] = 0
+    session = open_window(bot)
+    session["bets"]["attackers"]["5"] = 3
+    session["bets"]["attackers"]["7"] = 1
+    session["bets"]["defenders"]["6"] = 6
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
+    assert coins_of("5") == 7, f"2x payout wrong: {coins_of('5')}"
+    assert coins_of("7") == 2, f"2x payout wrong: {coins_of('7')}"
+    assert "(+4)" in embed.fields[0]["value"], embed.fields
+    assert "(+1)" in embed.fields[0]["value"], embed.fields
+    assert "lost 6" in embed.fields[1]["value"], embed.fields
+
+    # Nobody bet at all: no embed, nothing to post.
+    open_window(bot)
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
+    assert embed is None, "empty settlement must skip the summary"
+    assert bot.bet_session is None
 
     # Refund on cancel returns escrow
+    DB["5"]["duck_coins"] = 4  # running balance reset for this scenario
     session = open_window(bot)
     place_bet(bot, "5", "defenders", 2)
     refund_open_bets(bot)
-    assert coins_of("5") == 6, f"escrow not refunded: {coins_of('5')}"
+    assert coins_of("5") == 4, f"escrow not refunded: {coins_of('5')}"
     assert bot.bet_session is None
 
     # Doubledown: cost, window gate, duplicate gate, non-player gate
@@ -500,8 +533,8 @@ def demo():
     session = open_window(bot)
     place_bet(bot, "9", "attackers", 2)
     DB["9"]["duck_coins"] = 8
-    bot.channel = FakeChannel()
-    asyncio.run(duck_coins.settle_bets(bot, bot.channel, "attackers"))
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
+    assert embed is not None, "a lone winner must still get a summary embed"
     assert coins_of("9") == 10, "settlement must pay the winning bettor"
     assert "data" not in _ESCROW_DOCS.get(
         "open_bets", {}

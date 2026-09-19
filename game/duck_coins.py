@@ -661,38 +661,82 @@ async def announce_cancellation_async(bot, guild) -> None:
         pass
 
 
-async def settle_bets(bot, channel, winner: str) -> None:
-    """Pay out the parimutuel pool to bettors on the winning team."""
+async def settle_bets(bot, winner: str):
+    """Pay out the parimutuel pool; return the settlement summary embed.
+
+    The embed summarizes EVERY bettor — winners with their payout and net
+    gain, losers with their lost stake — and is posted by the caller
+    (commands/report.py) right after the match results embed, so the
+    wrap-up reads as one flow. Coins are credited here; posting the embed
+    is display-only. Returns None when there is no bet session or nobody
+    bet at all, so the caller skips posting an empty summary.
+    """
     session = getattr(bot, "bet_session", None)
     if not session:
-        return
+        return None
     _cancel_window_tasks(session)
     bets = session["bets"]
     winners = bets.get(winner, {})
     loser_side = "defenders" if winner == "attackers" else "attackers"
+    losers = bets.get(loser_side, {})
     pool = sum(winners.values())
-    total = pool + sum(bets[loser_side].values())
+    total = pool + sum(losers.values())
     e = duck_emote(bot)
-    if not winners:
-        log.info("No winning bets on %s; %s coin pool unclaimed", winner, total)
-        await channel.send(
-            f"No one bet on {winner} — the {total} {e} pool goes unclaimed."
-        )
+
+    if not winners and not losers:
+        # Nobody bet at all — nothing to summarize or post.
+        log.info("Duck Coin bet window closed with no bets; nothing to settle")
         clear_escrow_journal(bot)
-        return
-    lines = []
+        return None
+
+    winner_rows = []
     for pid, amount in sorted(winners.items(), key=lambda item: -item[1]):
         payout = amount * total // pool
         add_coins(pid, payout)
-        lines.append(f"<@{pid}> bet {amount} → wins **{payout}** {e}")
-    log.info("Settled %s bets on %s (%s coin pool)", len(winners), winner, total)
+        winner_rows.append((pid, amount, payout, payout - amount))
+    if winners:
+        log.info("Settled %s bets on %s (%s coin pool)", len(winners), winner, total)
+    else:
+        log.info("No winning bets on %s; %s coin pool unclaimed", winner, total)
     clear_escrow_journal(bot)
+
+    parts = [f"{total} {e} total pool"]
+    match_name = getattr(bot, "match_name", "")
+    if match_name:
+        parts.insert(0, f"`{match_name}`")
+    if not winners:
+        parts.append(
+            f"No one bet on {_side_name(winner).lower()} — the {total} {e} "
+            "pool goes unclaimed."
+        )
+
     embed = discord.Embed(
-        title=f"{_side_name(winner)} won! ({total} {e} pool)",
-        description="\n".join(lines),
+        title=f"{e} Betting Results — {_side_name(winner)} won!",
+        description=" — ".join(parts),
         color=discord.Color.gold(),
     )
-    await channel.send(embed=embed)
+    if winner_rows:
+        winners_text = "\n".join(
+            f"<@{pid}> bet {amount} {e} → won **{payout}** {e} (+{net})"
+            for pid, amount, payout, net in winner_rows
+        )
+        embed.add_field(
+            name=f"✅ Winners ({len(winner_rows)})",
+            value=winners_text,
+            inline=False,
+        )
+    if losers:
+        losers_text = "\n".join(
+            f"<@{pid}> bet {amount} {e} → lost {amount} {e}"
+            for pid, amount in sorted(losers.items(), key=lambda item: -item[1])
+        )
+        embed.add_field(
+            name=f"❌ Lost ({len(losers)})", value=losers_text, inline=False
+        )
+    embed.set_footer(
+        text="Parimutuel payouts — each winner's share scales with their stake"
+    )
+    return embed
 
 
 def doubledown(bot, user_id: str) -> str:
