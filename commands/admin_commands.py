@@ -1,24 +1,40 @@
 "Admin commands for managing the bot and server."
 
+import asyncio
+import logging
+
 import discord
 from discord.ext import commands
 
 from commands import BotCommands
+from commands.maintenance_commands import resolve_user_arg
 from commands.report import cleanup_match_resources
+from commands.signup import cancel_background_purge
 from database import mmr_collection
-from views.signup_view import SignupView
+from game.duck_coins import (
+    announce_cancellation_async,
+    refund_match_coins,
+)
+from game.ranks import remove_all_rank_roles
+from game.recent_queue import remember_recent_queue
+from game.stats_helper import DEFAULT_MMR
 from views.mode_vote_view import ModeVoteView
-from views.captains_drafting_view import CaptainsDraftingView
+from views.signup_view import SignupView
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
+    # Shared with commands/report.py: whichever cog loads first creates it.
+    if not hasattr(bot, "report_lock"):
+        bot.report_lock = asyncio.Lock()
     await bot.add_cog(AdminCommands(bot))
 
 
 class AdminCommands(BotCommands):
     @commands.command(name="newseason")
     @commands.has_permissions(administrator=True)
-    async def new_season(self, ctx, *, no_reset: str = None):
+    async def new_season(self, ctx, *, no_reset: str | None = None):
         """
         Creates a new season, saving seasons stats, and assigning SSR rank.
         By default, resets everyone’s MMR + stats. If you pass 'noreset', it will keep stats.
@@ -33,8 +49,25 @@ class AdminCommands(BotCommands):
         winner_doc = mmr_collection.find_one(
             {"matches_played": {"$gt": 0}}, sort=[("mmr", -1)]
         )
+        if winner_doc is None:
+            await ctx.send(
+                "No player has played a match yet; there is no winner to crown."
+            )
+            return
 
         doc = self.bot.create_new_season(reset_player_stats=reset, winner=winner_doc)
+        log.info(
+            "New season %s created (reset=%s, winner=%s)",
+            doc["season_number"],
+            reset,
+            winner_doc.get("player_id"),
+        )
+
+        # Strip every rank role — fresh season means fresh ranks.
+        try:
+            await remove_all_rank_roles(ctx.guild)
+        except Exception as e:
+            log.warning("Could not remove rank roles: %s", e)
 
         # Assign SSR Rank to winner
         ssr_role = await ctx.guild.create_role(
@@ -43,7 +76,13 @@ class AdminCommands(BotCommands):
         await ctx.guild.edit_role_positions(positions={ssr_role: 5})
         await ssr_role.edit(color=discord.Color.teal())
         winner_member = ctx.guild.get_member(int(winner_doc["player_id"]))
-        await winner_member.add_roles(ssr_role)
+        if winner_member:
+            await winner_member.add_roles(ssr_role)
+        else:
+            log.warning(
+                "Winner %s is not in this guild; SSR role created but not assigned.",
+                winner_doc.get("player_id"),
+            )
 
         # Try to send to 'announcements' channel if it exists
         announcement_channel = None
@@ -54,8 +93,9 @@ class AdminCommands(BotCommands):
                     break
         message = (
             f"**<@&1311935865626431529> Season {doc['season_number']}** started.\n"
-            f"<@{winner_doc['player_id']}> has been awarded the **Season {doc['season_number'] - 1} SSR** role!\n"
-            f"{'All player MMR + stats were reset.' if reset else 'Player stats were preserved (no reset).'}"
+            f"<@{winner_doc['player_id']}> has been awarded the {ssr_role.mention} role!\n"
+            f"{'All player MMR + stats were reset.' if reset else 'Player stats were preserved (no reset).'}\n"
+            f"{'Duck Coins were reset for the new season.' if reset else 'Duck Coins were preserved (no reset).'}"
         )
         if announcement_channel:
             await announcement_channel.send(message)
@@ -66,34 +106,48 @@ class AdminCommands(BotCommands):
     @commands.has_role("Owner")
     async def initialize_rounds(self, ctx):
         result = mmr_collection.update_many({}, {"$set": {"total_rounds_played": 0}})
+        log.info(
+            "%s reset total_rounds_played for %s players",
+            ctx.author,
+            result.modified_count,
+        )
         await ctx.send(
             f"Initialized total_rounds_played for {result.modified_count} players."
         )
 
     @commands.command()
+    @commands.has_permissions(administrator=True)
     async def simulate_queue(self, ctx):
-        if self.bot.signup_view is None:
-            self.bot.signup_view = SignupView(ctx, self.bot)
+        log.info("Simulated queue started by %s", ctx.author)
+        # Start a new setup cycle: invalidate any stale views first.
+        self.bot.setup_generation += 1
+
+        # Clean up any previous signup view and start a fresh one
+        if self.bot.signup_view is not None:
+            self.bot.signup_view.cleanup()
+            self.bot.signup_view = None
+        self.bot.signup_view = SignupView(ctx, self.bot)
+
         if self.bot.signup_active:
             await ctx.send(
                 "A signup is already in progress. Resetting queue for simulation."
             )
-            self.bot.queue.clear()
+        self.bot.queue.clear()
 
         # Add 10 dummy players to the queue
         queue = [{"id": i, "name": f"Player{i}"} for i in range(1, 11)]
 
-        # Assign default MMR to the dummy players and map IDs to names
+        # Assign default MMR to the dummy players and map IDs to names.
+        # Kept in memory only: never persisted, so simulation can't pollute
+        # the real MMR database with fake players.
         for player in queue:
             if player["id"] not in self.bot.player_mmr:
                 self.bot.player_mmr[player["id"]] = {
-                    "mmr": 1000,
+                    "mmr": DEFAULT_MMR,
                     "wins": 0,
                     "losses": 0,
                 }
             self.bot.player_names[player["id"]] = player["name"]
-
-        self.bot.save_mmr_data()
 
         self.bot.signup_active = True
         await ctx.send(
@@ -102,13 +156,86 @@ class AdminCommands(BotCommands):
 
         await ctx.send("The queue is now full! Proceeding with match setup...")
 
-        mode_vote = ModeVoteView(ctx, self.bot)
+        mode_vote = ModeVoteView(ctx, self.bot, self.bot.setup_generation)
         await mode_vote.send_view()
+
+    @commands.command(name="setcaptain")
+    @commands.has_permissions(administrator=True)
+    async def setcaptain(self, ctx, slot: str = "", *, target: str = ""):
+        """Manually set a draft captain (Captains mode, before map vote ends).
+        Usage: !setcaptain <1|2> <@user|Name#Tag>
+        Valid between the mode vote picking Captains and the map vote ending:
+        assign_captains() (map vote end) skips auto-assignment only when both
+        slots are pre-filled; once selected_map exists the draft is running and
+        captains are locked in.
+        """
+        slot = (slot or "").strip()
+        target = (target or "").strip()
+        if slot not in {"1", "2"} or not target:
+            await ctx.send("Usage: `!setcaptain <1|2> <@user|Name#Tag>`")
+            return
+        if self.bot.match_ongoing or self.bot.match_not_reported:
+            await ctx.send(
+                "A match is already ongoing or awaiting report — captains are locked in."
+            )
+            return
+        if self.bot.chosen_mode != "Captains":
+            await ctx.send(
+                "Captains can only be set once the mode vote has picked Captains."
+            )
+            return
+        if self.bot.selected_map:
+            await ctx.send(
+                "The map vote already ended — the captain draft has started, "
+                "so captains can no longer be changed."
+            )
+            return
+        if not self.bot.queue:
+            await ctx.send("There is no queue to set captains from.")
+            return
+
+        pid = resolve_user_arg(target, ctx.guild)
+        if not pid:
+            await ctx.send(
+                f"Could not resolve player `{target}` — use an @mention or a linked `Name#Tag`."
+            )
+            return
+        player = next((p for p in self.bot.queue if str(p["id"]) == str(pid)), None)
+        if player is None:
+            await ctx.send("That player is not in the current queue.")
+            return
+
+        attr = "captain1" if slot == "1" else "captain2"
+        other = self.bot.captain2 if slot == "1" else self.bot.captain1
+        if other and str(other["id"]) == str(pid):
+            await ctx.send(f"**{player['name']}** is already the other captain.")
+            return
+
+        previous = getattr(self.bot, attr)
+        setattr(self.bot, attr, player)
+
+        mention = f" (<@{pid}>)" if pid.isdigit() else ""
+        replaced = f" (replacing {previous['name']})" if previous else ""
+        warn = (
+            " — set the other slot too, otherwise both captains are re-randomized"
+            " when the map vote ends."
+            if other is None
+            else ""
+        )
+        log.info("%s set %s to %s%s", ctx.author, attr, player["name"], replaced)
+        await ctx.send(
+            f"Captain {slot} set to **{player['name']}**{mention}{replaced}{warn}"
+        )
 
     # Set the bot to development mode
     @commands.command()
     @commands.has_role("blood")
     async def toggledev(self, ctx):
+        log.info(
+            "Developer mode %s by %s",
+            "disabled" if self.dev_mode else "enabled",
+            ctx.author,
+        )
         if not self.dev_mode:
             self.dev_mode = True
             await ctx.send("Developer Mode Enabled")
@@ -135,51 +262,92 @@ class AdminCommands(BotCommands):
     @commands.command()
     @commands.has_role("Owner")
     async def cancel(self, ctx):
+        # Serialize against !report: a cancel must not tear down the match
+        # channel or refund coins while a report is mid-commit (and must not
+        # refund a doubledown/map override for a match that was played).
+        async with self.bot.report_lock:
+            await self._cancel_locked(ctx)
+
+    async def _cancel_locked(self, ctx):
+        # Stop any in-flight background Riot-ID purge so it stops consuming
+        # the rate-limit budget and can't delay a follow-up !signup.
+        cancel_background_purge(self.bot)
+
+        # Handle an active signup (queue phase before the queue is full)
         if self.bot.signup_active:
+            # Invalidate in-flight setup views first so lingering vote/draft
+            # tasks see the cancellation and bail out instead of resurrecting
+            # match setup.
+            self.bot.setup_generation += 1
+
             if self.bot.signup_view:
                 self.bot.signup_view.cleanup()
                 self.bot.signup_view = None
 
-            self.bot.queue = []
+            if self.bot.queue:
+                remember_recent_queue(self.bot.queue, cancelled=True)
             self.bot.current_signup_message = None
             self.bot.signup_active = False
+            self.bot.match_not_reported = False
+            self.bot.match_ongoing = False
+            self.bot.chosen_mode = None
+            self.bot.selected_map = None
+            self.bot.captain1 = None
+            self.bot.captain2 = None
+            self.bot.team1 = []
+            self.bot.team2 = []
+            self.bot.queue.clear()
+
+            refunded = refund_match_coins(self.bot)
+            if refunded:
+                await announce_cancellation_async(self.bot, ctx.guild)
 
             await ctx.send(
                 "Canceled active signup. Feel free to start a new one with `!signup`."
             )
-            print("Cancelling signup...")
+            log.info("Cancelling signup...")
 
-            try:
-                await self.bot.match_channel.delete()
-                await self.bot.match_role.delete()
-            except discord.NotFound:
-                pass
-        elif self.bot.match_ongoing and self.bot.selected_map:
-            # Logic to cancel the current match and clear info from memory
+            await cleanup_match_resources(self.bot, cancelled=True)
+        # Handle a match that is already in progress
+        elif self.bot.match_ongoing or self.bot.selected_map:
+            self.bot.setup_generation += 1
+
             self.bot.match_not_reported = False
             self.bot.match_ongoing = False
-            await cleanup_match_resources(self.bot)
+            self.bot.chosen_mode = None
+            self.bot.selected_map = None
+            self.bot.captain1 = None
+            self.bot.captain2 = None
+            self.bot.team1 = []
+            self.bot.team2 = []
+            refunded = refund_match_coins(self.bot)
+            if refunded:
+                await announce_cancellation_async(self.bot, ctx.guild)
             await ctx.send(
                 "Cancelled active match. Feel free to start a new one with `!signup`."
             )
-            print("Cancelling active match...")
+            await cleanup_match_resources(self.bot, cancelled=True)
+            log.info("Cancelling active match...")
+        # Handle a signup whose queue already filled (match setup phase:
+        # team-mode vote, map-pool vote, map vote, or captains draft)
+        elif self.bot.match_channel:
+            self.bot.setup_generation += 1
+
+            self.bot.match_not_reported = False
+            self.bot.match_ongoing = False
+            self.bot.chosen_mode = None
+            self.bot.selected_map = None
+            self.bot.captain1 = None
+            self.bot.captain2 = None
+            self.bot.team1 = []
+            self.bot.team2 = []
+            refunded = refund_match_coins(self.bot)
+            if refunded:
+                await announce_cancellation_async(self.bot, ctx.guild)
+            await ctx.send(
+                "Cancelled match setup. Feel free to start a new one with `!signup`."
+            )
+            await cleanup_match_resources(self.bot, cancelled=True)
+            log.info("Cancelling match setup...")
         else:
             await ctx.send("No active signup or match to cancel.")
-
-    @commands.command()
-    @commands.has_role("Owner")
-    async def force_draft(self, ctx):
-        bot_queue = [
-            {"name": "Player3", "id": 1},
-            {"name": "Player4", "id": 2},
-            {"name": "Player5", "id": 3},
-            {"name": "Player6", "id": 4},
-            {"name": "Player7", "id": 5},
-            {"name": "Player8", "id": 6},
-            {"name": "Player9", "id": 7},
-            {"name": "Player10", "id": 8},
-        ]
-        for bot in bot_queue:
-            self.bot.queue.append(bot)
-        draft = CaptainsDraftingView(ctx, self.bot, True)
-        await draft.send_current_draft_view()

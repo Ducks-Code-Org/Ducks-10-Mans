@@ -1,5 +1,9 @@
+import logging
+
 import discord
 from discord.ext import commands
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
@@ -11,8 +15,10 @@ class BugCommand(commands.Cog):
     async def bug(self, ctx):
         nate_discord_id = 348901216723402753
         file_path = "assets/bug.webp"
+        log.info("Bug reported by %s", ctx.author)
         try:
             file = discord.File(file_path, filename="bug.webp")
             await ctx.send(f"<@{nate_discord_id}>", file=file)
         except Exception as e:
+            log.error("Failed to upload bug image: %s", e, exc_info=e)
             await ctx.send(f"Failed to upload image: {e}")

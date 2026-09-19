@@ -1,19 +1,32 @@
 "Report the most recent match played to update MMR and stats."
 
-from datetime import datetime, timezone
-import copy
 import asyncio
-from calendar import monthrange
+import copy
+import logging
 
-import requests
+import aiohttp
 import discord
 from discord.ext import commands
 
-from commands import BotCommands, convert_to_utc
-from database import users, mmr_collection, seasons, all_matches
-from globals import API_KEY, TIME_ZONE_CST, mock_match_data
-from stats_helper import update_stats
-from urllib.parse import quote
+from commands import BotCommands
+from database import all_matches, mmr_collection, seasons, users
+from game.duck_coins import (
+    DOUBLEDOWN_COST,
+    award_match_coins,
+    doubledown_multiplier_of,
+    duck_coins_enabled,
+    refund_open_bets,
+    settle_bets,
+)
+from game.ranks import SSR_NAME, role_mention, sync_player_rank
+from game.recent_queue import remember_recent_queue
+from game.stats_helper import update_stats
+from globals import feature_enabled
+from services.riot_api import RiotApiInconclusive, get_recent_matches_async
+from services.vlr_rating import estimate_ratings_v4
+from tracker_links import tracker_link
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
@@ -22,99 +35,113 @@ async def setup(bot):
     await bot.add_cog(ReportCommand(bot))
 
 
-async def cleanup_match_resources(bot):
+async def _delete_channel_safely(channel) -> None:
+    """Delete a channel, tolerating NotFound/Forbidden."""
+    try:
+        await channel.delete()
+    except discord.NotFound:
+        log.debug("Match channel already deleted")
+    except discord.Forbidden:
+        log.warning("Missing permissions to delete match channel")
+
+
+async def _remove_role_safely(role) -> None:
+    """Strip the role from its members, then delete it."""
+    try:
+        for member in list(role.members):
+            try:
+                await member.remove_roles(role)
+            except discord.HTTPException:
+                log.warning("Error removing role from member")
+    except discord.HTTPException:
+        log.warning("Error removing roles from members")
+    try:
+        await role.delete()
+    except discord.NotFound:
+        log.debug("Match role already deleted")
+    except discord.Forbidden:
+        log.warning("Missing permissions to delete match role")
+
+
+async def _delete_signup_message_safely(message) -> None:
+    try:
+        await message.delete()
+    except discord.NotFound:
+        pass
+
+
+async def cleanup_match_resources(bot, cancelled: bool = False):
+    """Delete the match channel/role and reset per-match state."""
     await bot.wait_until_ready()
     try:
-        if hasattr(bot, "match_channel") and bot.match_channel:
-            try:
-                await bot.match_channel.delete()
-            except discord.NotFound:
-                print("[DEBUG] Match channel already deleted")
-            except discord.Forbidden:
-                print("[DEBUG] Missing permissions to delete match channel")
-            finally:
-                bot.match_channel = None
+        if bot.queue:
+            remember_recent_queue(bot.queue, cancelled=cancelled)
+        if bot.match_channel:
+            await _delete_channel_safely(bot.match_channel)
+            bot.match_channel = None
 
-        if hasattr(bot, "match_role") and bot.match_role:
-
-            try:
-                for member in bot.match_role.members:
-                    await member.remove_roles(bot.match_role)
-            except discord.HTTPException:
-                print("[DEBUG] Error removing roles from members")
-
-            # delete the role
-            try:
-                await bot.match_role.delete()
-            except discord.NotFound:
-                print("[DEBUG] Match role already deleted")
-            except discord.Forbidden:
-                print("[DEBUG] Missing permissions to delete match role")
-            finally:
-                bot.match_role = None
+        if bot.match_role:
+            await _remove_role_safely(bot.match_role)
+            bot.match_role = None
 
         bot.match_not_reported = False
         bot.match_ongoing = False
         bot.queue.clear()
 
         if bot.current_signup_message:
-            try:
-                await bot.current_signup_message.delete()
-            except discord.NotFound:
-                pass
-            finally:
-                bot.current_signup_message = None
-
+            await _delete_signup_message_safely(bot.current_signup_message)
+            bot.current_signup_message = None
     except Exception as e:
-        print(f"[DEBUG] Error during cleanup: {str(e)}")
+        log.error("Error during cleanup: %s", e, exc_info=e)
+
+
+async def grant_season_roles(guild, players) -> None:
+    """Give every player the persistent 'Season-#' role for the current season.
+
+    Gated by the `season_role` flag in bot.ini's [features] section.
+    """
+    if not feature_enabled("season_role") or guild is None or not players:
+        return
+
+    season_doc = seasons.find_one({"_id": "current"})
+    try:
+        season_number = int((season_doc or {}).get("season_number", 0))
+    except (TypeError, ValueError):
+        log.warning("Invalid season_number stored; skipping season role grant")
+        return
+    if season_number < 0:
+        return
+
+    role_name = f"Season-{season_number}"
+    season_role = discord.utils.get(guild.roles, name=role_name)
+    if season_role is None:
         try:
-            if hasattr(bot, "match_channel") and bot.match_channel:
-                try:
-                    await bot.match_channel.delete()
-                except discord.NotFound:
-                    print("[DEBUG] Match channel already deleted")
-                except discord.Forbidden:
-                    print("[DEBUG] Missing permissions to delete match channel")
-                finally:
-                    bot.match_channel = None
+            season_role = await guild.create_role(name=role_name)
+        except discord.Forbidden:
+            log.warning("Missing permissions to create the season role")
+            return
 
-            if hasattr(bot, "match_role") and bot.match_role:
-
-                try:
-                    for member in bot.match_role.members:
-                        await member.remove_roles(bot.match_role)
-                except discord.HTTPException:
-                    print("[DEBUG] Error removing roles from members")
-
-                # delete the role
-                try:
-                    await bot.match_role.delete()
-                except discord.NotFound:
-                    print("[DEBUG] Match role already deleted")
-                except discord.Forbidden:
-                    print("[DEBUG] Missing permissions to delete match role")
-                finally:
-                    bot.match_role = None
-
-            bot.match_not_reported = False
-            bot.match_ongoing = False
-            bot.queue.clear()
-
-            if bot.current_signup_message:
-                try:
-                    await bot.current_signup_message.delete()
-                except discord.NotFound:
-                    pass
-                finally:
-                    bot.current_signup_message = None
-
-        except Exception as e:
-            print(f"[DEBUG] Error during cleanup: {str(e)}")
+    for player in players:
+        try:
+            player_id = int(player["id"])
+            member = guild.get_member(player_id) or await guild.fetch_member(player_id)
+        except (KeyError, TypeError, ValueError):
+            log.warning("Skipping player with invalid id: %r", player)
+            continue
+        except discord.HTTPException as e:
+            log.warning("Could not look up member %s: %s", player.get("id"), e)
+            continue
+        if season_role not in member.roles:
+            try:
+                await member.add_roles(season_role)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+                log.warning("Could not grant role to %s: %s", player_id, e)
 
 
 class ReportCommand(BotCommands):
     @commands.command()
     async def report(self, ctx):
+        log.info("Match report requested by %s", ctx.author)
         # ---------------------------------------------------------
         # Acquire report_lock to prevent concurrent double-reporting.
         # Only one !report command may run at a time.  We additionally
@@ -165,7 +192,46 @@ class ReportCommand(BotCommands):
         # After this point we hold the sole right to write to the DB.
         # Everything outside the lock reads match state that won't change
         # until this handler finishes (cleanup at the end resets flags).
+        #
+        # CLAIM RELEASE ON FAILURE: the claim above is only "consumed" once
+        # the report has committed ANY database write. Every earlier failure
+        # path — match not yet visible on the API (404), network errors, map
+        # mismatch, missing players — must restore match_not_reported so the
+        # user can simply retry once the match appears. Without this, a
+        # premature report attempt permanently blocked retrying with "already
+        # been reported".
+        #
+        # A failure AFTER the first write must NOT release the claim: stats
+        # and coins were already applied and a retry would apply them again.
+        # _report_claimed calls on_commit() immediately before its first
+        # database write; anything that fails before that point releases the
+        # claim so the reporter can retry.
         # ------------------------------------------------------------
+        committed = False
+
+        def _on_commit():
+            nonlocal committed
+            committed = True
+
+        try:
+            await self._report_claimed(ctx, name, tag, on_commit=_on_commit)
+        finally:
+            if not committed:
+                self.bot.match_not_reported = True
+                log.info(
+                    "Report claim released for retry (report did not complete): %s",
+                    ctx.author,
+                )
+
+    async def _report_claimed(self, ctx, name: str, tag: str, on_commit=None) -> None:
+        """Body of !report after the atomic claim has been taken.
+
+        Invokes ``on_commit()`` immediately before the first database write.
+        Early validation returns (and failures before that point) leave
+        on_commit uncalled, releasing the claim for a retry; failures after
+        it leave the claim consumed so a retry cannot double-apply stats or
+        coins.
+        """
 
         def _norm_map(s: str) -> str:
             m = (s or "").strip().lower()
@@ -177,42 +243,47 @@ class ReportCommand(BotCommands):
             return aliases.get(m, m)
 
         region, platform = "na", "pc"
-        q_name, q_tag = quote(name, safe=""), quote(tag, safe="")
-        url = f"https://api.henrikdev.xyz/valorant/v4/matches/{region}/{platform}/{q_name}/{q_tag}"
 
         try:
-            resp = requests.get(url, headers={"Authorization": API_KEY}, timeout=30)
-        except requests.RequestException as e:
+            async with aiohttp.ClientSession() as session:
+                data = await get_recent_matches_async(
+                    session,
+                    name,
+                    tag,
+                    region=region,
+                    platform=platform,
+                    priority=True,
+                )
+        except (RiotApiInconclusive, aiohttp.ClientError, asyncio.TimeoutError) as e:
+            log.error("Network error fetching recent matches: %s", e, exc_info=e)
             await ctx.send(f"Network error reaching HenrikDev API: {e}")
             return
 
-        if resp.status_code == 401:
+        if data is None:
             await ctx.send(
-                "HenrikDev API rejected the request (401). Check that your API key is valid."
+                "No recent matches found for your Riot ID yet — the game may "
+                "still be processing on the Riot API. Try again in a minute."
             )
-            return
-        if resp.status_code == 404:
-            await ctx.send("No recent matches found for your Riot ID (404).")
-            return
-        if resp.status_code == 429:
-            await ctx.send("Rate limit hit (429). Try again in a bit.")
-            return
-        if resp.status_code == 503:
-            await ctx.send(
-                "Riot/HenrikDev upstream is temporarily unavailable (503). Try again later."
-            )
-            return
-        if resp.status_code != 200:
-            await ctx.send(f"Unexpected error from API ({resp.status_code}).")
             return
 
-        data = resp.json()
-        if not isinstance(data, dict) or "data" not in data or not data["data"]:
+        if not data.get("data"):
             await ctx.send("Could not retrieve match data.")
             return
 
         match = data["data"][0]
         metadata = match.get("metadata") or {}
+
+        # Idempotency: if this match id was already recorded (e.g. a retried
+        # report after a post-write failure), refuse instead of re-applying
+        # MMR/coins and inserting a duplicate match doc.
+        api_match_id = metadata.get("match_id")
+        if api_match_id and all_matches.find_one({"metadata.match_id": api_match_id}):
+            log.warning(
+                "Report ignored: match %s was already recorded",
+                api_match_id,
+            )
+            await ctx.send("This match has already been recorded.")
+            return
 
         map_field = metadata.get("map")
         if isinstance(map_field, dict):
@@ -221,104 +292,74 @@ class ReportCommand(BotCommands):
             api_map = _norm_map(map_field or "")
 
         if _norm_map(self.bot.selected_map) != api_map:
+            log.warning(
+                "Report rejected: selected map %s does not match API map %s",
+                self.bot.selected_map,
+                api_map,
+            )
             await ctx.send(
                 "Map doesn't match your most recent match. Unable to report it."
             )
             return
 
-        testing_mode = False  # TRUE WHILE TESTING
-
-        if testing_mode:
-            match = mock_match_data
-            self.bot.match_ongoing = True
-
-            # Reconstruct queue, team1, and team2 from mock_match_data
-            queue = []
-            team1 = []
-            team2 = []
-            self.bot.team1 = team1
-            self.bot.team2 = team2
-            self.bot.queue = queue
-
-            for player_data in match["players"]:
-                player_name = player_data["name"].lower()
-                player_tag = player_data["tag"].lower()
-
-                user = users.find_one({"name": player_name, "tag": player_tag})
-                if user:
-                    discord_id = user["discord_id"]
-                    player = {"id": discord_id, "name": player_name}
-
-                    queue.append(player)
-
-                    if player_data["team_id"] == "red":
-                        team1.append(player)
-                    else:
-                        team2.append(player)
-
-                    if discord_id not in self.bot.player_mmr:
-                        self.bot.player_mmr[discord_id] = {
-                            "mmr": 1000,
-                            "wins": 0,
-                            "losses": 0,
-                        }
-                    self.bot.player_names[discord_id] = player_name
-                else:
-                    await ctx.send(
-                        f"Player {player_name}#{player_tag} is not linked to any Discord account."
-                    )
-                    return
-
-            # For mocking match data, set to amount of rounds played
-            total_rounds = 24
-        else:
-            if not self.bot.match_ongoing:
-                await ctx.send(
-                    "No match is currently active, use `!signup` to start one"
-                )
-                return
-
-            if not self.bot.selected_map:
-                await ctx.send("No map was selected for this match.")
-                return
-
-            # FOR TESTING PURPOSES
-            # self.bot.selected_map = map_name
-
-            if _norm_map(self.bot.selected_map) != api_map:
-                await ctx.send(
-                    "Map doesn't match your most recent match. Unable to report it."
-                )
-                return
-
-            # Get total rounds played from the match data
-            teams = match.get("teams", [])
-            if teams:
-                total_rounds = metadata.get("rounds_played") or metadata.get(
-                    "total_rounds"
-                )
-                if not total_rounds:
-                    rounds_data = match.get("rounds") or []
-                    total_rounds = len(rounds_data)
+        # Get total rounds played from the match data
+        teams = match.get("teams", [])
+        if teams:
+            total_rounds = metadata.get("rounds_played") or metadata.get("total_rounds")
+            if not total_rounds:
+                rounds_data = match.get("rounds") or []
+                total_rounds = len(rounds_data)
+            try:
                 total_rounds = int(total_rounds)
-            else:
-                await ctx.send("No team data found in match data.")
+            except (TypeError, ValueError):
+                await ctx.send(
+                    "Could not read the round count from the match data; "
+                    "try again once the match finishes processing."
+                )
                 return
+        else:
+            await ctx.send("No team data found in match data.")
+            return
 
         match_players = match.get("players", [])
         if not match_players:
             await ctx.send("No players found in match data.")
             return
 
-        queue_riot_ids = set()
+        # Resolve every queued player to their Discord id (the persistent
+        # identity) plus their current Riot name/tag (only a lookup label).
+        # The Discord id is authoritative; Riot IDs can change at any time.
+        queue_members = []
         for player in self.bot.queue:
             user_data = users.find_one({"discord_id": str(player["id"])})
             if user_data:
-                player_name = user_data.get("name").lower()
-                player_tag = user_data.get("tag").lower()
-                queue_riot_ids.add((player_name, player_tag))
+                queue_members.append(
+                    {
+                        "discord_id": str(player["id"]),
+                        "puuid": (user_data.get("puuid") or "").strip().lower(),
+                        "name": user_data.get("name", "").lower(),
+                        "tag": user_data.get("tag", "").lower(),
+                    }
+                )
 
-        print(f"[DEBUG] Queued players RIOT ID's: {queue_riot_ids}")
+        # Map each API player back to a queue member's Discord id. Prefer the
+        # puuid when both sides have one; fall back to the Riot name/tag.
+        def _resolve_api_player(api_player):
+            api_puuid = (api_player.get("puuid") or "").strip().lower()
+            api_name = (api_player.get("name") or "").lower()
+            api_tag = (api_player.get("tag") or "").lower()
+
+            for member in queue_members:
+                if api_puuid and member["puuid"] and api_puuid == member["puuid"]:
+                    return member["discord_id"]
+            for member in queue_members:
+                if api_name == member["name"] and api_tag == member["tag"]:
+                    return member["discord_id"]
+            return None
+
+        queue_riot_ids = {(member["name"], member["tag"]) for member in queue_members}
+
+        log.debug("Queued players RIOT ID's: %s", queue_riot_ids)
 
         # get the list of players in the match
         match_player_names = set()
@@ -327,11 +368,15 @@ class ReportCommand(BotCommands):
             player_tag = player.get("tag", "").lower()
             match_player_names.add((player_name, player_tag))
 
-        print(f"[DEBUG] match_player_names from API: {match_player_names}")
+        log.debug("match_player_names from API: %s", match_player_names)
 
         if not queue_riot_ids.issubset(match_player_names):
             # Find which players don't match
             missing_players = queue_riot_ids - match_player_names
+            log.warning(
+                "Report rejected: API match is missing queue players %s",
+                sorted(missing_players),
+            )
             mismatch_message = (
                 "The most recent match does not match the 10-man's match.\n\n"
             )
@@ -340,7 +385,7 @@ class ReportCommand(BotCommands):
             )
 
             for name, tag in missing_players:
-                mismatch_message += f"• {name}#{tag}\n"
+                mismatch_message += f"• {tracker_link(name, tag)}\n"
 
             mismatch_message += "\nPossible reasons:\n"
             mismatch_message += (
@@ -364,58 +409,84 @@ class ReportCommand(BotCommands):
                 winning_team_id = team.get("team_id", "").lower()
                 break
 
-        print(f"[DEBUG]: Winning team: {winning_team_id}")
+        log.debug("Winning team: %s", winning_team_id)
         if not winning_team_id:
             await ctx.send("Could not determine the winning team.")
             return
 
-        match_team_players = {"red": set(), "blue": set()}
+        match_team_players = {"red": {}, "blue": {}}
         for player_info in match_players:
             raw_team_id = player_info.get("team_id", "").lower()  # "red" or "blue"
-            p_name = player_info.get("name", "").lower()
-            p_tag = player_info.get("tag", "").lower()
-            if raw_team_id in match_team_players:
-                match_team_players[raw_team_id].add((p_name, p_tag))
+            p_discord_id = _resolve_api_player(player_info)
+            if raw_team_id in match_team_players and p_discord_id:
+                match_team_players[raw_team_id][p_discord_id] = player_info
 
-        team1_riot_ids = set()
-        for player in self.bot.team1:
-            user_data = users.find_one({"discord_id": str(player["id"])})
-            if user_data:
-                player_name = user_data.get("name", "").lower()
-                player_tag = user_data.get("tag").lower()
-                team1_riot_ids.add((player_name, player_tag))
+        team1_ids_set = {str(player["id"]) for player in self.bot.team1}
+        team2_ids_set = {str(player["id"]) for player in self.bot.team2}
 
-        team2_riot_ids = set()
-        for player in self.bot.team2:
-            user_data = users.find_one({"discord_id": str(player["id"])})
-            if user_data:
-                player_name = user_data.get("name", "").lower()
-                player_tag = user_data.get("tag").lower()
-                team2_riot_ids.add((player_name, player_tag))
+        log.debug("team1 discord ids: %s", team1_ids_set)
+        log.debug("team2 discord ids: %s", team2_ids_set)
 
-        print(f"[DEBUG] team1_riot_ids: {team1_riot_ids}")
-        print(f"[DEBUG] team2_riot_ids: {team2_riot_ids}")
+        winning_match_team_ids = set(match_team_players.get(winning_team_id, {}))
+        log.debug("Winning team Discord ID's: %s", winning_match_team_ids)
 
-        winning_match_team_players = match_team_players.get(winning_team_id, set())
-        print(f"[DEBUG] Winning team Riot ID's: {winning_match_team_players}")
-
-        if winning_match_team_players == team1_riot_ids:
-            winning_team = self.bot.team1
-            losing_team = self.bot.team2
-        elif winning_match_team_players == team2_riot_ids:
-            winning_team = self.bot.team2
-            losing_team = self.bot.team1
+        if winning_match_team_ids == team1_ids_set:
+            playing_team_ids = [str(p["id"]) for p in self.bot.team1] + [
+                str(p["id"]) for p in self.bot.team2
+            ]
+        elif winning_match_team_ids == team2_ids_set:
+            playing_team_ids = [str(p["id"]) for p in self.bot.team2] + [
+                str(p["id"]) for p in self.bot.team1
+            ]
         else:
             await ctx.send("Could not match the winning team to our teams.")
             return
 
-        for player in winning_team + losing_team:
-            player_id = str(player["id"])
+        for player_id in playing_team_ids:
             self.bot.ensure_player_mmr(player_id, self.bot.player_names)
 
         # Get top players
         self.bot.player_mmr = {str(k): v for k, v in self.bot.player_mmr.items()}
         pre_update_mmr = copy.deepcopy(self.bot.player_mmr)
+        # Per-player match ratings for the post-match summary embed.
+        player_ratings: dict[str, float] = {}
+
+        # Doubledown multipliers are snapshotted before any MMR changes so
+        # update_stats can apply them to the match delta only.
+        double_down_multipliers = (
+            {pid: doubledown_multiplier_of(self.bot, pid) for pid in playing_team_ids}
+            if duck_coins_enabled()
+            else {}
+        )
+        # Who actually doubled down (multiplier > 1), for the summary embed
+        # tag. Snapshot at the same time as the multipliers so a refund that
+        # clears double_downs mid-report can't flip the tag afterwards.
+        doubledown_ids = {
+            pid for pid, mult in double_down_multipliers.items() if mult > 1
+        }
+
+        # Snapshot each player's leaderboard rank before this match is applied
+        pre_played_ids = {
+            pid
+            for pid, stats in pre_update_mmr.items()
+            if stats.get("matches_played", 0) > 0
+            or (stats.get("wins", 0) + stats.get("losses", 0)) > 0
+        }
+        pre_update_ranks = {
+            pid: rank
+            for rank, (pid, _) in enumerate(
+                sorted(
+                    (
+                        (pid, stats)
+                        for pid, stats in pre_update_mmr.items()
+                        if pid in pre_played_ids
+                    ),
+                    key=lambda x: x[1]["mmr"],
+                    reverse=True,
+                ),
+                start=1,
+            )
+        }
 
         valid_mmr_entries = [
             (pid, stats)
@@ -434,23 +505,16 @@ class ReportCommand(BotCommands):
                 if stats["mmr"] == top_mmr_before
             ]
         else:
-            top_mmr_before = 1000
+            top_mmr_before = 0
             top_players_before = []
 
-        # Helper
-        riot_to_teamlabel = {}
+        # Helper: discord id -> team label (the discord id is the persistent
+        # identity; Riot name/tag is only a display label)
+        discord_to_teamlabel = {}
         for p in self.bot.team1:
-            u = users.find_one({"discord_id": str(p["id"])})
-            if u:
-                riot_to_teamlabel[
-                    (u.get("name", "").lower(), u.get("tag", "").lower())
-                ] = "team1"
+            discord_to_teamlabel[str(p["id"])] = "team1"
         for p in self.bot.team2:
-            u = users.find_one({"discord_id": str(p["id"])})
-            if u:
-                riot_to_teamlabel[
-                    (u.get("name", "").lower(), u.get("tag", "").lower())
-                ] = "team2"
+            discord_to_teamlabel[str(p["id"])] = "team2"
 
         team1_ids = [str(p["id"]) for p in self.bot.team1]
         team2_ids = [str(p["id"]) for p in self.bot.team2]
@@ -458,26 +522,71 @@ class ReportCommand(BotCommands):
         def _mmr_of(pid):
             d = pre_update_mmr.get(pid)
             if isinstance(d, dict):
-                return int(d.get("mmr", 1000))
-            return 1000
+                return int(d.get("mmr", 0))
+            return 0
 
-        self.team1_mmr = sum(_mmr_of(pid) for pid in team1_ids)
-        self.team2_mmr = sum(_mmr_of(pid) for pid in team2_ids)
+        # Estimated VLR Rating 2.0 per player (puuid-keyed). Best effort: a
+        # missing/unusable kill timeline just means no ratings this match.
+        try:
+            match_ratings = estimate_ratings_v4(match)
+        except Exception as e:
+            log.warning("VLR rating estimation failed, skipping: %s", e)
+            match_ratings = {}
 
-        riot_to_api_color = {}
+        # Per-team MMR averages feed the new ΔMMR expectation term. New
+        # players count as 0 for team selection, but once the match is
+        # reported their seed (100×VLR) is assigned first and included in
+        # the team average before deltas are applied (issue #159).
+        team1_api_by_id = {
+            _resolve_api_player(p): p for p in match_players if _resolve_api_player(p)
+        }
+
+        def _rating_of(pid):
+            p = team1_api_by_id.get(pid)
+            puuid = (p.get("puuid") or "").strip().lower() if p else ""
+            return (match_ratings.get(puuid) or {}).get("rating")
+
+        def _is_new(pid):
+            stats = pre_update_mmr.get(pid)
+            if not isinstance(stats, dict):
+                return True
+            return (
+                stats.get("matches_played", 0) == 0
+                and (stats.get("wins", 0) + stats.get("losses", 0)) == 0
+            )
+
+        def _effective_mmr(pid):
+            if not _is_new(pid):
+                return _mmr_of(pid)
+            rating = _rating_of(pid)
+            if isinstance(rating, (int, float)) and rating == rating:
+                return max(0, round(100.0 * float(rating)))
+            return 0
+
+        team1_avg = (
+            sum(_effective_mmr(pid) for pid in team1_ids) / len(team1_ids)
+            if team1_ids
+            else 0
+        )
+        team2_avg = (
+            sum(_effective_mmr(pid) for pid in team2_ids) / len(team2_ids)
+            if team2_ids
+            else 0
+        )
+
+        # discord id -> API team color ("red"/"blue")
+        discord_to_api_color = {}
         for p in match_players:
-            nm = (p.get("name") or "").lower()
-            tg = (p.get("tag") or "").lower()
-            color = (p.get("team_id") or "").lower()
-            riot_to_api_color[(nm, tg)] = color
+            p_discord_id = _resolve_api_player(p)
+            if p_discord_id:
+                discord_to_api_color[p_discord_id] = (p.get("team_id") or "").lower()
 
         # Helper to get the API color
         def _team_api_color(team_players):
             for pl in team_players:
-                u = users.find_one({"discord_id": str(pl["id"])})
-                if u:
-                    key = (u.get("name", "").lower(), u.get("tag", "").lower())
-                    return riot_to_api_color.get(key)
+                color = discord_to_api_color.get(str(pl["id"]))
+                if color:
+                    return color
             return None
 
         team1_api_color = _team_api_color(self.bot.team1)
@@ -490,76 +599,190 @@ class ReportCommand(BotCommands):
             rw = rounds_to_int(rw_raw)
             api_rounds[tid] = rw
 
-        self.team1_rounds = int(api_rounds.get(team1_api_color, 0))
-        self.team2_rounds = int(api_rounds.get(team2_api_color, 0))
-        round_diff_val = abs(self.team1_rounds - self.team2_rounds)
-        self.winning_team = (
-            "team1" if winning_match_team_players == team1_riot_ids else "team2"
-        )
+        team1_rounds = int(api_rounds.get(team1_api_color, 0))
+        team2_rounds = int(api_rounds.get(team2_api_color, 0))
+
+        # All validation is done; every path below writes to the database.
+        # Consume the claim now: a failure from here on must NOT release it,
+        # because a retry would re-apply MMR/coins on top of the partial write.
+        if on_commit is not None:
+            on_commit()
 
         # Update stats for each player
         for player_stats in match_players:
-            p_name = (player_stats.get("name") or "").lower()
-            p_tag = (player_stats.get("tag") or "").lower()
-            team_label = riot_to_teamlabel.get((p_name, p_tag))
+            p_discord_id = _resolve_api_player(player_stats)
+            if not p_discord_id:
+                log.info(
+                    "API player %s#%s is not in the queue; skipping",
+                    player_stats.get("name"),
+                    player_stats.get("tag"),
+                )
+                continue
+            team_label = discord_to_teamlabel.get(p_discord_id)
             if not team_label:
                 continue
+
+            p_puuid = (player_stats.get("puuid") or "").strip().lower()
+            rating_info = match_ratings.get(p_puuid) or {}
+            if isinstance(rating_info.get("rating"), (int, float)):
+                player_ratings[p_discord_id] = float(rating_info["rating"])
 
             update_stats(
                 player_stats,
                 total_rounds,
                 self.bot.player_mmr,
                 self.bot.player_names,
-                team_sum_mmr=(
-                    self.team1_mmr if team_label == "team1" else self.team2_mmr
+                discord_id=p_discord_id,
+                team_avg_mmr=(team1_avg if team_label == "team1" else team2_avg),
+                opp_avg_mmr=team2_avg if team_label == "team1" else team1_avg,
+                our_rounds=(team1_rounds if team_label == "team1" else team2_rounds),
+                opp_rounds=(team2_rounds if team_label == "team1" else team1_rounds),
+                rating=rating_info.get("rating"),
+                mmr_multiplier=(
+                    double_down_multipliers.get(p_discord_id, 1)
+                    if duck_coins_enabled()
+                    else 1
                 ),
-                opp_sum_mmr=self.team2_mmr if team_label == "team1" else self.team1_mmr,
-                team_won=(self.winning_team == team_label),
-                round_diff=round_diff_val,
             )
-        print("[DEBUG] Basic stats updated")
+        log.info("Basic stats updated for all players")
 
-        # Adjust MMR once
-        # self.bot.adjust_mmr(winning_team, losing_team)
-        # print("[DEBUG] MMR adjusted")
         await ctx.send("Match stats and MMR updated!")
+        log.info(
+            "Match %s reported by %s (winner: %s)",
+            metadata.get("match_id", "?"),
+            ctx.author,
+            winning_team_id,
+        )
+
+        # ------------------------------------------------------------
+        # Duck Coins: betting payout and +1 coin per match played
+        # (feature-gated on the duck_coins flag in bot.ini). The
+        # doubledown multiplier was applied inside update_stats above.
+        # ------------------------------------------------------------
+        winner_side = (
+            "attackers" if winning_match_team_ids == team1_ids_set else "defenders"
+        )
+        bet_settlement_embed = None
+        if duck_coins_enabled():
+            award_match_coins(playing_team_ids)
+            try:
+                # Pays out immediately; returns the summary embed to post
+                # after the match results embed (kept for display order).
+                bet_settlement_embed = await settle_bets(self.bot, winner_side)
+            except Exception as e:
+                log.error("Bet settlement failed: %s", e, exc_info=e)
+
+        # Build a per-player MMR gain/loss summary
+        match_name = getattr(self.bot, "match_name", "") or "match-?"
+        mmr_lines = []
+        for label, team, rounds in (
+            ("Attackers", self.bot.team1, team1_rounds),
+            ("Defenders", self.bot.team2, team2_rounds),
+        ):
+            entries = []
+            for p in team:
+                pid = str(p["id"])
+                old = pre_update_mmr.get(pid, {}).get("mmr", 0)
+                new = self.bot.player_mmr.get(pid, {}).get("mmr", 0)
+                delta = new - old
+                rating = player_ratings.get(pid)
+                rating_part = f"({rating:.2f})" if rating is not None else ""
+                sign = "+" if delta >= 0 else ""
+                # Doubledown marker: bold the delta and tag doubled players
+                # with the coin emote ×2, so it's visible who paid to double
+                # their MMR change this match.
+                doubled = pid in doubledown_ids
+                delta_part = f"**{sign}{delta}**" if doubled else f"{sign}{delta}"
+                tag_part = " ×2" if doubled else ""
+                # Mention by Discord ID (<@id>) rather than the Riot ID: the
+                # summary posts in #10-mans, where a live mention is the
+                # clearest way to see who gained/lost MMR (and it survives
+                # Riot renames and purged links).
+                entries.append(f"<@{pid}>{rating_part}: {delta_part}{tag_part}")
+            mmr_lines.append((f"{label} ({rounds})", "\n".join(entries)))
+
+        results_embed = discord.Embed(
+            title=f"Match Summary | {match_name}",
+            color=discord.Color.green(),
+        )
+        for label, entries_text in mmr_lines:
+            results_embed.add_field(name=label, value=entries_text, inline=True)
+        if doubledown_ids:
+            results_embed.set_footer(
+                text=f"×2 = doubledown ({DOUBLEDOWN_COST} coins): this match's MMR change doubled"
+            )
+
+        # Post the results in the persistent #10-mans channel; the match
+        # channel gets deleted during cleanup, so posting there would lose
+        # the summary.
+        results_channel = None
+        if ctx.guild:
+            for channel in ctx.guild.text_channels:
+                if channel.name.lower() == "10-mans":
+                    results_channel = channel
+                    break
+        if results_channel:
+            await results_channel.send(embed=results_embed)
+        else:
+            await ctx.send(embed=results_embed)
+
+        # Bet settlement summary right after the match results embed — in
+        # #10-mans ONLY. Betting chatter lives in the persistent channel; if
+        # #10-mans can't be found the settlement is skipped rather than
+        # spilling into another channel. Coins were already paid during
+        # settlement; this post is display only.
+        if bet_settlement_embed is not None:
+            if results_channel:
+                try:
+                    await results_channel.send(embed=bet_settlement_embed)
+                except discord.HTTPException:
+                    log.warning("Could not post the bet settlement summary")
+            else:
+                log.warning(
+                    "Skipped posting the bet settlement summary: no #10-mans channel found"
+                )
 
         self.bot.save_mmr_data()
-        print("[DEBUG] MMR data saved")
+        log.info("MMR data saved")
 
-        self.bot.load_mmr_data()  # Reload the MMR data
-        print("[DEBUG] Reloaded MMR data after save")
-
-        # save all updates to the database
-        print("Before player stats updated")
-
-        for discord_id, stats in self.bot.player_mmr.items():
-            # Get the riot name for the player
-            user_data = users.find_one({"discord_id": str(discord_id)})
-            if user_data:
-                riot_name = f"{user_data.get('name', 'Unknown')}#{user_data.get('tag', 'Unknown')}"
-            else:
-                riot_name = "Unknown"
-
-            complete_stats = {
-                "mmr": stats.get("mmr", 1000),
-                "wins": stats.get("wins", 0),
-                "losses": stats.get("losses", 0),
-                "name": riot_name.lower(),
-                "total_combat_score": stats.get("total_combat_score", 0),
-                "total_kills": stats.get("total_kills", 0),
-                "total_deaths": stats.get("total_deaths", 0),
-                "matches_played": stats.get("matches_played", 0),
-                "total_rounds_played": stats.get("total_rounds_played", 0),
-                "average_combat_score": stats.get("average_combat_score", 0),
-                "kill_death_ratio": stats.get("kill_death_ratio", 0),
-            }
-
+        # Record each player's previous leaderboard rank so the
+        # leaderboard can display rank gain/loss since the last match
+        played_ids = {
+            pid
+            for pid, stats in self.bot.player_mmr.items()
+            if stats.get("matches_played", 0) > 0
+            or (stats.get("wins", 0) + stats.get("losses", 0)) > 0
+        }
+        new_ranks = {
+            pid: rank
+            for rank, (pid, _) in enumerate(
+                sorted(
+                    (
+                        (pid, stats)
+                        for pid, stats in self.bot.player_mmr.items()
+                        if pid in played_ids
+                    ),
+                    key=lambda x: x[1].get("mmr", 0),
+                    reverse=True,
+                ),
+                start=1,
+            )
+        }
+        for discord_id in self.bot.player_mmr:
+            previous_rank = pre_update_ranks.get(discord_id)
+            new_rank = new_ranks.get(discord_id)
             mmr_collection.update_one(
-                {"player_id": discord_id}, {"$set": complete_stats}, upsert=True
+                {"player_id": discord_id},
+                {
+                    "$set": {
+                        "previous_rank": previous_rank,
+                        "current_rank": new_rank,
+                    }
+                },
+                upsert=True,
             )
 
-        print("[DEBUG] All stats saved to database")
+        log.info("All stats saved to database")
 
         sorted_mmr_after = sorted(
             self.bot.player_mmr.items(), key=lambda x: x[1]["mmr"], reverse=True
@@ -573,7 +796,9 @@ class ReportCommand(BotCommands):
         if new_top_players:
             for new_top_player_id in new_top_players:
                 user_data = users.find_one({"discord_id": str(new_top_player_id)})
-                if user_data:
+                # A rank-1 announcement only makes sense with a linked account;
+                # unlinked players (no Riot ID) keep stats but skip the banner.
+                if user_data and user_data.get("name") and user_data.get("tag"):
                     riot_name = user_data.get("name", "Unknown").lower()
                     riot_tag = user_data.get("tag", "Unknown").lower()
                     # Try to send to 'announcements' channel if it exists
@@ -583,17 +808,34 @@ class ReportCommand(BotCommands):
                             if channel.name.lower() == "announcements":
                                 announcement_channel = channel
                                 break
-                    message = f"{riot_name}#{riot_tag} is now supersonic radiant!"
+                    ssr = role_mention(ctx.guild, SSR_NAME)
+                    message = f"{tracker_link(riot_name, riot_tag)} is now {ssr}!"
                     if announcement_channel:
                         await announcement_channel.send(message)
                     else:
                         await ctx.send(message)
 
-        def _add_months(dt, months):
-            year = dt.year + (dt.month - 1 + months) // 12
-            month = (dt.month - 1 + months) % 12 + 1
-            day = min(dt.day, monthrange(year, month)[1])
-            return dt.replace(year=year, month=month, day=day)
+        # Sync each player's rank roles to their new MMR (no rank role until
+        # the first match of the season; rank 1 overall also wears Supersonic
+        # Radiant on top of their traditional tier).
+        if ctx.guild:
+            played_sorted = [
+                (pid, stats)
+                for pid, stats in sorted_mmr_after
+                if stats.get("matches_played", 0) > 0
+                or (stats.get("wins", 0) + stats.get("losses", 0)) > 0
+            ]
+            for position, (pid, stats) in enumerate(played_sorted):
+                try:
+                    await sync_player_rank(
+                        self.bot,
+                        ctx.guild,
+                        pid,
+                        stats.get("mmr", 0),
+                        is_rank_one=(position == 0),
+                    )
+                except Exception as e:
+                    log.warning("Rank sync failed for %s: %s", pid, e)
 
         # Record every match played in a new collection
         all_matches.insert_one(match)
@@ -603,13 +845,38 @@ class ReportCommand(BotCommands):
             {"_id": "current"}, {"$inc": {"matches_played": 1}}, upsert=True
         )
 
+        # Grant the persistent Season-# role to everyone who played
+        try:
+            await grant_season_roles(ctx.guild, self.bot.team1 + self.bot.team2)
+        except Exception as e:
+            log.error("Failed to grant season roles: %s", e, exc_info=e)
+
         await asyncio.sleep(5)
         self.bot.match_not_reported = False
         self.bot.match_ongoing = False
+        # Reset remaining match state so !cancel reports "nothing to cancel"
+        # instead of pretending a match is still active.
+        self.bot.selected_map = None
+        self.bot.chosen_mode = None
+        self.bot.captain1 = None
+        self.bot.captain2 = None
+        self.bot.team1 = []
+        self.bot.team2 = []
+        self.bot.double_downs = set()
+        self.bot.map_override_last = 0
+        self.bot.map_override_last_by = None
+        self.bot.map_override_deadline = None
+        self.bot.map_override_chain = []
+        # Bets were already settled above; this just clears an empty session
+        # (and refunds a stray bet if settlement never ran). Map override
+        # coins are NOT refunded here: the match happened, the coins bought
+        # the map that was played.
+        refund_open_bets(self.bot)
         await cleanup_match_resources(self.bot)
 
 
-def rounds_to_int(value):
+def rounds_to_int(value: object) -> int:
+    """Best-effort conversion of an API rounds field to a non-negative int."""
     if isinstance(value, dict):
         for key in ("won", "w", "value", "wins", "count"):
             v = value.get(key)
