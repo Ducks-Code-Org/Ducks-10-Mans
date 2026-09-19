@@ -709,17 +709,21 @@ class ReportCommand(BotCommands):
         else:
             await ctx.send(embed=results_embed)
 
-        # Bet settlement summary right after the match results embed, so
-        # winnings/losses read as part of the same match wrap-up. Coins were
-        # already paid during settlement; this post is display only.
+        # Bet settlement summary right after the match results embed — in
+        # #10-mans ONLY. Betting chatter lives in the persistent channel; if
+        # #10-mans can't be found the settlement is skipped rather than
+        # spilling into another channel. Coins were already paid during
+        # settlement; this post is display only.
         if bet_settlement_embed is not None:
-            try:
-                if results_channel:
+            if results_channel:
+                try:
                     await results_channel.send(embed=bet_settlement_embed)
-                else:
-                    await ctx.send(embed=bet_settlement_embed)
-            except discord.HTTPException:
-                log.warning("Could not post the bet settlement summary")
+                except discord.HTTPException:
+                    log.warning("Could not post the bet settlement summary")
+            else:
+                log.warning(
+                    "Skipped posting the bet settlement summary: no #10-mans channel found"
+                )
 
         self.bot.save_mmr_data()
         log.info("MMR data saved")
