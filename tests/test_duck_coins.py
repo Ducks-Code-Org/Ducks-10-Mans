@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+import time
 import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -50,7 +51,16 @@ sys.modules["services.maps_service"] = _maps_stub
 
 class _FakeEmbed:
     def __init__(self, *a, **k):
-        pass
+        self.title = k.get("title")
+        self.description = k.get("description")
+        self.fields = []
+        self.footer = None
+
+    def add_field(self, **k):
+        self.fields.append(k)
+
+    def set_footer(self, **k):
+        self.footer = k
 
 
 _discord_stub = types.ModuleType("discord")
@@ -136,6 +146,9 @@ class FakeBot:
         self.double_downs = set()
         self.map_override_last = 0
         self.map_override_last_by = None
+        # Live 2-minute powerup window by default: !doubledown and !setmap
+        # share this deadline.
+        self.map_override_deadline = time.monotonic() + 120
         self.chosen_mode = "Captains"
         self.selected_map = "Ascent"
         self.bet_session = None
@@ -225,9 +238,13 @@ def demo():
     bot.double_downs = set()
     reply = doubledown(bot, "1")
     assert "have 3" in reply and "need 5" in reply, "doubledown insufficient message"
-    bot.bet_session["open"] = False
+    # The doubledown window is the 2-minute powerup deadline (shared with
+    # !setmap), not the 5-minute bet window.
+    bot.bet_session = None
+    bot.map_override_deadline = time.monotonic() - 1
     reply = doubledown(bot, "1")
-    assert "5 minutes" in reply, "doubledown outside window must be rejected"
+    assert "2 minutes" in reply, "doubledown outside powerup window must be rejected"
+    bot.map_override_deadline = time.monotonic() + 120
 
     # Setmap override: validity, cost escalation, repeat-blocker
     # (override is allowed during the captains draft: match not yet ongoing)
@@ -267,12 +284,15 @@ def demo():
     reply = asyncio.run(setmap_override(bot, "1", "Ascent"))
     assert "now **Ascent**" in reply
 
-    # Once teams are decided (match ongoing) no more overrides
+    # Once teams are decided (match ongoing) no more overrides — with no
+    # grace window open (deadline cleared), overrides are rejected.
     bot.match_ongoing = True
+    bot.map_override_deadline = None
     DB["1"]["duck_coins"] = 100
     reply = asyncio.run(setmap_override(bot, "1", "Haven"))
     assert "before the teams are fully decided" in reply
     assert coins_of("1") == 100, "override after draft end must not charge"
+    bot.map_override_deadline = time.monotonic() + 120
 
     # Explicit-amount overrides (issue #195): min 3, must beat the last wager
     bot.match_ongoing = False
@@ -435,6 +455,9 @@ def demo():
         "escrow journal must be wiped on season reset so a later restart "
         "never refunds coins the reset already voided"
     )
+    # clear_season_coin_state also clears the powerup deadline; restore it
+    # for the crash-journal doubledown check below.
+    bot.map_override_deadline = time.monotonic() + 120
 
     # --- Crash-safety journal: persist + startup recovery -----------------
     from game.duck_coins import recover_orphaned_escrow
@@ -521,19 +544,38 @@ def demo():
         coins_of("9") == 8
     ), "reconnect must not refund a live window (double payout risk)"
 
-    # --- Bet announcement: match channel only + setmap section ------------
-    from game.duck_coins import _announcement
+    # --- Post-setup announcements: powerup notice + betting embed ---------
+    from game.duck_coins import _betting_embed, _powerups_announcement
 
-    # The message must mention !setmap so players know about coin overrides.
-    text = _announcement(bot, 300)
+    # The match-channel powerup notice must mention !setmap and !doubledown.
+    text = _powerups_announcement(bot, 120)
     assert "!setmap" in text and "Override" in text, text
-    assert "!bet attackers" in text and "!doubledown" in text, text
+    assert "!doubledown" in text, text
+
+    # The #10-mans betting embed must explain !bet and show both teams with
+    # pools, expected payout multipliers, and the countdown.
+    fake_session = {
+        "open": True,
+        "bets": {"attackers": {"9": 3}, "defenders": {"8": 2}},
+        "message": None,
+        "powerup_message": None,
+        "task": None,
+        "powerup_task": None,
+        "ends_at": 0,
+    }
+    embed = _betting_embed(bot, fake_session, 300)
+    assert "!bet attackers" in embed.description, embed.description
+    assert "Attackers" in embed.fields[0]["name"], embed.fields
+    assert "Defenders" in embed.fields[1]["name"], embed.fields
+    assert any("pays" in f["value"] for f in embed.fields), embed.fields
+    assert "4:60" not in embed.footer["text"] and "5:00" in embed.footer["text"]
 
     class _FakeFeatureGlobals:
         pass
 
     async def _run_announcement_routing():
-        # bot.match_channel set: the announcement goes there and nowhere else.
+        # bot.match_channel set: the powerup notice goes to the match channel;
+        # with no guild, the betting embed falls back to ctx.channel.
         match_ch = FakeChannel()
         bot.match_channel = match_ch
         # ctx carries its own .channel in production; give the fake one.
@@ -541,16 +583,21 @@ def demo():
         await duck_coins.on_teams_announced(bot, ctx)
         assert (
             len(match_ch.messages) == 1
-        ), "announcement must post once to the match channel"
+        ), "powerup notice must post once to the match channel"
         assert "!setmap" in match_ch.messages[0]
-        assert ctx.channel.messages == [], "no duplicate announcement via ctx"
+        assert (
+            len(ctx.channel.messages) == 1
+        ), "betting embed must fall back to ctx.channel without a guild"
 
-        # When match_channel is unset, fall back to ctx.channel (simulate path).
+        # When match_channel is unset too, both surfaces use ctx.channel
+        # (simulate path).
         bot2 = FakeBot()
         bot2.match_channel = None
         ctx2 = types.SimpleNamespace(channel=FakeChannel(), guild=None)
         await duck_coins.on_teams_announced(bot2, ctx2)
-        assert len(ctx2.channel.messages) == 1, "fallback must use ctx.channel"
+        assert (
+            len(ctx2.channel.messages) == 2
+        ), "fallback must post powerup notice + betting embed"
         assert "!setmap" in ctx2.channel.messages[0]
 
     asyncio.run(_run_announcement_routing())

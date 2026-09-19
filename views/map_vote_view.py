@@ -348,8 +348,10 @@ class MapVoteView(discord.ui.View):
 
         from game.duck_coins import on_teams_announced, open_map_override_grace
 
-        await on_teams_announced(self.bot, self.ctx)
+        # Open the grace window first so the match-channel powerup countdown
+        # reads the real deadline from its very first tick.
         open_map_override_grace(self.bot)
+        await on_teams_announced(self.bot, self.ctx)
 
         if voice_presence_enabled() and self.ctx.guild:
             await move_teams_to_voice(self.ctx.guild, self.bot.team1, self.bot.team2)
