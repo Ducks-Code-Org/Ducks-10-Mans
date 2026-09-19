@@ -6,9 +6,10 @@ from database import mmr_collection
 
 log = logging.getLogger(__name__)
 
-# ΔMMR coefficients (issue #159): rounds-diff, team-MMR expectation,
-# VLR-skill-curve, and "carry" corner-bonus terms.
-A, B, C, E = 20 / 7, 60 / 7, 20 / 7, 30 / 7
+# ΔMMR coefficients: rounds-diff, team-MMR expectation (result-conditional),
+# VLR-skill-curve, and "carry" corner-bonus terms. The result branch makes a
+# loss never pay the win bonus (B·(2−m) → B·(1−m)); see MMR_EXPLAINER.md.
+A, B, C, E = 10.0, 60 / 7, 20 / 7, 30 / 7
 
 # ponytail: DEFAULT_MMR 0 is the new-player display fallback; first report
 # seeds real MMR from 100*VLR rating.
@@ -77,7 +78,7 @@ def delta_mmr(
 ) -> float:
     """ΔMMR = alpha + beta.
 
-    alpha = (20/7)·r + (60/7)·(2 - m)
+    alpha = 10·r + B·(2−m) on a win, B·(1−m) on a loss/draw
       r = round differential / 4.3, clamped to ±1
       m = team-MMR expectation: sqrt(ratio) if underdog, ratio^0.75 if
           favorite, clamped [0.33, 5]
@@ -88,8 +89,10 @@ def delta_mmr(
     r = _clamp((our_rounds - opp_rounds) / 4.3, -1.0, 1.0)
     ratio = _clamp(our_mmr / max(opp_mmr, 1e-9), 0.33, 5.0)
     m = ratio**0.5 if ratio < 1.0 else ratio**0.75
-    bonus = max(0.0, r) * max(0.0, (vlr - 1.0) / 0.3)
-    return A * r + B * (2.0 - m) + C * (_h(vlr) - 4.0) + E * bonus
+    won = our_rounds > opp_rounds
+    expectation = B * (2.0 - m) if won else B * (1.0 - m)
+    bonus = max(0.0, r) * max(0.0, (vlr - 1.0) / 0.3) if won else 0.0
+    return A * r + expectation + C * (_h(vlr) - 4.0) + E * bonus
 
 
 def _seed_mmr(rating) -> float:

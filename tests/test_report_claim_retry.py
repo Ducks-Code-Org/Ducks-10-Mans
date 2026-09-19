@@ -441,8 +441,8 @@ def demo():
         bot.selected_map = "Ascent"
         bot.double_downs = set(dd_ids)
         # Veterans (matches_played > 0, wins+losses > 0) so MMR deltas come
-        # purely from this match's rounds — deterministic: 80/7 raw delta
-        # (13-4 win, equal team MMR, vlr 1.0) → +11 plain, +23 doubled.
+        # purely from this match's rounds — deterministic: 13-4 win, equal
+        # team MMR, vlr 1.0 → Δ = 10 + 60/7 ≈ +18.57 → +19 plain, +37 doubled.
         bot.player_mmr = {
             "1": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
             "2": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
@@ -481,10 +481,10 @@ def demo():
         assert len(summary.fields) == 2, summary.fields
         attackers, defenders = summary.fields[0], summary.fields[1]
         assert (
-            "**+23** ×2" in attackers["value"]
+            "**+37** ×2" in attackers["value"]
         ), f"doubled player's delta must be bolded and tagged ×2: {attackers}"
         assert (
-            "+6" in defenders["value"] and "**" not in defenders["value"]
+            "-10" in defenders["value"] and "**" not in defenders["value"]
         ), f"plain delta must not be bolded or tagged: {defenders}"
         assert "×2" not in defenders["value"], defenders
         assert summary.footer and "doubledown" in summary.footer.lower(), summary.footer

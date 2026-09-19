@@ -244,22 +244,31 @@ def main():
 
     # --- issue #159: delta_mmr math --------------------------------------
     d = stats_helper.delta_mmr
-    # Equal MMR, even rounds, 1.0 VLR → the +8.57 baseline
-    assert abs(d(13, 13, 500, 500, 1.0) - 60 / 7) < 1e-9
-    # Calibration curve points: h(0.5)=0, h(0.7)=1, h(1.0)=4, h(1.3)=5
+    # Equal MMR, 1.0 VLR: win = 10·1 + 8.571 = +18.57; loss = −10 + 0 = −10.0
+    assert abs(d(17.3, 13, 500, 500, 1.0) - (10 + 60 / 7)) < 1e-9
+    assert abs(d(8.7, 13, 500, 500, 1.0) - (-10.0)) < 1e-9
+    # The new win-row (win by +4.3, equal MMR): A=10 adds +7.14 over the old row
+    for v, want in [(0.5, 50 / 7), (0.7, 10.0), (0.8, 90 / 7), (0.9, 110 / 7),
+                    (1.0, 130 / 7), (1.3, 180 / 7)]:
+        assert abs(d(17.3, 13, 500, 500, v) - want) < 0.01
+    # No loser can gain at equal MMR: loss branch is B·(1−m) ≤ 0, r ≤ 0, skill may add
+    # but only exceeds it above VLR ≈ 1.45 (accepted remainder); at 1.3 exactly:
+    assert d(11, 13, 500, 500, 1.3) < 0
+    # h curve points unchanged
     h = stats_helper._h
     assert h(0.5) == 0.0 and h(0.7) == 1.0 and h(1.0) == 4.0 and h(1.3) == 5.0
-    # r saturates at ±1 (i.e. ±4.3 round diff)
+    # r saturation at ±4.3
     assert abs(d(20, 5, 500, 500, 1.0) - d(17.3, 13, 500, 500, 1.0)) < 1e-9
-    # Big favorite (5x) winning evenly at 1.0 VLR: expectation term is
-    # negative (m = 5^0.75); equal-MMR even result is the +8.57 baseline.
-    assert d(13, 13, 2500, 500, 1.0) < 0 < d(13, 13, 500, 500, 1.0)
-    # Underdog (1/5) winning: sqrt-damped, +12.2 max on expectation term
-    assert d(13, 13, 500, 2500, 1.0) > 60 / 7
-    # Corner bonus: only fires on round lead AND vlr > 1.0
+    # Favorite (5x) winning evenly at 1.0: m = 5^0.75 → B term negative
+    assert d(13, 0, 2500, 500, 1.0) < 0 < d(17.3, 13, 500, 500, 1.0)
+    # Underdog (1/5) winning: +12.2 max on expectation term
+    assert d(13, 0, 500, 2500, 1.0) > 60 / 7 + 10
+    # Carry bonus: round lead AND vlr > 1.0 only
     no_lead = d(10, 13, 500, 500, 1.3) - d(10, 13, 500, 500, 1.0)
     with_lead = d(13, 10, 500, 500, 1.3) - d(13, 10, 500, 500, 1.0)
     assert no_lead > 0 and with_lead > no_lead
+    # Sign guarantee: every win > every loss at equal MMR/VLR
+    assert d(13, 0, 500, 500, 0.5) > d(0, 13, 500, 500, 1.3)
 
     # --- issue #159: first-match seeding + 0 floor ------------------------
     # First match: MMR seeded to 100*VLR then delta applied (always > 0 seed)
