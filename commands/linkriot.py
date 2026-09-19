@@ -1,12 +1,23 @@
 "Link your Riot account to your Discord account."
 
-import requests
-import discord
+import asyncio
+import logging
+
+import aiohttp
 from discord.ext import commands
 
 from commands import BotCommands
-from database import users, mmr_collection, tdm_mmr_collection
-from globals import API_KEY
+from database import mmr_collection, users
+from services.riot_api import RiotApiInconclusive, get_account_by_riot_id
+from tracker_links import tracker_link
+
+# Message reused by both the Riot-ID and puuid conflict checks.
+_ALREADY_LINKED = (
+    "That Riot account is already linked to another Discord account. "
+    "If it's yours, ask an admin to unlink it first."
+)
+
+log = logging.getLogger(__name__)
 
 
 async def setup(bot):
@@ -23,62 +34,64 @@ class LinkRiotCommand(BotCommands):
             await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
             return
 
-        if not API_KEY or not API_KEY.strip():
-            await ctx.send("API key is not configured")
-            return
-
-        from urllib.parse import quote
-
-        q_name = quote(riot_name, safe="")
-        q_tag = quote(riot_tag, safe="")
-
-        url = f"https://api.henrikdev.xyz/valorant/v2/account/{q_name}/{q_tag}"
         try:
-            resp = requests.get(url, headers={"Authorization": API_KEY}, timeout=30)
-        except requests.RequestException as e:
+            async with aiohttp.ClientSession() as session:
+                payload = await get_account_by_riot_id(
+                    session, riot_name, riot_tag, priority=True
+                )
+        except (RiotApiInconclusive, aiohttp.ClientError, asyncio.TimeoutError) as e:
+            log.error("Network error linking Riot ID: %s", e, exc_info=e)
             await ctx.send(f"Network error reaching HenrikDev API: {e}")
             return
 
         # fully document API outcomes
-        if resp.status_code == 401:
-            await ctx.send(
-                "HenrikDev API rejected the request (401). Check that your API key is valid."
+        if payload is None or not payload.get("_raw"):
+            log.warning(
+                "Link rejected: Riot account %s#%s not found", riot_name, riot_tag
             )
-            return
-        if resp.status_code == 429:
-            await ctx.send("Rate limit hit (429). Try again in a bit.")
-            return
-        if resp.status_code == 503:
-            await ctx.send(
-                "Riot/HenrikDev upstream is temporarily unavailable (503). Try again later."
-            )
-            return
-        if resp.status_code == 404:
             await ctx.send(
                 "Could not find that Riot account. Double-check the name and tag."
             )
             return
-        if resp.status_code != 200:
-            await ctx.send(f"Unexpected error from API ({resp.status_code}).")
-            return
-
-        data = resp.json()
-        if "data" not in data:
-            await ctx.send(
-                "Could not find your Riot account. Please check the name and tag."
-            )
-            return
 
         discord_id = str(ctx.author.id)
+
+        # Persist the puuid so a later Riot ID rename can be resolved back to
+        # this account instead of looking like a dead link (issue #182).
+        new_puuid = (payload.get("puuid") or "").strip()
+
+        # A Riot account may only be linked to one Discord account. Reject
+        # the link when another account owns it (by Riot ID or, when known,
+        # by puuid — a renamed account is still the same account). Never
+        # touch the other user's data: their MMR/stats stay intact.
+        conflict_query = {
+            "$or": [
+                {"name": riot_name.lower().strip(), "tag": riot_tag.lower().strip()}
+            ]
+        }
+        if new_puuid:
+            conflict_query["$or"].append({"puuid": new_puuid})
+        for owner in users.find(conflict_query):
+            if str(owner.get("discord_id")) != discord_id:
+                log.warning(
+                    "Link rejected: Riot ID %s#%s already linked to discord id %s",
+                    riot_name,
+                    riot_tag,
+                    owner.get("discord_id"),
+                )
+                await ctx.send(_ALREADY_LINKED)
+                return
+
+        set_fields = {
+            "discord_id": discord_id,
+            "name": riot_name.lower().strip(),
+            "tag": riot_tag.lower().strip(),
+        }
+        if new_puuid:
+            set_fields["puuid"] = new_puuid
         users.update_one(
             {"discord_id": discord_id},
-            {
-                "$set": {
-                    "discord_id": discord_id,
-                    "name": riot_name.lower().strip(),
-                    "tag": riot_tag.lower().strip(),
-                }
-            },
+            {"$set": set_fields},
             upsert=True,
         )
 
@@ -86,8 +99,10 @@ class LinkRiotCommand(BotCommands):
         mmr_collection.update_one(
             {"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False
         )
-        tdm_mmr_collection.update_one(
-            {"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False
-        )
 
-        await ctx.send(f"Successfully linked {full_name} to your Discord account.")
+        await ctx.send(
+            f"Successfully linked {tracker_link(riot_name, riot_tag)} to your Discord account."
+        )
+        log.info(
+            "Linked Riot ID %s#%s to discord id %s", riot_name, riot_tag, discord_id
+        )

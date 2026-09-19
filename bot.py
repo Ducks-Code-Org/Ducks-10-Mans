@@ -1,58 +1,62 @@
 """Hold various general functions of the bot."""
 
+import logging
 from datetime import datetime, timezone
-from calendar import monthrange
 
 import discord
 from discord.ext import commands
 
-from views.signup_view import SignupView
 from commands.leaderboard import LeaderboardCommand
-from database import mmr_collection, users, tdm_mmr_collection, seasons
-from globals import TIME_ZONE_CST
+from database import mmr_collection, seasons, users
+from game.stats_helper import DEFAULT_MMR
+from views.signup_view import SignupView
 
-try:
-    from dateutil.relativedelta import relativedelta
-except Exception:
-    relativedelta = None
+log = logging.getLogger(__name__)
 
 
 class CustomBot(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # 10 mans attributes
-        self.signup_view: SignupView = None
+        self.signup_view: SignupView | None = None
         self.match_not_reported = False
-        self.player_mmr = {}
-        self.player_names = {}
+        self.player_mmr: dict[str, dict] = {}
+        self.player_names: dict[str, str] = {}
         self.match_ongoing = False
-        self.selected_map = None
-        self.team1 = []
-        self.team2 = []
+        self.selected_map: str | None = None
+        self.team1: list[dict] = []
+        self.team2: list[dict] = []
         self.signup_active = False
         self.current_signup_message = None
-        self.queue = []
-        self.captain1 = None
-        self.captain2 = None
-        self.chosen_mode = None
+        self.current_teams_message = None
+        self.queue: list[dict] = []
+        self.captain1: dict | None = None
+        self.captain2: dict | None = None
+        self.chosen_mode: str | None = None
 
         self.match_channel = None
         self.match_role = None
         self.match_name = "10-Mans"
 
-        # TDM attributes
-        self.tdm_queue = []
-        self.tdm_team1 = []
-        self.tdm_team2 = []
-        self.tdm_match_ongoing = False
-        self.tdm_selected_map = None
-        self.tdm_match_role = None
-        self.tdm_match_channel = None
-        self.tdm_current_message = None
-        self.tdm_signup_active = False
+        # Increments every time a match-setup cycle starts or is cancelled.
+        # Setup views capture the current value and treat any change as
+        # "this setup was cancelled or superseded" (e.g. by !cancel).
+        self.setup_generation = 0
+
+        # Discord log mirror flush task (started in on_ready).
+        self.mirror_flush_loop = None
+
+        # Duck Coins (issue #34)
+        self.bet_session: dict | None = None
+        self.double_downs: set[str] = set()
+        self.map_override_last: int = 0
+        self.map_override_last_by: str | None = None
+        self.map_override_deadline: float | None = None
+        # Every override wager this match, in order: [{"payer", "amount"}].
+        # Used to refund the whole escalation chain on cancel/crash.
+        self.map_override_chain: list[dict] = []
 
         self.load_mmr_data()
-        self.load_tdm_mmr_data()
         seasons.update_one(
             {"_id": "current"},
             {
@@ -68,29 +72,6 @@ class CustomBot(commands.Bot):
                 }
             },
             upsert=True,
-        )
-
-    def _two_months_after(self, start_utc: datetime) -> datetime:
-        if relativedelta is not None:
-            return start_utc + relativedelta(months=+2)
-
-        # Fallback
-        y, m = start_utc.year, start_utc.month
-        m += 2
-        while m > 12:
-            y += 1
-            m -= 12
-
-        d = min(start_utc.day, monthrange(y, m)[1])
-        return datetime(
-            y,
-            m,
-            d,
-            start_utc.hour,
-            start_utc.minute,
-            start_utc.second,
-            start_utc.microsecond,
-            tzinfo=timezone.utc,
         )
 
     def create_new_season(self, *, reset_player_stats: bool = True, winner) -> dict:
@@ -129,7 +110,15 @@ class CustomBot(commands.Bot):
             upsert=True,
         )
 
+        # Duck Coins are per-season currency: they reset with the stats
+        # reset, so `!newseason noreset` preserves coin balances too.
+        # Per-match coin state (bet escrow, doubledowns, map-override
+        # escalation) is per-match, not per-season, so it is always dropped.
+        from game.duck_coins import clear_season_coin_state, reset_all_coins
+
+        clear_season_coin_state(self)
         if reset_player_stats:
+            reset_all_coins()
             self._reset_all_players_for_new_season(next_num)
 
         return new_season_obj
@@ -139,14 +128,14 @@ class CustomBot(commands.Bot):
         Hard reset of everyone’s per‑season stats and MMR in the correct collections.
         Also resets in-memory caches so commands reflect the reset immediately.
         """
-        BASE_MMR = 1000
-
-        # Reset core 10-mans stats in db
+        # Reset core 10-mans stats in db. MMR starts at 0 and is re-seeded
+        # (100×VLR) after each player's first reported match of the season.
+        # (Duck Coins are zeroed by create_new_season alongside this reset.)
         mmr_collection.update_many(
             {},
             {
                 "$set": {
-                    "mmr": BASE_MMR,
+                    "mmr": DEFAULT_MMR,
                     "wins": 0,
                     "losses": 0,
                     "total_combat_score": 0,
@@ -156,33 +145,20 @@ class CustomBot(commands.Bot):
                     "total_rounds_played": 0,
                     "average_combat_score": 0,
                     "kill_death_ratio": 0,
-                }
-            },
-        )
-
-        # Reset TDM stats in db
-        tdm_mmr_collection.update_many(
-            {},
-            {
-                "$set": {
-                    "tdm_mmr": BASE_MMR,
-                    "tdm_wins": 0,
-                    "tdm_losses": 0,
-                    "tdm_total_kills": 0,
-                    "tdm_total_deaths": 0,
-                    "tdm_matches_played": 0,
-                    "tdm_avg_kills": 0.0,
-                    "tdm_kd_ratio": 0.0,
+                    "total_rating_points": 0.0,
+                    "total_rating_rounds": 0,
+                    "avg_rating": None,
+                    "previous_rank": None,
+                    "current_rank": None,
                 }
             },
         )
 
         # 3) Reset in-memory cache
         for _pid, stats in list(self.player_mmr.items()):
-            # Core 10-mans
             stats.update(
                 {
-                    "mmr": BASE_MMR,
+                    "mmr": DEFAULT_MMR,
                     "wins": 0,
                     "losses": 0,
                     "total_combat_score": 0,
@@ -192,35 +168,25 @@ class CustomBot(commands.Bot):
                     "total_rounds_played": 0,
                     "average_combat_score": 0,
                     "kill_death_ratio": 0,
+                    "total_rating_points": 0.0,
+                    "total_rating_rounds": 0,
                 }
             )
-            if "tdm_mmr" in stats:
-                stats.update(
-                    {
-                        "tdm_mmr": BASE_MMR,
-                        "tdm_wins": 0,
-                        "tdm_losses": 0,
-                        "tdm_total_kills": 0,
-                        "tdm_total_deaths": 0,
-                        "tdm_matches_played": 0,
-                        "tdm_avg_kills": 0.0,
-                        "tdm_kd_ratio": 0.0,
-                        "tdm_streak": 0,
-                        "tdm_performance_history": [],
-                    }
-                )
 
         self.load_mmr_data()
-        self.load_tdm_mmr_data()
 
     def load_mmr_data(self):
         self.player_mmr.clear()
         self.player_names.clear()
 
+        # mmr_data is keyed by player_id (the Discord id). If duplicate docs
+        # exist for a player, prefer the one with real stats so a stale
+        # default doc can't silently zero out a player's record.
+        doc_scores = {}
         for doc in mmr_collection.find():
             player_id = doc["player_id"]
-            self.player_mmr[player_id] = {
-                "mmr": doc.get("mmr", 1000),
+            entry = {
+                "mmr": doc.get("mmr", DEFAULT_MMR),
                 "wins": doc.get("wins", 0),
                 "losses": doc.get("losses", 0),
                 "total_combat_score": doc.get("total_combat_score", 0),
@@ -230,7 +196,17 @@ class CustomBot(commands.Bot):
                 "total_rounds_played": doc.get("total_rounds_played", 0),
                 "average_combat_score": doc.get("average_combat_score", 0),
                 "kill_death_ratio": doc.get("kill_death_ratio", 0),
+                "total_rating_points": doc.get("total_rating_points", 0.0),
+                "total_rating_rounds": doc.get("total_rating_rounds", 0),
             }
+            score = (
+                doc.get("matches_played", 0),
+                doc.get("wins", 0) + doc.get("losses", 0),
+            )
+
+            if player_id not in self.player_mmr or score > doc_scores[player_id]:
+                self.player_mmr[player_id] = entry
+                doc_scores[player_id] = score
 
     def save_mmr_data(self):
         for player_id, stats in self.player_mmr.items():
@@ -257,228 +233,12 @@ class CustomBot(commands.Bot):
                         "total_rounds_played": stats.get("total_rounds_played", 0),
                         "average_combat_score": stats.get("average_combat_score", 0),
                         "kill_death_ratio": stats.get("kill_death_ratio", 0),
+                        "total_rating_points": stats.get("total_rating_points", 0.0),
+                        "total_rating_rounds": stats.get("total_rating_rounds", 0),
                     }
                 },
                 upsert=True,
             )
-
-    # adjust MMR and track wins/losses
-    def adjust_mmr(self, winning_team, losing_team):
-        MMR_CONSTANT = 32
-
-        # Calculate average MMR for winning and losing teams
-        winning_team_mmr = sum(
-            self.player_mmr[player["id"]]["mmr"] for player in winning_team
-        ) / len(winning_team)
-        losing_team_mmr = sum(
-            self.player_mmr[player["id"]]["mmr"] for player in losing_team
-        ) / len(losing_team)
-
-        # Calculate expected results
-        expected_win = 1 / (1 + 10 ** ((losing_team_mmr - winning_team_mmr) / 400))
-        expected_loss = 1 / (1 + 10 ** ((winning_team_mmr - losing_team_mmr) / 400))
-
-        # Adjust MMR for winning team
-        for player in winning_team:
-            player_id = player["id"]
-            current_mmr = self.player_mmr[player_id]["mmr"]
-            new_mmr = current_mmr + MMR_CONSTANT * (1 - expected_win)
-            self.player_mmr[player_id]["mmr"] = round(new_mmr)
-            self.player_mmr[player_id]["wins"] += 1
-
-        # Adjust MMR for losing team
-        for player in losing_team:
-            player_id = player["id"]
-            current_mmr = self.player_mmr[player_id]["mmr"]
-            new_mmr = current_mmr + MMR_CONSTANT * (0 - expected_loss)
-            self.player_mmr[player_id]["mmr"] = max(0, round(new_mmr))
-            self.player_mmr[player_id]["losses"] += 1
-
-    def adjust_tdm_mmr(self, winning_team, losing_team):
-
-        BASE_MMR_CHANGE = 25
-        MAX_MMR_CHANGE = 35
-        K_FACTOR = 32
-
-        winning_team_mmr = sum(
-            self.player_mmr[player["id"]].get("tdm_mmr", 1000)
-            for player in winning_team
-        ) / len(winning_team)
-
-        losing_team_mmr = sum(
-            self.player_mmr[player["id"]].get("tdm_mmr", 1000) for player in losing_team
-        ) / len(losing_team)
-
-        expected_win = 1 / (1 + 10 ** ((losing_team_mmr - winning_team_mmr) / 400))
-        expected_loss = 1 / (1 + 10 ** ((winning_team_mmr - losing_team_mmr) / 400))
-        for player in winning_team:
-            player_id = player["id"]
-            self.ensure_tdm_player_mmr(player_id)
-
-            performance_mod = self._calculate_tdm_performance_modifier(player_id)
-
-            uncertainty_mod = self._calculate_tdm_uncertainty_modifier(player_id)
-
-            raw_mmr_change = K_FACTOR * (1 - expected_win)
-            modified_mmr_change = raw_mmr_change * performance_mod * uncertainty_mod
-
-            final_mmr_change = min(
-                MAX_MMR_CHANGE, max(BASE_MMR_CHANGE, modified_mmr_change)
-            )
-
-            # Update player's MMR and record
-            current_mmr = self.player_mmr[player_id].get("tdm_mmr", 1000)
-            self.player_mmr[player_id]["tdm_mmr"] = round(
-                current_mmr + final_mmr_change
-            )
-            self.player_mmr[player_id]["tdm_wins"] = (
-                self.player_mmr[player_id].get("tdm_wins", 0) + 1
-            )
-            self.player_mmr[player_id]["latest_tdm_mmr_change"] = final_mmr_change
-
-        # Process losing team
-        for player in losing_team:
-            player_id = player["id"]
-            self.ensure_tdm_player_mmr(player_id)
-            performance_mod = self._calculate_tdm_performance_modifier(player_id)
-
-            uncertainty_mod = self._calculate_tdm_uncertainty_modifier(player_id)
-
-            raw_mmr_change = K_FACTOR * (0 - expected_loss)
-            modified_mmr_change = raw_mmr_change * performance_mod * uncertainty_mod
-
-            final_mmr_change = max(
-                -MAX_MMR_CHANGE, min(-BASE_MMR_CHANGE, modified_mmr_change)
-            )
-
-            # Update player's MMR and record
-            current_mmr = self.player_mmr[player_id].get("tdm_mmr", 1000)
-            self.player_mmr[player_id]["tdm_mmr"] = max(
-                0, round(current_mmr + final_mmr_change)
-            )
-            self.player_mmr[player_id]["tdm_losses"] = (
-                self.player_mmr[player_id].get("tdm_losses", 0) + 1
-            )
-            self.player_mmr[player_id]["latest_tdm_mmr_change"] = final_mmr_change
-
-    def save_tdm_mmr_data(self):
-        """Save TDM MMR data to the database"""
-        for player_id, stats in self.player_mmr.items():
-            user_data = users.find_one({"discord_id": str(player_id)})
-            if user_data:
-                riot_name = user_data.get("name", "Unknown")
-                riot_tag = user_data.get("tag", "Unknown")
-                name = f"{riot_name}#{riot_tag}"
-            else:
-                name = "Unknown"
-
-            if "tdm_mmr" in stats:
-                tdm_mmr_collection.update_one(
-                    {"player_id": player_id},
-                    {
-                        "$set": {
-                            "tdm_mmr": stats["tdm_mmr"],
-                            "tdm_wins": stats["tdm_wins"],
-                            "tdm_losses": stats["tdm_losses"],
-                            "name": name,
-                            "tdm_total_kills": stats.get("tdm_total_kills", 0),
-                            "tdm_total_deaths": stats.get("tdm_total_deaths", 0),
-                            "tdm_matches_played": stats.get(
-                                "tdm_matches_played",
-                                stats["tdm_wins"] + stats["tdm_losses"],
-                            ),
-                            "tdm_avg_kills": stats.get("tdm_avg_kills", 0),
-                            "tdm_kd_ratio": stats.get("tdm_kd_ratio", 0),
-                        }
-                    },
-                    upsert=True,
-                )
-
-    def load_tdm_mmr_data(self):
-        for doc in tdm_mmr_collection.find():
-            player_id = doc["player_id"]
-            if player_id not in self.player_mmr:
-                self.player_mmr[player_id] = {}
-
-            self.player_mmr[player_id].update(
-                {
-                    "tdm_mmr": doc.get("tdm_mmr", 1000),
-                    "tdm_wins": doc.get("tdm_wins", 0),
-                    "tdm_losses": doc.get("tdm_losses", 0),
-                    "tdm_total_kills": doc.get("tdm_total_kills", 0),
-                    "tdm_total_deaths": doc.get("tdm_total_deaths", 0),
-                    "tdm_matches_played": doc.get("tdm_matches_played", 0),
-                    "tdm_avg_kills": doc.get("tdm_avg_kills", 0),
-                    "tdm_kd_ratio": doc.get("tdm_kd_ratio", 0),
-                }
-            )
-
-    def ensure_tdm_player_mmr(self, player_id):
-        if player_id not in self.player_mmr:
-            self.player_mmr[player_id] = {}
-
-        player_data = self.player_mmr[player_id]
-
-        tdm_data = tdm_mmr_collection.find_one({"player_id": player_id})
-
-        if tdm_data:
-            player_data.update(
-                {
-                    "tdm_mmr": tdm_data.get("tdm_mmr", 1000),
-                    "tdm_wins": tdm_data.get("tdm_wins", 0),
-                    "tdm_losses": tdm_data.get("tdm_losses", 0),
-                    "tdm_total_kills": tdm_data.get("tdm_total_kills", 0),
-                    "tdm_total_deaths": tdm_data.get("tdm_total_deaths", 0),
-                    "tdm_matches_played": tdm_data.get("tdm_matches_played", 0),
-                    "tdm_avg_kills": tdm_data.get("tdm_avg_kills", 0.0),
-                    "tdm_kd_ratio": tdm_data.get("tdm_kd_ratio", 0.0),
-                    "tdm_streak": tdm_data.get("tdm_streak", 0),
-                    "tdm_performance_history": tdm_data.get(
-                        "tdm_performance_history", []
-                    ),
-                }
-            )
-        else:
-            if "tdm_mmr" not in player_data:
-                player_data.update(
-                    {
-                        "tdm_mmr": 1000,
-                        "tdm_wins": 0,
-                        "tdm_losses": 0,
-                        "tdm_total_kills": 0,
-                        "tdm_total_deaths": 0,
-                        "tdm_matches_played": 0,
-                        "tdm_avg_kills": 0.0,
-                        "tdm_kd_ratio": 0.0,
-                        "tdm_streak": 0,
-                        "tdm_performance_history": [],
-                    }
-                )
-
-    def _calculate_tdm_performance_modifier(self, player_id):
-        player_data = self.player_mmr[player_id]
-        history = player_data.get("tdm_performance_history", [])
-
-        if not history:
-            return 1.0
-
-        avg_recent_kd = sum(history) / len(history)
-
-        modifier = 1.0 + (avg_recent_kd - 1.0) * 0.2
-        return max(0.8, min(1.2, modifier))
-
-    def _calculate_tdm_uncertainty_modifier(self, player_id):
-        player_data = self.player_mmr[player_id]
-        matches_played = player_data.get("tdm_matches_played", 0)
-
-        if matches_played < 10:
-            return 1.5
-        elif matches_played < 20:
-            return 1.25
-        elif matches_played < 30:
-            return 1.1
-        else:
-            return 1.0
 
     def ensure_player_mmr(self, player_id, player_names):
         if player_id not in self.player_mmr:
@@ -496,7 +256,7 @@ class CustomBot(commands.Bot):
 
     def _init_player_mmr_entry(self, player_id):
         self.player_mmr[player_id] = {
-            "mmr": 1000,
+            "mmr": DEFAULT_MMR,
             "wins": 0,
             "losses": 0,
             "total_combat_score": 0,
@@ -506,71 +266,174 @@ class CustomBot(commands.Bot):
             "total_rounds_played": 0,
             "average_combat_score": 0,
             "kill_death_ratio": 0,
+            "total_rating_points": 0.0,
+            "total_rating_rounds": 0,
         }
 
     async def setup_hook(self):
         await self.load_extension("commands.admin_commands")
+        await self.load_extension("commands.bug")
+        await self.load_extension("commands.coin_commands")
         await self.load_extension("commands.help")
         await self.load_extension("commands.interest")
         await self.load_extension("commands.leaderboard")
         await self.load_extension("commands.linkriot")
+        await self.load_extension("commands.maintenance_commands")
+        await self.load_extension("commands.ranks")
         await self.load_extension("commands.report")
         await self.load_extension("commands.signup")
         await self.load_extension("commands.stats")
-        await self.load_extension("commands.tdm_commands")
-        await self.load_extension("commands.bug")
-        print("Bot is ready and cogs are loaded.")
+        self.tree.on_error = self._on_app_command_error
+        await self.tree.sync()
+        log.info("Bot is ready and cogs are loaded.")
+
+    async def on_ready(self):
+        log.info("Bot connected as %s.", self.user)
+
+        # Crash safety: refund any bets/doubledowns/overrides the previous
+        # run left escrowed (e.g. the process died mid betting window).
+        # Journal is written after every mutation and cleared on
+        # settle/refund, so a surviving journal means settlement never
+        # happened. recover_orphaned_escrow is process-gated: on_ready also
+        # fires after a gateway reconnect, where a live window must NOT be
+        # refunded or its escrow would be paid out twice.
+        from game.duck_coins import recover_orphaned_escrow
+
+        recover_orphaned_escrow(self)
+
+        # Start flushing WARNING+ records into #bot-logs now that guilds
+        # are cached (the handler is created in main.py before run()).
+        handler = getattr(self, "discord_log_handler", None)
+        if handler is not None:
+            # Attach the bot so the handler can resolve #bot-logs; without
+            # this every queued record is silently dropped.
+            handler.bot = self
+            # on_ready can fire again after a reconnect; keep one flush task.
+            if self.mirror_flush_loop is None or self.mirror_flush_loop.done():
+                self.mirror_flush_loop = self.loop.create_task(
+                    self._flush_discord_logs(handler)
+                )
+
+        # Stale-resource cleanup must never run while a live signup/match
+        # owns channels or roles: it deletes every "match"-named channel and
+        # role, which would tear down an active match on a reconnect.
+        if self.signup_active or self.match_ongoing or self.match_channel:
+            log.info(
+                "Skipping old match resource purge: signup/match is active "
+                "(signup_active=%s match_ongoing=%s)",
+                self.signup_active,
+                self.match_ongoing,
+            )
+        else:
+            await self.purge_old_match_roles()
+            await self.purge_old_match_channels()
+        await self.send_new_leaderboard()
+
+    async def _flush_discord_logs(self, handler):
+        """Periodically drain queued log records into #bot-logs."""
+        import asyncio
+
+        try:
+            while True:
+                await asyncio.sleep(5)
+                await handler.flush_pending()
+        except asyncio.CancelledError:
+            pass
+
+    async def on_command(self, ctx):
+        log.info(
+            "Command !%s invoked by %s in #%s", ctx.command, ctx.author, ctx.channel
+        )
+
+    async def on_app_command_completion(self, interaction, command):
+        log.info(
+            "Slash command /%s invoked by %s in #%s",
+            getattr(command, "qualified_name", command),
+            interaction.user,
+            interaction.channel,
+        )
+
+    async def _on_app_command_error(self, interaction, error):
+        log.error(
+            "Error in slash command /%s by %s: %r",
+            getattr(interaction.command, "qualified_name", interaction.command),
+            interaction.user,
+            error,
+            exc_info=error,
+        )
+
+    async def on_error(self, event_method, /, *args, **kwargs):
+        # Last-resort handler for any event not covered by a specific
+        # try/except (e.g. on_ready startup tasks).
+        log.error("Unhandled exception in event %s", event_method, exc_info=True)
+
+    async def on_command_error(self, ctx, error):
+        if isinstance(error, commands.CommandNotFound):
+            log.debug("Unknown command from %s: %s", ctx.author, ctx.message.content)
+            return
+        if isinstance(error, commands.MissingPermissions):
+            log.warning("%s lacks permissions for !%s", ctx.author, ctx.command)
+        elif isinstance(error, (commands.MissingRole, commands.MissingAnyRole)):
+            log.warning("%s lacks role for !%s", ctx.author, ctx.command)
+        elif isinstance(error, commands.CheckFailure):
+            log.warning("Check failed for !%s by %s", ctx.command, ctx.author)
+        else:
+            log.error(
+                "Unhandled error in !%s by %s: %r",
+                ctx.command,
+                ctx.author,
+                error,
+                exc_info=error,
+            )
 
     async def purge_old_match_roles(self):
-        print("Checking for old match roles to delete...")
+        log.info("Checking for old match roles to delete...")
+        found_any = False
         for guild in self.guilds:
-            # Find roles with 'match' or 'tdm' in the name (case-insensitive)
-            old_roles = list(
-                filter(
-                    lambda r: "match" in r.name.lower() or "tdm" in r.name.lower(),
-                    guild.roles,
-                )
+            # Find roles with 'match' in the name (case-insensitive)
+            old_roles = [r for r in guild.roles if "match" in r.name.lower()]
+            if not old_roles:
+                continue
+            found_any = True
+            log.info(
+                "Deleting roles in guild '%s': %s",
+                guild.name,
+                [role.name for role in old_roles],
             )
-            if old_roles:
-                print(
-                    f"Deleting roles in guild '{guild.name}':",
-                    [role.name for role in old_roles],
-                )
-                for role in old_roles:
-                    try:
-                        await role.delete()
-                    except discord.HTTPException:
-                        pass
-        if not old_roles:
-            print("No old roles found.")
+            for role in old_roles:
+                try:
+                    await role.delete()
+                except discord.HTTPException:
+                    pass
+        if not found_any:
+            log.info("No old roles found.")
 
     async def purge_old_match_channels(self):
-        print("Checking for old match channels to delete...")
+        log.info("Checking for old match channels to delete...")
+        found_any = False
         for guild in self.guilds:
-            # Find channels with 'match' or 'tdm' in the name (case-insensitive)
-            old_channels = list(
-                filter(
-                    lambda c: "match" in c.name.lower() or "tdm" in c.name.lower(),
-                    guild.channels,
-                )
+            # Find channels with 'match' in the name (case-insensitive)
+            old_channels = [c for c in guild.channels if "match" in c.name.lower()]
+            if not old_channels:
+                continue
+            found_any = True
+            log.info(
+                "Deleting channels in guild '%s': %s",
+                guild.name,
+                [channel.name for channel in old_channels],
             )
-            if old_channels:
-                print(
-                    f"Deleting channels in guild '{guild.name}':",
-                    [channel.name for channel in old_channels],
-                )
-                for channel in old_channels:
-                    try:
-                        await channel.delete()
-                    except discord.HTTPException:
-                        pass
-        if not old_channels:
-            print("No old channels found.")
+            for channel in old_channels:
+                try:
+                    await channel.delete()
+                except discord.HTTPException:
+                    pass
+        if not found_any:
+            log.info("No old channels found.")
 
     async def send_new_leaderboard(self):
         # If there is a channel named #leaderboard in any guild, send a new leaderboard
         # Leaderboard matches the response from the `!leaderboard` command
-        print("Sending new leaderboard to all #leaderboard channels...")
+        log.info("Sending new leaderboard to all #leaderboard channels...")
 
         for guild in self.guilds:
             leaderboard_channel = discord.utils.get(
@@ -599,10 +462,4 @@ class CustomBot(commands.Bot):
                             content=content, view=leaderboard_view, silent=True
                         )
                 except Exception as e:
-                    print(f"Failed to send leaderboard: {e}")
-
-    async def on_ready(self):
-        print(f"Bot connected as {self.user}.")
-        await self.purge_old_match_roles()
-        await self.purge_old_match_channels()
-        await self.send_new_leaderboard()
+                    log.error("Failed to send leaderboard: %s", e)

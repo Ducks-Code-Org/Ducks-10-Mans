@@ -1,9 +1,13 @@
 # views/interest_view.py
+import logging
+
 import discord
-from discord.ui import View, Button
+from discord.ui import Button, View
 
 from database import interests, users
 from globals import TIME_ZONE_CST
+
+log = logging.getLogger(__name__)
 
 
 class InterestView(View):
@@ -92,12 +96,14 @@ class InterestView(View):
     async def join_callback(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
         self._ensure_membership(user_id, add=True)
+        log.info("%s joined interest slot %s", interaction.user, self.scheduled_at_utc)
         await interaction.response.defer(thinking=False)
         await self._render(interaction)
 
     async def leave_callback(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
         self._ensure_membership(user_id, add=False)
+        log.info("%s left interest slot %s", interaction.user, self.scheduled_at_utc)
         await interaction.response.defer(thinking=False)
         await self._render(interaction)
 

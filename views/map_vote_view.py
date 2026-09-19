@@ -1,19 +1,31 @@
 import asyncio
+import logging
 import random
 
 import discord
 from discord.ui import Button
 
 from database import users
-from views.captains_drafting_view import SecondCaptainChoiceView
+from game.stats_helper import DEFAULT_MMR
+from tracker_links import display_line_for
 from views import safe_reply
+from views.captains_drafting_view import SecondCaptainChoiceView
+from game.voice_presence import move_teams_to_voice, voice_presence_enabled
+
+log = logging.getLogger(__name__)
 
 
 class MapVoteView(discord.ui.View):
-    def __init__(self, ctx, bot, map_choices):
+    def __init__(self, ctx, bot, map_choices, setup_generation: int | None = None):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.bot = bot
+        # Capture the current setup cycle so we can detect a later !cancel
+        # (or a new signup superseding this vote). Parent views pass their own
+        # captured generation so a cancel racing view creation is still seen.
+        self.setup_generation = (
+            bot.setup_generation if setup_generation is None else setup_generation
+        )
 
         # Setup Task Runners
         self.interaction_request_queue = (
@@ -36,7 +48,7 @@ class MapVoteView(discord.ui.View):
         self.vote_lock = asyncio.Lock()
         self.vote_time_remaining = 25
 
-        print("Starting new map vote...")
+        log.info("Starting new map vote...")
 
     async def setup(self):
         # Select 3 random maps from the given pool
@@ -64,8 +76,16 @@ class MapVoteView(discord.ui.View):
             self.map_buttons.append(button)
 
     async def send_view(self):
+        if self.is_setup_cancelled():
+            log.info("Map vote not sent because match setup was cancelled.")
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
+
         if not self.bot.chosen_mode:
-            print("No mode selected at start of map vote.")
+            log.warning("No mode selected at start of map vote.")
             await self.ctx.send(
                 "Error: Game mode not selected. Please start a new queue."
             )
@@ -85,6 +105,9 @@ class MapVoteView(discord.ui.View):
             try:
                 # Process the interaction for this interaction
                 await self.handle_map_vote(interaction, map)
+            except Exception as e:
+                # Keep the queue alive so later interactions still work
+                log.error("Error processing map vote interaction: %s", e, exc_info=e)
             finally:
                 # Ensure the waiting coroutine is notified, even if an error occurs
                 if not fut.done():
@@ -95,11 +118,24 @@ class MapVoteView(discord.ui.View):
             self.interaction_queue_task.cancel()
             self.interaction_queue_task = None
 
+    def is_setup_cancelled(self) -> bool:
+        """Whether this setup cycle was cancelled (e.g. by !cancel)."""
+        return self.bot.setup_generation != self.setup_generation
+
     async def handle_map_vote(self, interaction: discord.Interaction, map):
         # Ensure vote is valid
         if self.voting_phase_ended:
             await safe_reply(
                 interaction, "This voting phase has already ended", ephemeral=True
+            )
+            return
+        if self.is_setup_cancelled():
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            await safe_reply(
+                interaction, "This match setup was cancelled.", ephemeral=True
             )
             return
         if str(interaction.user.id) not in [str(p["id"]) for p in self.bot.queue]:
@@ -120,13 +156,26 @@ class MapVoteView(discord.ui.View):
         await interaction.message.edit(view=self)
 
         # Reply and check for vote finish
-        print(f"Recorded new vote. Current state: {self.map_votes}")
+        log.info("Recorded new vote. Current state: %s", self.map_votes)
         await safe_reply(interaction, f"Voted {map}.", ephemeral=True)
         await self.check_for_winner()
 
     async def check_for_winner(self):
+        if self.is_setup_cancelled():
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
+
         async with self.vote_lock:
             if self.voting_phase_ended:
+                return
+            if self.is_setup_cancelled():
+                self.voting_phase_ended = True
+                self.stop()
+                self.cancel_interaction_queue_task()
+                self.cancel_timeout_timer()
                 return
             # Check for majority winner
             highest_number_of_votes = max(self.map_votes.values())
@@ -143,13 +192,14 @@ class MapVoteView(discord.ui.View):
                 )
                 message = f"{winning_map} wins by majority!"
                 await self.ctx.send(message)
-                print(message)
+                log.info(message)
                 await self.close_vote(winning_map)
                 return
 
-            # Check for timeout winner
-            if self.timeout:
+            # Check for timeout winner, or once every player has voted
+            if self.timeout or len(self.voters) >= len(self.bot.queue):
                 self.voting_phase_ended = True
+                result = "timeout" if self.timeout else "final vote"
                 # Collect all maps that have the highest number of votes (handles ties)
                 winners = []
                 for map_name, vote_count in self.map_votes.items():
@@ -159,21 +209,32 @@ class MapVoteView(discord.ui.View):
                 if len(winners) > 1:
                     message = f"Tie! Randomly selected: **{winning_map}**"
                     await self.ctx.send(message)
-                    print(message)
+                    log.info(message)
                 else:
-                    message = f"{winning_map} wins by timeout!"
+                    message = f"{winning_map} wins by {result}!"
                     await self.ctx.send(message)
-                    print(message)
+                    log.info(message)
                 await self.close_vote(winning_map)
                 return
 
     async def close_vote(self, winning_map: str):
+        if self.is_setup_cancelled():
+            log.info("Map vote skipping close because match setup was cancelled.")
+            self.voting_phase_ended = True
+            self.stop()
+            self.cancel_interaction_queue_task()
+            self.cancel_timeout_timer()
+            return
+
         self.winning_map = winning_map
         self.bot.selected_map = winning_map
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
-        await self.view_message.edit(content="Vote for the map to play:", view=self)
+        try:
+            await self.view_message.edit(content="Vote for the map to play:", view=self)
+        except discord.NotFound:
+            pass
 
         # Finalize match setup
         if self.bot.chosen_mode == "Balanced":
@@ -190,7 +251,9 @@ class MapVoteView(discord.ui.View):
                     self.cancel_timeout_timer()
                     return
 
-            choice_view = SecondCaptainChoiceView(self.ctx, self.bot)
+            choice_view = SecondCaptainChoiceView(
+                self.ctx, self.bot, self.setup_generation
+            )
             await choice_view.send_view()
         else:
             await self.ctx.send("Error: No game mode selected!")
@@ -203,17 +266,19 @@ class MapVoteView(discord.ui.View):
         # Assign 2 captains randomly from the top 5 MMR players, with a decreasing bias for lower MMR
         sorted_players = sorted(
             self.bot.queue,
-            key=lambda p: self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", 1000),
+            key=lambda p: self.bot.player_mmr.get(str(p["id"]), {}).get(
+                "mmr", DEFAULT_MMR
+            ),
             reverse=True,
         )
 
         if len(sorted_players) < 2:
-            print(
+            log.warning(
                 "Not enough players in the queue to assign captains. Stopping queue..."
             )
             return False
         if len(sorted_players) < 5:
-            print("Warning: Less than 5 players detected in queue. Continuing...")
+            log.warning("Less than 5 players detected in queue. Continuing...")
             self.bot.captain1 = sorted_players[0]
             self.bot.captain2 = sorted_players[1]
             return True
@@ -236,9 +301,16 @@ class MapVoteView(discord.ui.View):
             )
         self.bot.captain1 = captain1
         self.bot.captain2 = captain2
+        log.info(
+            "Captains chosen: %s and %s", captain1.get("name"), captain2.get("name")
+        )
         return True
 
     async def finalize_match_setup(self):
+        if self.is_setup_cancelled():
+            log.info("Skipping match finalization because match setup was cancelled.")
+            return
+
         # Finalize teams after map chosen
         teams_embed = discord.Embed(
             title=f"Teams on {self.winning_map}",
@@ -249,24 +321,14 @@ class MapVoteView(discord.ui.View):
         attackers = []
         for p in self.bot.team1:
             ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", 1000)
-            if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
-                attackers.append(f"{rn}#{rt} (MMR:{mmr})")
-            else:
-                attackers.append(f"{p['name']} (MMR:{mmr})")
+            mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", DEFAULT_MMR)
+            attackers.append(f"{display_line_for(ud)} (MMR:{mmr})")
 
         defenders = []
         for p in self.bot.team2:
             ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", 1000)
-            if ud:
-                rn = ud.get("name", "Unknown")
-                rt = ud.get("tag", "Unknown")
-                defenders.append(f"{rn}#{rt} (MMR:{mmr})")
-            else:
-                defenders.append(f"{p['name']} (MMR:{mmr})")
+            mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", DEFAULT_MMR)
+            defenders.append(f"{display_line_for(ud)} (MMR:{mmr})")
 
         teams_embed.add_field(
             name="**Attackers:**", value="\n".join(attackers), inline=False
@@ -275,24 +337,54 @@ class MapVoteView(discord.ui.View):
             name="**Defenders:**", value="\n".join(defenders), inline=False
         )
 
-        await self.ctx.send(embed=teams_embed)
+        log.info(
+            "Match setup finalized: map=%s Attackers=%s Defenders=%s",
+            self.winning_map,
+            [p.get("name") for p in self.bot.team1],
+            [p.get("name") for p in self.bot.team2],
+        )
+        self.bot.current_teams_message = await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match, then `!report` to finalize results.")
+
+        from game.duck_coins import on_teams_announced, open_map_override_grace
+
+        # Open the grace window first so the match-channel powerup countdown
+        # reads the real deadline from its very first tick.
+        open_map_override_grace(self.bot)
+        await on_teams_announced(self.bot, self.ctx)
+
+        if voice_presence_enabled() and self.ctx.guild:
+            await move_teams_to_voice(self.ctx.guild, self.bot.team1, self.bot.team2)
 
         self.bot.match_ongoing = True
         self.bot.match_not_reported = True
-        await self.bot.match_channel.edit(name=f"{self.bot.match_name}《in-game》")
+        if self.bot.match_channel:
+            try:
+                await self.bot.match_channel.edit(
+                    name=f"{self.bot.match_name}《in-game》"
+                )
+            except (discord.NotFound, discord.HTTPException):
+                pass
 
     async def timeout_timer(self):
         for _ in range(25):
             await asyncio.sleep(1)
             if self.voting_phase_ended:
                 return
+            if self.is_setup_cancelled():
+                self.voting_phase_ended = True
+                self.stop()
+                self.cancel_interaction_queue_task()
+                return
             self.vote_time_remaining -= 1
             if self.view_message:
-                await self.view_message.edit(
-                    content=f"Vote for the map to play: ({self.vote_time_remaining}s)",
-                    view=self,
-                )
+                try:
+                    await self.view_message.edit(
+                        content=f"Vote for the map to play: ({self.vote_time_remaining}s)",
+                        view=self,
+                    )
+                except discord.NotFound:
+                    pass
         if not self.voting_phase_ended:
             self.timeout = True
             await self.check_for_winner()

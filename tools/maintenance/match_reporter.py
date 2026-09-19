@@ -1,10 +1,10 @@
 """This file is not connected to the bot. The purpose is to be able to add match data to the database in case something goes wrong"""
 
-from DebugTools.helpers.match_helper_functions import (
+from tools.ops.helpers.match_helper_functions import (
     display_match_info,
     get_custom_matchlist,
 )
-from DebugTools.helpers.change_helper_functions import (
+from tools.ops.helpers.change_helper_functions import (
     confirm_changes,
     get_changes_that_will_be_made,
 )

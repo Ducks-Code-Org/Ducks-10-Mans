@@ -6,6 +6,6 @@
 .idea/workspace.xml
 /.idea
 *.zip
-DebugTools/tools/match_reporter.py
+tools/maintenance/match_reporter.py
 env.bat
 **/*venv*
