@@ -303,6 +303,13 @@ def demo():
     assert bot.map_override_last == SETMAP_BASE_COST + 1
     reply = asyncio.run(setmap_override(bot, "1", "Nuke"))
     assert "isn't in the All Maps pool" in reply
+    # The map can't be "overridden" to itself — no charge, no state change.
+    reply = asyncio.run(setmap_override(bot, "1", "Haven"))
+    assert "already **Haven**" in reply, "same-map override must be rejected"
+    assert coins_of("2") == 100 - (
+        SETMAP_BASE_COST + 1
+    ), "same-map override must not charge"
+    assert bot.selected_map == "Haven", "same-map override must not change the map"
     bot.chosen_mode = "Balanced"
     bot.map_override_last = 0
     bot.map_override_last_by = None

@@ -832,6 +832,9 @@ async def setmap_override(bot, user_id: str, map_name: str, amount: int = None) 
     canonical = next((m for m in pool if m.lower() == wanted), None)
     if not canonical:
         return f"`{map_name}` isn't in the All Maps pool. Choose one of: {', '.join(pool)}."
+    if bot.selected_map == canonical:
+        e = duck_emote(bot)
+        return f"The map is already **{canonical}** — pick a different map to override."
     if bot.map_override_last_by == str(user_id):
         return "Wait for another player to override before you override again."
     last = bot.map_override_last
