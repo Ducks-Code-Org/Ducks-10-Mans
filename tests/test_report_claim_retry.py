@@ -478,7 +478,7 @@ def demo():
         ), f"expected exactly the match summary embed, got {ctx.embeds}"
         summary = ctx.embeds[0]
         assert summary.title == "Match Summary | 10-Mans", summary.title
-        assert len(summary.fields) == 2, summary.fields
+        assert len(summary.fields) == 3, summary.fields
         attackers, defenders = summary.fields[0], summary.fields[1]
         assert (
             "**+37** ×2" in attackers["value"]
@@ -489,10 +489,65 @@ def demo():
         assert "×2" not in defenders["value"], defenders
         assert summary.footer and "doubledown" in summary.footer.lower(), summary.footer
         assert "×2" in summary.footer, summary.footer
+        # Issue #204: the -10 delta drops player 2 from Stone (100) to Wood
+        # (<100), so the optional rank-changes section appears.
+        rank_field = summary.fields[2]
+        assert rank_field["name"] == "🏅 Rank Changes", rank_field
+        assert "⬇️" in rank_field["value"] and "<@2>" in rank_field["value"], rank_field
+        assert "Stone Rank" in rank_field["value"] and "Wood Rank" in rank_field["value"], rank_field
+
+        # Same match, but both players start at MMR 150 (Stone, stay Stone):
+        # +37 keeps player 1 in Stone, -10 keeps player 2 in Stone → no
+        # rank-changes field at all.
+        async def _run_no_tier_change():
+            bot = FakeBot()
+            bot.selected_map = "Ascent"
+            bot.double_downs = set()
+            bot.player_mmr = {
+                "1": {"mmr": 150, "wins": 2, "losses": 1, "matches_played": 3},
+                "2": {"mmr": 150, "wins": 2, "losses": 1, "matches_played": 3},
+            }
+            bot.save_mmr_data = lambda: None
+            cog = make_reporter(bot, fetch_result="ok", data_result=_match_payload())
+            ctx = EmbedCtx()
+            await cog.report(ctx)
+            return ctx
+
+        ctx = asyncio.run(_run_no_tier_change())
+        summary = ctx.embeds[0]
+        assert (
+            all(f["name"] != "🏅 Rank Changes" for f in summary.fields)
+        ), f"no rank field when nobody changed tier: {summary.fields}"
+
+        # Issue #204: an unranked (0 matches) player's first match ranks
+        # them — the section shows the unranked → tier promotion.
+        async def _run_first_match_rankup():
+            bot = FakeBot()
+            bot.selected_map = "Ascent"
+            bot.double_downs = set()
+            bot.player_mmr = {
+                "1": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
+            }
+            bot.save_mmr_data = lambda: None
+            cog = make_reporter(bot, fetch_result="ok", data_result=_match_payload())
+            ctx = EmbedCtx()
+            await cog.report(ctx)
+            return ctx
+
+        ctx = asyncio.run(_run_first_match_rankup())
+        summary = ctx.embeds[0]
+        rank_field = next(
+            (f for f in summary.fields if f["name"] == "🏅 Rank Changes"), None
+        )
+        assert rank_field is not None, f"first-match player must show a rankup: {summary.fields}"
+        assert "now ranked" in rank_field["value"] and "<@2>" in rank_field["value"], rank_field
+        assert "Wood Rank" in rank_field["value"], rank_field
 
         bot, ctx = asyncio.run(_run_summary(set()))
         summary = ctx.embeds[0]
         for field in summary.fields:
+            if field["name"] == "🏅 Rank Changes":
+                continue
             assert (
                 "**" not in field["value"]
             ), f"no delta may be bold without a doubledown: {field}"

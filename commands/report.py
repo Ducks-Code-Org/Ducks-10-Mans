@@ -18,7 +18,8 @@ from game.duck_coins import (
     refund_open_bets,
     settle_bets,
 )
-from game.ranks import SSR_NAME, role_mention, sync_player_rank
+from game.ranking import has_played
+from game.ranks import RANKS, SSR_NAME, rank_of, role_mention, sync_player_rank
 from game.recent_queue import remember_recent_queue
 from game.stats_helper import update_stats
 from globals import feature_enabled
@@ -710,6 +711,40 @@ class ReportCommand(BotCommands):
         if doubledown_ids:
             results_embed.set_footer(
                 text=f"×2 = doubledown ({DOUBLEDOWN_COST} coins): this match's MMR change doubled"
+            )
+
+        # Issue #204: rank-tier changes this match (unranked → ranked, or
+        # moving up/down between traditional MMR tiers). Optional section
+        # below the MMR gain/loss fields; omitted when nobody changed tier.
+        rank_changes = []
+        for p in self.bot.team1 + self.bot.team2:
+            pid = str(p["id"])
+            pre_stats = pre_update_mmr.get(pid, {})
+            post_stats = self.bot.player_mmr.get(pid, {})
+            tier_before = rank_of(pre_stats.get("mmr", 0)) if has_played(pre_stats) else None
+            tier_after = rank_of(post_stats.get("mmr", 0)) if has_played(post_stats) else None
+            if tier_before == tier_after:
+                continue
+            if tier_before is None:
+                rank_changes.append(f"<@{pid}> is now ranked: **{tier_after}**")
+            elif tier_after is None:
+                # Can't lose rank by playing: MMR never decreases to unranked
+                # here (a played player always keeps at least one match).
+                continue
+            else:
+                before_pos = next(
+                    i for i, (_, name, _) in enumerate(RANKS) if name == tier_before
+                )
+                after_pos = next(
+                    i for i, (_, name, _) in enumerate(RANKS) if name == tier_after
+                )
+                arrow = "⬆️" if after_pos < before_pos else "⬇️"
+                rank_changes.append(f"<@{pid}> {arrow} **{tier_before}** → **{tier_after}**")
+        if rank_changes:
+            results_embed.add_field(
+                name="🏅 Rank Changes",
+                value="\n".join(rank_changes),
+                inline=False,
             )
 
         # Post the results in the persistent #10-mans channel; the match
