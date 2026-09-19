@@ -248,8 +248,14 @@ def main():
     assert abs(d(17.3, 13, 500, 500, 1.0) - (10 + 60 / 7)) < 1e-9
     assert abs(d(8.7, 13, 500, 500, 1.0) - (-10.0)) < 1e-9
     # The new win-row (win by +4.3, equal MMR): A=10 adds +7.14 over the old row
-    for v, want in [(0.5, 50 / 7), (0.7, 10.0), (0.8, 90 / 7), (0.9, 110 / 7),
-                    (1.0, 130 / 7), (1.3, 180 / 7)]:
+    for v, want in [
+        (0.5, 50 / 7),
+        (0.7, 10.0),
+        (0.8, 90 / 7),
+        (0.9, 110 / 7),
+        (1.0, 130 / 7),
+        (1.3, 180 / 7),
+    ]:
         assert abs(d(17.3, 13, 500, 500, v) - want) < 0.01
     # No loser can gain at equal MMR: loss branch is B·(1−m) ≤ 0, r ≤ 0, skill may add
     # but only exceeds it above VLR ≈ 1.45 (accepted remainder); at 1.3 exactly:
