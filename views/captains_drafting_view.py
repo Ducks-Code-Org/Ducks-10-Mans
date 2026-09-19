@@ -32,6 +32,9 @@ class SecondCaptainChoiceView(discord.ui.View):
         self.decision_time_remaining = DECISION_TIMEOUT_SECONDS
         self.timeout_timer_task = asyncio.create_task(self.timeout_timer())
         self.decision_finished = False
+        # Set once the draft actually starts. Guards against the timeout tail
+        # and a captain's late click racing each other into two drafts.
+        self._draft_started = False
 
         # Buttons
         self.first_pick_button = discord.ui.Button(
@@ -100,11 +103,24 @@ class SecondCaptainChoiceView(discord.ui.View):
         log.info("Draft type chosen by %s: First Pick", interaction.user)
         self.cancel_timeout_timer()
         self.decision_finished = True
+
+        # Acknowledge the interaction FIRST. Discord must receive a response
+        # within 3 seconds; message edits can be slow and were previously
+        # burning that window, causing 404 Unknown interaction (10062).
+        if interaction.response.is_done():
+            await interaction.followup.send("First pick selected!", ephemeral=True)
+        else:
+            await interaction.response.send_message(
+                "First pick selected!", ephemeral=True
+            )
+
         self.first_pick_button.disabled = True
         self.double_pick_button.disabled = True
-        await interaction.message.edit(view=self)
+        try:
+            await interaction.message.edit(view=self)
+        except (discord.NotFound, discord.HTTPException):
+            log.warning("Could not disable draft-type buttons (message gone)")
 
-        await interaction.response.send_message("First pick selected!", ephemeral=True)
         await self.start_draft(single_pick=True)
 
     async def double_pick_callback(self, interaction: discord.Interaction):
@@ -114,16 +130,30 @@ class SecondCaptainChoiceView(discord.ui.View):
         log.info("Draft type chosen by %s: 2nd + 3rd Pick", interaction.user)
         self.cancel_timeout_timer()
         self.decision_finished = True
+
+        # Acknowledge the interaction FIRST (see first_pick_callback).
+        if interaction.response.is_done():
+            await interaction.followup.send("2nd + 3rd pick selected!", ephemeral=True)
+        else:
+            await interaction.response.send_message(
+                "2nd + 3rd pick selected!", ephemeral=True
+            )
+
         self.first_pick_button.disabled = True
         self.double_pick_button.disabled = True
-        await interaction.message.edit(view=self)
+        try:
+            await interaction.message.edit(view=self)
+        except (discord.NotFound, discord.HTTPException):
+            log.warning("Could not disable draft-type buttons (message gone)")
 
-        await interaction.response.send_message(
-            "2nd + 3rd pick selected!", ephemeral=True
-        )
         await self.start_draft(single_pick=False)
 
     async def start_draft(self, single_pick: bool):
+        # Only the first caller may start the draft: a captain clicking at the
+        # same moment the timeout tail fires would otherwise create two drafts.
+        if self._draft_started:
+            return
+        self._draft_started = True
         # Only proceed if this setup cycle is still the current one.
         if self.is_setup_cancelled():
             return
@@ -175,6 +205,9 @@ class SecondCaptainChoiceView(discord.ui.View):
             self.decision_finished = True
             return
         if self.view_message:
+            # Disable the buttons so a late click can't race the timeout tail.
+            for child in self.children:
+                child.disabled = True
             captain2 = getattr(self.bot, "captain2", None)
             if captain2:
                 try:

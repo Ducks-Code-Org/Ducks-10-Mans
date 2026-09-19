@@ -255,8 +255,21 @@ class ModeVoteView(discord.ui.View):
         team1, team2 = [], []
         t1_mmr = 0
         t2_mmr = 0
+        cap = max(1, len(players) // 2 + len(players) % 2)
         for player in players:
-            if t1_mmr <= t2_mmr:
+            # Send each player to the lower-total-MMR team. On a tie, prefer
+            # the team with fewer players. The old check (`t1_mmr <=
+            # t2_mmr`) stacked every player onto team1 whenever all MMRs
+            # were equal — e.g. a queue of new players all sitting at
+            # DEFAULT_MMR 0 — leaving one team empty. A hard per-team cap
+            # also stops a single high-MMR player from sucking everyone
+            # else onto the other side (9 vs 1).
+            t1_full = len(team1) >= cap
+            t2_full = len(team2) >= cap
+            if t2_full or (
+                not t1_full
+                and (t1_mmr < t2_mmr or (t1_mmr == t2_mmr and len(team1) <= len(team2)))
+            ):
                 team1.append(player)
                 t1_mmr += mmr_of(player)
             else:
