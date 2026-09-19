@@ -128,7 +128,8 @@ def recover_orphaned_escrow(bot) -> None:
     for pid in data.get("double_downs") or []:
         add_coins(pid, DOUBLEDOWN_COST)
         dd_refunded += DOUBLEDOWN_COST
-    # Refund the full map-override escalation chain to each payer (issue #195).
+    # Refund the journaled standing map-override wager to its payer (issue
+    # #195; with the live outbid refund from issue #205 it holds one wager).
     overrides_refunded = 0
     for entry in data.get("map_overrides") or []:
         try:
@@ -655,11 +656,11 @@ def refund_open_bets(bot) -> None:
 def refund_match_coins(bot) -> int:
     """Refund EVERY coin spent on the current match, in-memory only.
 
-    Covers all three sinks: escrowed bets, doubledown purchases, and map
-    override wagers. Called when a match is cancelled — since the match
-    never happens, none of that coin should be lost. Doubledown refunds are
-    what the player paid (DOUBLEDOWN_COST); map overrides refund the full
-    escalation chain so the coins trace back to who paid what.
+    Covers all three sinks: escrowed bets, doubledown purchases, and the
+    standing map-override wager. Called when a match is cancelled — since
+    the match never happens, none of that coin should be lost. Doubledown
+    refunds are what the player paid (DOUBLEDOWN_COST); with the live outbid
+    refund (issue #205), the override chain holds only the current wager.
 
     Returns the total number of coins refunded (0 when nothing to refund).
     """
@@ -681,9 +682,9 @@ def refund_match_coins(bot) -> int:
         total += DOUBLEDOWN_COST
     bot.double_downs = set()
 
-    # 3) Map override wagers: refund every step of the escalation chain to
-    # the player who paid it. Losing an outbid wager is NOT refunded here
-    # (that's the point of an outbid); only a cancelled match returns coins.
+    # 3) The standing map-override wager (issue #205): since outbid wagers
+    # are refunded live at override time, the chain holds at most one entry —
+    # the current holder's wager — which a cancelled match must return.
     for entry in getattr(bot, "map_override_chain", []):
         pid = entry.get("payer")
         amount = int(entry.get("amount", 0))
@@ -905,16 +906,32 @@ async def setmap_override(bot, user_id: str, map_name: str, amount: int = None) 
     if balance < cost:
         return insufficient(bot, balance, cost)
     add_coins(user_id, -cost)
+    # Issue #205: the player whose wager we just beat gets their coins back —
+    # being outbid should never cost a player their wager. The previous
+    # standing wager is the chain's last entry (the repeat-override gate
+    # guarantees it belongs to someone else).
+    outbid_entry = bot.map_override_chain[-1] if bot.map_override_chain else None
     bot.selected_map = canonical
     bot.map_override_last = cost
     bot.map_override_last_by = str(user_id)
-    # Journal each step of the escalation chain so a cancel or crash can
-    # refund every payer (issue #195). Outbid wagers stay journaled too:
-    # they are only refunded on a cancelled match, never when simply outbid.
-    bot.map_override_chain.append({"payer": str(user_id), "amount": cost})
+    # Journal the CURRENT standing wager only (issue #205): the outbid wager
+    # is refunded immediately, so a later cancel/crash must not refund it
+    # again. The chain always holds exactly one live wager.
+    bot.map_override_chain = [{"payer": str(user_id), "amount": cost}]
+    if outbid_entry:
+        outbid_pid = str(outbid_entry.get("payer"))
+        outbid_amount = int(outbid_entry.get("amount", 0))
+        if outbid_pid and outbid_amount:
+            add_coins(outbid_pid, outbid_amount)
+            log.info("Refunded %s coins to outbid player %s", outbid_amount, outbid_pid)
     persist_escrow(bot)
     e = duck_emote(bot)
     log.info("%s paid %s coins to override the map to %s", user_id, cost, canonical)
+    refund_part = (
+        f" {outbid_amount} {e} refunded to <@{outbid_pid}>."
+        if outbid_entry and outbid_amount
+        else ""
+    )
     if _in_grace_window(bot):
         # Issue #202: each override buys the bidding war more time — extend
         # the powerup deadline and re-render the countdown right away.
@@ -923,4 +940,7 @@ async def setmap_override(bot, user_id: str, map_name: str, amount: int = None) 
         # reflects the overridden map (issue #195).
         await _refresh_teams_embed(bot, canonical)
         await _refresh_powerup_notice(bot)
-    return f"<@{user_id}> paid {cost} {e} — the map is now **{canonical}**!"
+    return (
+        f"<@{user_id}> paid {cost} {e} — the map is now **{canonical}**!"
+        f"{refund_part}"
+    )
