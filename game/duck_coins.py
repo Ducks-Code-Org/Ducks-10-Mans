@@ -154,17 +154,34 @@ def recover_orphaned_escrow(bot) -> None:
         )
 
 
-def command_available(bot, *, requires_running_match: bool = True) -> str | None:
+def command_available(
+    bot, *, requires_running_match: bool = True, channel=None
+) -> str | None:
     """None when a Duck Coins command may run, else the rejection message.
 
     `!setmap` overrides the map during the captains draft, i.e. *before* the
     match is running, so it passes requires_running_match=False. `!bet` and
     `!doubledown` only make sense while a match is in progress.
+
+    `!setmap` and `!doubledown` additionally pass `channel=ctx.channel`: both
+    are powerups for the players in the current match, so they may only be
+    used inside the generated match-#### channel. `!bet` never passes a
+    channel — spectators bet from #10-mans or wherever they are. When no
+    match channel exists (e.g. a simulate run) there is nothing to enforce.
     """
     if not duck_coins_enabled():
         return "Duck Coins features are disabled."
     if requires_running_match and not bot.match_ongoing:
         return "No match is running right now."
+    if channel is not None:
+        match_channel = getattr(bot, "match_channel", None)
+        if match_channel is not None and getattr(channel, "id", None) != getattr(
+            match_channel, "id", None
+        ):
+            name = getattr(match_channel, "name", None) or getattr(
+                bot, "match_name", "match"
+            )
+            return f"Use this command in the `{name}` match channel."
     return None
 
 
@@ -275,6 +292,20 @@ def _match_players(bot) -> set[str]:
     return {str(p["id"]) for p in bot.team1 + bot.team2}
 
 
+def _signup_players(bot) -> set[str]:
+    """Everyone signed up for the current match.
+
+    The queue holds all match players from signup through cleanup, so it
+    covers the pre-teams draft window where !setmap is allowed. team1/team2
+    are unioned in so the check also holds if the queue is ever cleared
+    while a match is still running.
+    """
+    ids = {str(p["id"]) for p in getattr(bot, "queue", []) or []}
+    ids |= {str(p["id"]) for p in getattr(bot, "team1", []) or []}
+    ids |= {str(p["id"]) for p in getattr(bot, "team2", []) or []}
+    return ids
+
+
 def _side_name(side: str) -> str:
     return "Attackers" if side == "attackers" else "Defenders"
 
@@ -347,9 +378,9 @@ def _betting_embed(bot, session, remaining: int) -> discord.Embed:
         value = "\n".join(_team_lines(bot, team)) or "—"
         if pool and total:
             # Parimutuel: every coin on a side pays total/side when it wins.
-            value += f"\n\n**Pool:** {pool} {e} — pays **{total / pool:.2f}x** per coin"
+            value += f"\n**Pool:** {pool} {e} — pays **{total / pool:.2f}x** per coin\n"
         else:
-            value += f"\n\n**Pool:** {pool} {e}"
+            value += f"\n**Pool:** {pool} {e}\n"
         return value
 
     embed = discord.Embed(title=title, description=opener, color=discord.Color.gold())
@@ -778,6 +809,11 @@ async def setmap_override(bot, user_id: str, map_name: str, amount: int = None) 
     (legacy behavior, min SETMAP_BASE_COST). With `amount` set the player pays
     exactly that much, which must beat the last override amount.
     """
+    # Players only: overrides are a match powerup, checked FIRST so
+    # non-players get the same rejection in every phase (draft window,
+    # live grace, or stale post-match state).
+    if str(user_id) not in _signup_players(bot):
+        return "Only players in this match can override the map."
     if bot.chosen_mode not in ("Captains", "Balanced"):
         return (
             "Map overrides only work in Captains or Balanced mode, after map "

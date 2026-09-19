@@ -85,7 +85,12 @@ class CoinCommands(BotCommands):
 
     @commands.command(name="doubledown")
     async def doubledown_command(self, ctx: commands.Context):
-        await self._gated_send(ctx, lambda: doubledown(self.bot, str(ctx.author.id)))
+        # Powerup: only usable inside the generated match-# channel.
+        await self._gated_send(
+            ctx,
+            lambda: doubledown(self.bot, str(ctx.author.id)),
+            channel=ctx.channel,
+        )
 
     @commands.command(name="setmap")
     async def setmap_command(self, ctx: commands.Context, *, args: str = ""):
@@ -97,12 +102,14 @@ class CoinCommands(BotCommands):
         """
         # Overrides must land after map voting and before teams are decided —
         # during the captains draft, or the same window in Balanced mode, plus
-        # the 2-minute grace after teams finalize.
+        # the 2-minute grace after teams finalize. Powerup: match-# channel only.
         parts = args.rsplit(" ", 1)
         map_name, amount = args, None
         if len(parts) == 2 and parts[1].isdigit():
             map_name, amount = parts[0], int(parts[1])
-        rejection = command_available(self.bot, requires_running_match=False)
+        rejection = command_available(
+            self.bot, requires_running_match=False, channel=ctx.channel
+        )
         if rejection:
             log.warning(
                 "Duck Coins command rejected for %s: %s",
@@ -120,9 +127,12 @@ class CoinCommands(BotCommands):
         ctx: commands.Context,
         message_factory,
         requires_running_match: bool = True,
+        channel=None,
     ):
         rejection = command_available(
-            self.bot, requires_running_match=requires_running_match
+            self.bot,
+            requires_running_match=requires_running_match,
+            channel=channel,
         )
         if rejection:
             log.warning(

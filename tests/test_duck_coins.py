@@ -142,6 +142,10 @@ class FakeBot:
     def __init__(self):
         self.team1 = [{"id": "1", "name": "p1"}]
         self.team2 = [{"id": "2", "name": "p2"}]
+        # Signup queue mirrors team1/team2 (the !signup auto-add fills it).
+        # Player 7 stays OUT: it's the non-player used to assert that
+        # !setmap/!doubledown reject non-players.
+        self.queue = [{"id": "1", "name": "p1"}, {"id": "2", "name": "p2"}]
         self.match_ongoing = True
         self.double_downs = set()
         self.map_override_last = 0
@@ -319,6 +323,24 @@ def demo():
     reply = asyncio.run(setmap_override(bot, "1", "Ascent"))
     assert "now **Ascent**" in reply
 
+    # Non-players must not use !setmap — in ANY phase, checked before the
+    # mode/window gates so the rejection is always the same.
+    bot.map_override_last = 0
+    bot.map_override_last_by = None
+    DB["7"]["duck_coins"] = 100
+    reply = asyncio.run(setmap_override(bot, "7", "Bind"))
+    assert (
+        "Only players in this match" in reply
+    ), "non-player must not override during the draft window"
+    assert coins_of("7") == 100, "non-player override must not charge"
+    # Same rejection mid-match (grace window open or not).
+    bot.match_ongoing = True
+    bot.map_override_deadline = time.monotonic() + 120
+    reply = asyncio.run(setmap_override(bot, "7", "Bind"))
+    assert "Only players in this match" in reply, "non-player mid-match override"
+    bot.match_ongoing = False
+    bot.map_override_deadline = None
+
     # Once teams are decided (match ongoing) no more overrides — with no
     # grace window open (deadline cleared), overrides are rejected.
     bot.match_ongoing = True
@@ -414,6 +436,35 @@ def demo():
     bot.match_ongoing = True
     assert command_available(bot) is None
 
+    # !setmap and !doubledown are match-channel-only powerups: the gate
+    # compares the caller's channel against bot.match_channel. A fake
+    # channel object works via its id attribute.
+    class _FakeCh:
+        def __init__(self, cid, name=None):
+            self.id = cid
+            # Real match channels are named after the match (match-####).
+            self.name = name or f"chan-{cid}"
+
+    bot.match_name = "match-0001"
+    bot.match_channel = _FakeCh(1001, name="match-0001")
+    match_rejection = command_available(
+        bot, requires_running_match=False, channel=_FakeCh(2002)
+    )
+    assert (
+        "match-0001" in match_rejection and "match channel" in match_rejection
+    ), f"off-channel powerup must be rejected: {match_rejection}"
+    assert (
+        command_available(bot, requires_running_match=False, channel=bot.match_channel)
+        is None
+    ), "the match channel itself must pass"
+    # No match channel (simulate run): nothing to enforce, gate passes.
+    bot.match_channel = None
+    assert (
+        command_available(bot, requires_running_match=False, channel=_FakeCh(2002))
+        is None
+    ), "no match channel must not block"
+    bot.match_channel = _FakeCh(1001)
+
     # Doubledown doubles the match delta only, never the first-match seed.
     # stats_helper is imported separately with its own stub in test_vlr_rating,
     # but here we verify the multiplier plumbing with a tiny fake.
@@ -470,6 +521,16 @@ def demo():
     assert (
         "requires_running_match=False" in setmap_body
     ), "!setmap command must opt out of the running-match gate"
+    assert (
+        "channel=ctx.channel" in setmap_body
+    ), "!setmap must pass its channel so the match-channel gate applies"
+    # !bet must NOT pass a channel: spectators bet from #10-mans.
+    bet_body = command_src.split("async def bet_attackers")[1].split(
+        "@commands.command(name="
+    )[0]
+    assert (
+        "channel=ctx.channel" not in bet_body
+    ), "!bet must stay usable outside the match channel"
 
     # Season resets drop per-match coin state and zero every balance (see
     # test_maintenance_commands for the stat-defaults side of the reset).
@@ -554,9 +615,16 @@ def demo():
     bot.map_override_last_by = None
     bot.match_ongoing = False
     bot.selected_map = "Ascent"
+    # Players 2 and 6 override in this section; both must be match players.
+    bot.queue = [
+        {"id": "1", "name": "p1"},
+        {"id": "2", "name": "p2"},
+        {"id": "6", "name": "p6"},
+    ]
     asyncio.run(setmap_override(bot, "2", "Bind"))
     asyncio.run(setmap_override(bot, "6", "Haven"))
     asyncio.run(setmap_override(bot, "2", "Split"))
+    bot.queue = [{"id": "1", "name": "p1"}, {"id": "2", "name": "p2"}]
     journal = _ESCROW_DOCS["open_bets"]["data"]
     assert journal["map_overrides"] == [
         {"payer": "2", "amount": 3},
