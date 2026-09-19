@@ -384,9 +384,9 @@ def demo():
     ), f"outbid player must be refunded: {coins_of('other')}"
     assert "refunded to <@other>" in reply, reply
     # And the journal now holds only the standing wager.
-    assert bot.map_override_chain == [{"payer": "1", "amount": 5}], (
-        bot.map_override_chain
-    )
+    assert bot.map_override_chain == [
+        {"payer": "1", "amount": 5}
+    ], bot.map_override_chain
 
     # Grace window after teams finalize: overrides still work for 2 minutes
     # and retitle the posted teams embed; they expire after the deadline.
@@ -397,8 +397,8 @@ def demo():
             self.embeds = [types.SimpleNamespace(title="Teams on Ascent")]
             self.edits = []
 
-        async def edit(self, embed=None):
-            self.edits.append(embed)
+        async def edit(self, embed=None, content=None):
+            self.edits.append(embed if embed is not None else content)
 
     async def _run_grace_checks():
         now = time.monotonic()
@@ -420,17 +420,36 @@ def demo():
         assert bots[0].current_teams_message.edits, "teams embed must be edited"
         assert bots[0].current_teams_message.embeds[0].title == "Teams on Bind"
         assert coins_of("1") == 97, "grace-window override must charge"
+        # Issue #202: a successful override extends the powerup deadline by
+        # 30s so bidding wars get more time.
+        assert (
+            bots[0].map_override_deadline == now + 150
+        ), f"override must extend the deadline by 30s: {bots[0].map_override_deadline - now}"
+        # The extension applies to BOTH powerups: !doubledown shares this
+        # deadline, so a player can still double down after the override.
+        bots[0].double_downs = set()
+        DB["2"]["duck_coins"] = 100
+        reply = doubledown(bots[0], "2")
+        assert (
+            "doubled" in reply
+        ), f"doubledown must survive the extended window: {reply}"
         # Past the deadline: rejected without charge, naming the timeout.
         bots[1].map_override_deadline = now - 1
         reply = await setmap_override(bots[1], "1", "Haven")
         assert "override window has timed out" in reply, "expired grace must deny"
         assert not bots[1].current_teams_message.edits
+        assert (
+            bots[1].map_override_deadline == now - 1
+        ), "a rejected override must not extend the deadline"
         # Before teams finalize there is no teams embed yet and no edit attempt.
         bots[2].match_ongoing = False
         bots[2].map_override_deadline = None
         reply = await setmap_override(bots[2], "1", "Haven")
         assert "now **Haven**" in reply
         assert not bots[2].current_teams_message.edits, "no embed edit before finalize"
+        assert (
+            bots[2].map_override_deadline is None
+        ), "no deadline before finalize: nothing to extend"
 
     asyncio.run(_run_grace_checks())
 
@@ -737,6 +756,40 @@ def demo():
         assert "!setmap" in ctx2.channel.messages[0]
 
     asyncio.run(_run_announcement_routing())
+
+    # --- Issue #202: an override re-renders the powerup countdown ---------
+    # A live session with a posted powerup notice: the countdown message
+    # must be edited to show the extended remaining time immediately.
+    class _FakePowerupMessage:
+        def __init__(self):
+            self.contents = []
+
+        async def edit(self, content=None):
+            self.contents.append(content)
+
+    async def _run_countdown_refresh():
+        b = FakeBot()
+        b.match_ongoing = True
+        now = time.monotonic()
+        b.map_override_deadline = now + 120
+        open_window(b)
+        b.bet_session["powerup_message"] = _FakePowerupMessage()
+        b.queue = [{"id": "1", "name": "p1"}, {"id": "2", "name": "p2"}]
+        DB["1"]["duck_coins"] = 10
+        b.selected_map = "Ascent"
+        b.map_override_last = 0
+        b.map_override_last_by = None
+        reply = await setmap_override(b, "1", "Bind")
+        assert "now **Bind**" in reply
+        # Deadline extended (issue #202).
+        assert 148 < b.map_override_deadline - now <= 150
+        # The powerup notice was re-rendered right away, showing the
+        # extended countdown (~150s; sub-second scheduling may round to 2:29).
+        notice = b.bet_session["powerup_message"].contents
+        assert notice, "powerup countdown must be refreshed after an override"
+        assert "2:2" in notice[-1] or "2:30" in notice[-1], notice
+
+    asyncio.run(_run_countdown_refresh())
 
     # --- Cancel refunds EVERY coin spent on the match ----------------------
     from game.duck_coins import announce_cancellation_async, refund_match_coins
