@@ -243,7 +243,9 @@ def demo():
     bot.bet_session = None
     bot.map_override_deadline = time.monotonic() - 1
     reply = doubledown(bot, "1")
-    assert "2 minutes" in reply, "doubledown outside powerup window must be rejected"
+    assert (
+        "doubledown window has timed out" in reply
+    ), "doubledown outside powerup window must report the timeout"
     bot.map_override_deadline = time.monotonic() + 120
 
     # Setmap override: validity, cost escalation, repeat-blocker
@@ -292,6 +294,11 @@ def demo():
     reply = asyncio.run(setmap_override(bot, "1", "Haven"))
     assert "before the teams are fully decided" in reply
     assert coins_of("1") == 100, "override after draft end must not charge"
+    # With a deadline but the window expired, the rejection names the timeout.
+    bot.map_override_deadline = time.monotonic() - 1
+    reply = asyncio.run(setmap_override(bot, "1", "Haven"))
+    assert "override window has timed out" in reply, "expired grace must deny"
+    assert coins_of("1") == 100, "timed-out override must not charge"
     bot.map_override_deadline = time.monotonic() + 120
 
     # Explicit-amount overrides (issue #195): min 3, must beat the last wager
@@ -310,8 +317,8 @@ def demo():
 
     # Grace window after teams finalize: overrides still work for 2 minutes
     # and retitle the posted teams embed; they expire after the deadline.
-    # (Deadlines are set inside a coroutine: asyncio.get_event_loop() needs a
-    # running loop on Python 3.12+.)
+    # (Deadlines use time.monotonic(), so no running loop is needed to set
+    # them, but they are set inside a coroutine for parity with production.)
     class _FakeTeamsMessage:
         def __init__(self):
             self.embeds = [types.SimpleNamespace(title="Teams on Ascent")]
@@ -321,7 +328,7 @@ def demo():
             self.edits.append(embed)
 
     async def _run_grace_checks():
-        now = asyncio.get_event_loop().time()
+        now = time.monotonic()
         bots = []
         for _ in range(3):
             b = FakeBot()
@@ -340,10 +347,10 @@ def demo():
         assert bots[0].current_teams_message.edits, "teams embed must be edited"
         assert bots[0].current_teams_message.embeds[0].title == "Teams on Bind"
         assert coins_of("1") == 97, "grace-window override must charge"
-        # Past the deadline: rejected without charge.
+        # Past the deadline: rejected without charge, naming the timeout.
         bots[1].map_override_deadline = now - 1
         reply = await setmap_override(bots[1], "1", "Haven")
-        assert "before the teams are fully decided" in reply, "expired grace must deny"
+        assert "override window has timed out" in reply, "expired grace must deny"
         assert not bots[1].current_teams_message.edits
         # Before teams finalize there is no teams embed yet and no edit attempt.
         bots[2].match_ongoing = False

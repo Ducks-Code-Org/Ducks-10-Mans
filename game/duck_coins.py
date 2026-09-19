@@ -703,10 +703,10 @@ def doubledown(bot, user_id: str) -> str:
     powerup countdown.
     """
     deadline = getattr(bot, "map_override_deadline", None)
-    if deadline is None or time.monotonic() > deadline:
-        return (
-            "Doubledown is only available in the 2 minutes after teams are announced."
-        )
+    if deadline is None:
+        return "Doubledown is only available after teams are announced."
+    if time.monotonic() > deadline:
+        return "The doubledown window has timed out."
     if str(user_id) not in _match_players(bot):
         return "Only players in this match can double down."
     if str(user_id) in bot.double_downs:
@@ -743,8 +743,10 @@ async def setmap_override(bot, user_id: str, map_name: str, amount: int = None) 
         return "Map overrides only work after map voting has finished."
     if bot.match_ongoing:
         deadline = getattr(bot, "map_override_deadline", None)
-        if deadline is None or time.monotonic() > deadline:
+        if deadline is None:
             return "Map overrides only work before the teams are fully decided."
+        if time.monotonic() > deadline:
+            return "The map override window has timed out."
     wanted = (map_name or "").strip().lower()
     pool = get_standard_maps()
     canonical = next((m for m in pool if m.lower() == wanted), None)
