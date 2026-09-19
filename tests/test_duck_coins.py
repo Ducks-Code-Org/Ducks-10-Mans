@@ -367,7 +367,9 @@ def demo():
     bot.match_ongoing = False
     bot.map_override_last = 4
     bot.map_override_last_by = "other"
+    bot.map_override_chain = [{"payer": "other", "amount": 4}]
     DB["1"]["duck_coins"] = 100
+    DB["other"] = {"player_id": "other", "duck_coins": 0}
     reply = asyncio.run(setmap_override(bot, "1", "Haven", 2))
     assert "minimum override wager is 3" in reply, "below-min wager must be denied"
     assert coins_of("1") == 100, "denied wager must not charge"
@@ -376,6 +378,15 @@ def demo():
     reply = asyncio.run(setmap_override(bot, "1", "Haven", 5))
     assert "<@1> paid 5" in reply and bot.map_override_last == 5
     assert coins_of("1") == 95, "explicit wager must charge exactly that amount"
+    # Issue #205: the outbid player gets their wager refunded on override.
+    assert (
+        coins_of("other") == 4
+    ), f"outbid player must be refunded: {coins_of('other')}"
+    assert "refunded to <@other>" in reply, reply
+    # And the journal now holds only the standing wager.
+    assert bot.map_override_chain == [{"payer": "1", "amount": 5}], (
+        bot.map_override_chain
+    )
 
     # Grace window after teams finalize: overrides still work for 2 minutes
     # and retitle the posted teams embed; they expire after the deadline.
@@ -610,7 +621,7 @@ def demo():
     recover_orphaned_escrow(bot)
     assert coins_of("9") == 10, "settled bets must never be re-refunded"
 
-    # --- Map-override chain journals and recovers on startup --------------
+    # --- Map-override journal and startup recovery (issue #205) -----------
     # (Reset the once-per-process gate so this simulates a fresh process.)
     duck_coins._escrow_recovered = False
     DB["2"] = {"player_id": "2", "duck_coins": 100}
@@ -629,21 +640,31 @@ def demo():
         {"id": "6", "name": "p6"},
     ]
     asyncio.run(setmap_override(bot, "2", "Bind"))
+    # Player 2 paid 3 (balance 97, chain holds their wager).
+    assert coins_of("2") == 97 and bot.map_override_last == 3
     asyncio.run(setmap_override(bot, "6", "Haven"))
+    # Issue #205: the outbid player 2 is refunded immediately (97 -> 100),
+    # and player 6 outbids by escalation: pays last+1 = 4 (100 -> 96).
+    assert coins_of("2") == 100, "outbid player must be refunded on override"
+    assert coins_of("6") == 96, "outbidder pays last+1"
+    assert bot.map_override_last == 4, "escalation follows the standing wager"
     asyncio.run(setmap_override(bot, "2", "Split"))
+    # Player 6 is outbid and refunded (96 -> 100); player 2 pays 5.
+    assert coins_of("2") == 95 and coins_of("6") == 100
+    assert bot.map_override_last == 5
     bot.queue = [{"id": "1", "name": "p1"}, {"id": "2", "name": "p2"}]
     journal = _ESCROW_DOCS["open_bets"]["data"]
     assert journal["map_overrides"] == [
-        {"payer": "2", "amount": 3},
-        {"payer": "6", "amount": 4},
         {"payer": "2", "amount": 5},
     ], journal
     # Simulated crash: journal survives, memory does not.
     bot.map_override_chain = []
     bot.bet_session = None
     recover_orphaned_escrow(bot)
-    assert coins_of("2") == 100, "every override step must be refunded on crash"
-    assert coins_of("6") == 100, "the outbid overrider is refunded on crash too"
+    assert (
+        coins_of("2") == 100
+    ), "the standing wager must be refunded on crash (and only it)"
+    assert coins_of("6") == 100, "the outbid wager was already refunded live"
 
     # A gateway reconnect must not refund a LIVE window (process-gated).
     DB["9"]["duck_coins"] = 10
@@ -731,18 +752,13 @@ def demo():
     DB["5"]["duck_coins"] = 16  # as if player 5 paid 4 for the bet
     bot.double_downs = {"1"}
     DB["1"]["duck_coins"] = 15  # as if player 1 paid 5 for the doubledown
-    # Escalation chain: player 2 paid 3, player 6 paid 4 (outbid player 2),
-    # player 2 paid 5 to take it back. The whole chain is journaled, so a
-    # cancel refunds every payer — not just the last overrider.
+    # Standing override wager (issue #205): the chain holds only the current
+    # wager now — outbid wagers are refunded live at override time, so a
+    # cancel refunds exactly the standing wager.
     bot.map_override_last = 5
     bot.map_override_last_by = "2"
-    bot.map_override_chain = [
-        {"payer": "2", "amount": 3},
-        {"payer": "6", "amount": 4},
-        {"payer": "2", "amount": 5},
-    ]
-    DB["2"]["duck_coins"] = 12  # as if player 2 paid 3 + 5
-    DB["6"]["duck_coins"] = 16  # as if player 6 paid 4
+    bot.map_override_chain = [{"payer": "2", "amount": 5}]
+    DB["2"]["duck_coins"] = 15  # as if player 2 paid 5
 
     guild_captured = []
 
@@ -753,14 +769,11 @@ def demo():
     guild = types.SimpleNamespace(text_channels=[fake_10mans])
 
     total = refund_match_coins(bot)
-    # 4 bet + 5 doubledown + 3+4+5 override chain = 21
-    assert total == 21, f"total refund wrong: {total}"
+    # 4 bet + 5 doubledown + 5 standing override wager = 14
+    assert total == 14, f"total refund wrong: {total}"
     assert coins_of("5") == 20, f"bettor refund wrong: {coins_of('5')}"
     assert coins_of("1") == 20, f"doubledown refund wrong: {coins_of('1')}"
-    assert coins_of("2") == 20, f"first overrider refund wrong: {coins_of('2')}"
-    assert (
-        coins_of("6") == 20
-    ), f"outbid overrider must be refunded too: {coins_of('6')}"
+    assert coins_of("2") == 20, f"standing overrider refund wrong: {coins_of('2')}"
     assert bot.bet_session is None
     assert bot.double_downs == set()
     assert bot.map_override_last == 0 and bot.map_override_last_by is None
