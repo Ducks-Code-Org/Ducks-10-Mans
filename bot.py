@@ -52,8 +52,9 @@ class CustomBot(commands.Bot):
         self.map_override_last: int = 0
         self.map_override_last_by: str | None = None
         self.map_override_deadline: float | None = None
-        # Every override wager this match, in order: [{"payer", "amount"}].
-        # Used to refund the whole escalation chain on cancel/crash.
+        # The standing override wager: [{"payer", "amount"}] (issue #205
+        # refunds outbid wagers live, so this holds only the current one).
+        # Used to refund it on cancel/crash.
         self.map_override_chain: list[dict] = []
 
         self.load_mmr_data()

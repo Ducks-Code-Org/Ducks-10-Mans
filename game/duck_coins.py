@@ -44,8 +44,8 @@ _ESCROW_DOC_ID = "open_bets"
 
 
 def persist_escrow(bot) -> None:
-    """Mirror in-memory coin state (bet session, doubledowns, map-override
-    escalation chain) into Mongo.
+    """Mirror in-memory coin state (bet session, doubledowns, standing
+    map-override wager) into Mongo.
 
     Best-effort: persistence failures are logged and swallowed so a transient
     DB hiccup can never break an in-progress bet, doubledown, or override.
@@ -221,7 +221,7 @@ def clear_season_coin_state(bot) -> None:
     balances, because in-memory state would otherwise leak old-season coins
     into the new season: escrowed bet coins would pay out at the next
     !report, stale doubledowns would still apply, and the map-override
-    escalation would carry over. Open bets are dropped, not refunded, since
+    wager would carry over. Open bets are dropped, not refunded, since
     coins reset anyway; the escrow journal is wiped too so a subsequent
     restart never refunds coins that a reset already voided.
     """
