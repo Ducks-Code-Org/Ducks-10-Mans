@@ -730,7 +730,9 @@ class ReportCommand(BotCommands):
             if tier_before == tier_after:
                 continue
             if tier_before is None:
-                rank_changes.append(f"<@{pid}> is now ranked: **{tier_after}**")
+                rank_changes.append(
+                    f"<@{pid}> is now ranked: {role_mention(ctx.guild, tier_after)}"
+                )
             elif tier_after is None:
                 # Can't lose rank by playing: MMR never decreases to unranked
                 # here (a played player always keeps at least one match).
@@ -744,7 +746,8 @@ class ReportCommand(BotCommands):
                 )
                 arrow = "⬆️" if after_pos < before_pos else "⬇️"
                 rank_changes.append(
-                    f"<@{pid}> {arrow} **{tier_before}** → **{tier_after}**"
+                    f"<@{pid}> {arrow} {role_mention(ctx.guild, tier_before)} → "
+                    f"{role_mention(ctx.guild, tier_after)}"
                 )
         if rank_changes:
             results_embed.add_field(

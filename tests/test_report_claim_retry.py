@@ -54,10 +54,24 @@ class _FakeEmbed:
 _discord_stub = types.ModuleType("discord")
 _discord_stub.Embed = _FakeEmbed
 _discord_stub.Color = types.SimpleNamespace(green=lambda: None, gold=lambda: None)
-_discord_stub.utils = types.SimpleNamespace(get=lambda *a, **k: None)
-_discord_stub.NotFound = type("NotFound", (Exception,), {})
+
+
+def _fake_utils_get(iterable=None, **kw):
+    wanted = kw.get("name")
+    if iterable is None or wanted is None:
+        return None
+    for item in iterable:
+        if getattr(item, "name", None) == wanted:
+            return item
+    return None
+
+
+_discord_stub.utils = types.SimpleNamespace(get=_fake_utils_get)
+# Mirror discord.py: NotFound/Forbidden subclass HTTPException, so callers
+# that catch HTTPException also catch them.
 _discord_stub.HTTPException = type("HTTPException", (Exception,), {})
-_discord_stub.Forbidden = type("Forbidden", (Exception,), {})
+_discord_stub.NotFound = type("NotFound", (_discord_stub.HTTPException,), {})
+_discord_stub.Forbidden = type("Forbidden", (_discord_stub.HTTPException,), {})
 _discord_stub.Guild = type("Guild", (), {})
 _discord_stub.Role = type("Role", (), {})
 _discord_stub.Member = type("Member", (), {})
@@ -110,6 +124,45 @@ class FakeCtx:
 
     async def send(self, content=None, **kw):
         self.sent.append(content)
+
+
+class FakeRole:
+    def __init__(self, name, rid):
+        self.name = name
+        self.id = rid
+        self.mention = f"<@&{rid}>"
+
+
+class FakeGuild:
+    """Guild with the rank roles the summary should mention by name."""
+
+    def __init__(self):
+        self.id = 4242
+        self.name = "test-guild"
+        self.text_channels = []
+        self.roles = [
+            FakeRole(name, 1000 + i)
+            for i, name in enumerate(
+                ["Wood Rank", "Stone Rank", "Iron Rank", "Gold Rank", "Season-1"]
+            )
+        ]
+
+    def get_member(self, uid):
+        return None
+
+    async def fetch_member(self, uid):
+        # Mirror production: a member not in the guild raises NotFound, which
+        # grant_season_roles catches and skips — irrelevant to the summary
+        # embed under test.
+        raise _discord_stub.NotFound()
+
+    def get_channel(self, cid):
+        return None
+
+    async def create_role(self, name):
+        role = FakeRole(name, 9000 + len(self.roles))
+        self.roles.append(role)
+        return role
 
 
 def make_reporter(bot, *, fetch_result="raise", data_result=None):
@@ -430,6 +483,8 @@ def demo():
         def __init__(self):
             super().__init__()
             self.embeds = []
+            # A guild with the rank roles, so the summary can mention them.
+            self.guild = FakeGuild()
 
         async def send(self, content=None, **kw):
             await FakeCtx.send(self, content, **kw)
@@ -467,7 +522,11 @@ def demo():
         _rm.all_matches = types.SimpleNamespace(
             find_one=lambda *a, **k: None, insert_one=lambda *a, **k: None
         )
-        _rm.seasons = types.SimpleNamespace(update_one=lambda *a, **k: None)
+        # find_one feeds grant_season_roles; the FakeGuild ctx now reaches it.
+        _rm.seasons = types.SimpleNamespace(
+            update_one=lambda *a, **k: None,
+            find_one=lambda *a, **k: {"season_number": 1},
+        )
 
         bot, ctx = asyncio.run(_run_summary({"1"}))
         assert (
@@ -494,9 +553,10 @@ def demo():
         rank_field = summary.fields[2]
         assert rank_field["name"] == "🏅 Rank Changes", rank_field
         assert "⬇️" in rank_field["value"] and "<@2>" in rank_field["value"], rank_field
-        assert (
-            "Stone Rank" in rank_field["value"] and "Wood Rank" in rank_field["value"]
-        ), rank_field
+        # Ranks render as live role mentions (<@&id>), not plain text.
+        assert "<@&1000>" in rank_field["value"], rank_field  # Wood Rank
+        assert "<@&1001>" in rank_field["value"], rank_field  # Stone Rank
+        assert "Rank**" not in rank_field["value"], rank_field
 
         # Same match, but both players start at MMR 150 (Stone, stay Stone):
         # +37 keeps player 1 in Stone, -10 keeps player 2 in Stone → no
@@ -547,7 +607,7 @@ def demo():
         assert (
             "now ranked" in rank_field["value"] and "<@2>" in rank_field["value"]
         ), rank_field
-        assert "Wood Rank" in rank_field["value"], rank_field
+        assert "<@&1000>" in rank_field["value"], rank_field  # Wood Rank mention
 
         bot, ctx = asyncio.run(_run_summary(set()))
         summary = ctx.embeds[0]
