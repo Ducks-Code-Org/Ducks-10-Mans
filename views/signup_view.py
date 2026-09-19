@@ -232,125 +232,169 @@ class SignupView(discord.ui.View):
         self.cancel_timeout_monitor_task()
 
     async def handle_signup(self, interaction: discord.Interaction):
+        """Queue a button signup through the shared signup_player path."""
+        user_id: str = str(interaction.user.id)
+
+        async def notify(msg: str):
+            await safe_reply(interaction, msg, ephemeral=True)
+
+        # Resolve the member for the match-role grant (best effort).
+        member = None
+        guild = interaction.guild
+        if guild is not None:
+            member = guild.get_member(interaction.user.id)
+            if member is None:
+                try:
+                    member = await guild.fetch_member(interaction.user.id)
+                except (discord.NotFound, discord.HTTPException):
+                    member = None
+
+        await self.signup_player(
+            user_id,
+            interaction.user.name,
+            member=member,
+            notify=notify,
+            channel=interaction.channel,
+        )
+
+    async def signup_player(
+        self,
+        user_id: str,
+        display_name: str,
+        *,
+        member=None,
+        notify=None,
+        channel=None,
+        verified_user: dict | None = None,
+    ) -> bool:
+        """Core signup shared by the Sign Up button and the !signup runner.
+
+        Runs the same gates (capacity, duplicates, Riot link), queue add,
+        MMR seeding, match role, and signup-embed refresh for both paths.
+        `verified_user` skips the Riot re-verification for callers that just
+        verified the identity themselves (the !signup command, which runs
+        ensure_current_riot_identity first). `notify` receives user-facing
+        feedback (interaction followup or ctx.send); `channel` is where the
+        full-queue handoff to match setup happens. Returns True when the
+        player was added.
+        """
+        if notify is None:
+            notify = lambda _msg: None  # noqa: E731 — silent by default
+
+        async def send_notify(msg: str):
+            """Run notify, awaiting async callables and calling sync ones."""
+            result = notify(msg)
+            if hasattr(result, "__await__"):
+                await result
+
         # If this signup was cancelled (e.g. by !cancel), stop processing.
         if self.bot is None or self.bot.setup_generation != self.setup_generation:
-            await safe_reply(interaction, "This signup was cancelled.", ephemeral=True)
-            return
+            await send_notify("This signup was cancelled.")
+            return False
 
         # Only allow up to 10 players in the queue
         if len(self.bot.queue) >= 10:
-            await safe_reply(
-                interaction,
-                "❌ The queue is already full! Please wait for the next game.",
-                ephemeral=True,
+            await send_notify(
+                "❌ The queue is already full! Please wait for the next game."
             )
-            return
+            return False
 
         # Check that the user is not already in the queue
-        user_id: str = str(interaction.user.id)
         if user_id in [p["id"] for p in self.bot.queue]:
-            await safe_reply(
-                interaction, "You're already in the queue!", ephemeral=True
-            )
-            return
+            await send_notify("You're already in the queue!")
+            return False
 
         # Verify the user has linked their Riot account
-        db_user: dict | None = users.find_one({"discord_id": str(interaction.user.id)})
+        db_user: dict | None = (
+            verified_user
+            if verified_user is not None
+            else users.find_one({"discord_id": user_id})
+        )
         if not db_user:
-            await safe_reply(
-                interaction,
-                "❌ You must link your Riot account first using `!linkriot <Name#Tag>`.",
-                ephemeral=True,
+            await send_notify(
+                "❌ You must link your Riot account first using `!linkriot <Name#Tag>`."
             )
-            return
+            return False
 
-        # Verify the user's Riot account (async + rate-limited; 429s never
-        # block the signup)
-        user_name: str = (db_user.get("name") or "").lower().strip()
-        user_tag: str = (db_user.get("tag") or "").lower().strip()
-        async with aiohttp.ClientSession() as session:
-            is_successful, reason = await verify_riot_account_async(
-                session, user_name, user_tag
-            )
-        if not is_successful:
-            await safe_reply(
-                interaction,
-                f"❌ Your stored Riot ID `{user_name}#{user_tag}` could not be verified: {reason}",
-                ephemeral=True,
-            )
-            return
+        if verified_user is None:
+            # Verify the user's Riot account (async + rate-limited; 429s never
+            # block the signup)
+            user_name: str = (db_user.get("name") or "").lower().strip()
+            user_tag: str = (db_user.get("tag") or "").lower().strip()
+            async with aiohttp.ClientSession() as session:
+                is_successful, reason = await verify_riot_account_async(
+                    session, user_name, user_tag
+                )
+            if not is_successful:
+                await send_notify(
+                    f"❌ Your stored Riot ID `{user_name}#{user_tag}` could not be verified: {reason}"
+                )
+                return False
 
-        # Verify the stored Riot ID is linked to THIS discord id in the database
-        # (someone else may have linked the same Riot ID to their account)
-        linked_user = users.find_one({"name": user_name, "tag": user_tag})
-        if not linked_user or str(linked_user.get("discord_id")) != user_id:
-            await safe_reply(
-                interaction,
-                "❌ Your Riot ID is linked to a different Discord account, or was changed "
-                "after another user linked it. Please re-link it using `!linkriot <Name#Tag>`.",
-                ephemeral=True,
-            )
-            return
+            # Verify the stored Riot ID is linked to THIS discord id in the database
+            # (someone else may have linked the same Riot ID to their account)
+            linked_user = users.find_one({"name": user_name, "tag": user_tag})
+            if not linked_user or str(linked_user.get("discord_id")) != user_id:
+                await send_notify(
+                    "❌ Your Riot ID is linked to a different Discord account, or was changed "
+                    "after another user linked it. Please re-link it using `!linkriot <Name#Tag>`."
+                )
+                return False
 
         # Add the user the queue, and create mmr data if not present
-        self.bot.queue.append({"id": user_id, "name": interaction.user.name})
+        self.bot.queue.append({"id": user_id, "name": display_name})
         if user_id not in self.bot.player_mmr:
             self.bot.player_mmr[user_id] = {
                 "mmr": DEFAULT_MMR,
                 "wins": 0,
                 "losses": 0,
             }
-        self.bot.player_names[user_id] = interaction.user.name
-        log.info("%s joined the queue successfully.", interaction.user.name)
+        self.bot.player_names[user_id] = display_name
+        log.info("%s joined the queue successfully.", display_name)
 
         # Update last activity
         self.last_activity_time = asyncio.get_event_loop().time()
 
-        # Add match role to the new player
-        member = interaction.guild.get_member(
-            interaction.user.id
-        ) or await interaction.guild.fetch_member(interaction.user.id)
-        if member:
-            await member.add_roles(self.bot.match_role)
+        # Add match role to the new player (best effort)
+        if member is not None and getattr(self.bot, "match_role", None):
+            try:
+                await member.add_roles(self.bot.match_role)
+            except discord.HTTPException:
+                log.warning("Could not add the match role to %s", display_name)
 
         # Update the message and the signup button. Prefer the canonical
-        # signup message: interaction.message can be a deleted/stale message
-        # (e.g. recreated by the refresh task right after a match report),
-        # and editing it raises inside discord.py (issue #181).
+        # signup message: a stale/deleted message is recreated below so the
+        # queue embed and live buttons are never left missing (issue #181).
         self.sign_up_button.label = f"Sign Up ({len(self.bot.queue)}/10)"
-        signup_message = self.bot.current_signup_message or interaction.message
         try:
-            await signup_message.edit(
+            await self.bot.current_signup_message.edit(
                 embed=self.get_signup_embed(),
                 view=self,
             )
-        except discord.NotFound:
-            # Signup message was deleted; recreate it so the queue embed and
-            # live buttons are never left missing.
-            self.bot.current_signup_message = await self.bot.match_channel.send(
-                embed=self.get_signup_embed(),
-                view=self,
-                silent=True,
-            )
-        await interaction.followup.send(
-            f"{interaction.user.name} added to the queue!",
-            ephemeral=True,
-        )
+        except (discord.NotFound, AttributeError):
+            try:
+                self.bot.current_signup_message = await self.bot.match_channel.send(
+                    embed=self.get_signup_embed(),
+                    view=self,
+                    silent=True,
+                )
+            except (discord.NotFound, discord.HTTPException, AttributeError):
+                pass
+        await send_notify(f"{display_name} added to the queue!")
 
         # Check if queue is full
-        if len(self.bot.queue) == 10:
-            await self.finalize_signup(interaction)
+        if len(self.bot.queue) == 10 and channel is not None:
+            await self.finalize_signup(channel)
+        return True
 
-    async def finalize_signup(self, interaction: discord.Interaction):
+    async def finalize_signup(self, channel):
         # If this signup was cancelled (e.g. by !cancel), don't start match setup.
         if self.bot.setup_generation != self.setup_generation:
             log.info("Skipping signup finalization because signup was cancelled.")
             return
 
         log.info("Signup full (%s players); starting match setup", len(self.bot.queue))
-        await interaction.channel.send(
-            "The queue is now full, proceeding to the voting stage."
-        )
+        await channel.send("The queue is now full, proceeding to the voting stage.")
 
         # Disable Buttons
         for child in self.children:
@@ -358,7 +402,7 @@ class SignupView(discord.ui.View):
                 child.disabled = True
 
         # Ping all players
-        await interaction.channel.send(
+        await channel.send(
             "__Players:__ " + " ".join([f"<@{p['id']}>" for p in self.bot.queue])
         )
 
@@ -368,7 +412,7 @@ class SignupView(discord.ui.View):
             ready = await wait_for_lobby(
                 self.ctx.guild,
                 self.bot.queue,
-                send=interaction.channel.send,
+                send=channel.send,
                 is_cancelled=lambda: self.bot is None
                 or self.bot.setup_generation != self.setup_generation,
             )

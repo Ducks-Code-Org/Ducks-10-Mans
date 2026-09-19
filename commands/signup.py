@@ -312,6 +312,23 @@ class SignupCommand(BotCommands):
                     pass
             log.error("Error setting up queue: %s", e, exc_info=e)
             await ctx.send(f"Error setting up queue: {e}")
+            return
+
+        # Auto-signup the !signup runner: they've already verified their Riot
+        # identity above, so their doc is passed straight through (no second
+        # API round-trip). Failures just surface as a normal reply.
+        author_id = str(ctx.author.id)
+        await self.bot.signup_view.signup_player(
+            author_id,
+            ctx.author.name,
+            member=ctx.author,
+            verified_user=_db_user,
+            notify=lambda msg: ctx.send(msg),
+            channel=ctx.channel,
+        )
+        await ctx.send(
+            f"You have been automatically added to the queue! ({len(self.bot.queue)}/10)"
+        )
 
 
 async def ensure_perms(ctx) -> bool:
