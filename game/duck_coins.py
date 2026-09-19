@@ -21,6 +21,9 @@ SETMAP_BASE_COST = 3
 # After teams finalize (match_ongoing flips True), !setmap stays usable this
 # long — a grace window for last-second map swaps in both modes.
 SETMAP_GRACE_SECONDS = 120
+# Each successful !setmap override extends the powerup window by this much so
+# bidding wars get time to play out (issue #202).
+SETMAP_OVERRIDE_EXTENSION_SECONDS = 30
 # The match-channel powerup notice counts this window down live.
 POWERUP_TICK_SECONDS = 15
 
@@ -275,6 +278,43 @@ def _in_grace_window(bot) -> bool:
     return deadline is not None and time.monotonic() <= deadline
 
 
+def _extend_grace_window(bot) -> None:
+    """Add the override extension to the powerup deadline (issue #202).
+
+    Only meaningful while the grace window is live (match ongoing with an
+    open deadline); the powerup countdown task re-reads the deadline every
+    tick, so the next tick shows the extended time.
+    """
+    deadline = getattr(bot, "map_override_deadline", None)
+    if bot.match_ongoing and deadline is not None:
+        bot.map_override_deadline = deadline + SETMAP_OVERRIDE_EXTENSION_SECONDS
+        log.info(
+            "!setmap override extended the powerup window by %ss",
+            SETMAP_OVERRIDE_EXTENSION_SECONDS,
+        )
+
+
+async def _refresh_powerup_notice(bot) -> None:
+    """Immediately re-render the match-channel powerup countdown, if posted."""
+    session = getattr(bot, "bet_session", None)
+    message = session.get("powerup_message") if session else None
+    if message is None:
+        return
+    deadline = getattr(bot, "map_override_deadline", None)
+    if deadline is None:
+        return
+    remaining = max(0, int(deadline - time.monotonic()))
+    try:
+        await message.edit(content=_powerups_announcement(bot, remaining))
+    except (discord.NotFound, discord.HTTPException, AttributeError):
+        pass
+
+
+def _powerup_countdown_ticks() -> int:
+    """Base tick budget for the powerup countdown loop."""
+    return SETMAP_GRACE_SECONDS // POWERUP_TICK_SECONDS
+
+
 async def _refresh_teams_embed(bot, new_map: str) -> None:
     """Retitle the posted teams embed after a grace-window map override."""
     message = getattr(bot, "current_teams_message", None)
@@ -523,7 +563,17 @@ async def _powerup_countdown(bot, session) -> None:
     if message is None:
         return
     try:
-        for tick in range(1, SETMAP_GRACE_SECONDS // POWERUP_TICK_SECONDS + 1):
+        # Fixed iteration budget: base window plus headroom for the extra
+        # 30-second extensions successful !setmap overrides grant (issue
+        # #202). Remaining time always comes from the live deadline, so the
+        # display follows extensions; the budget only bounds the loop.
+        # ponytail: 20 overrides within one window is generous; bump the
+        # headroom if bidding wars ever need more.
+        max_ticks = (
+            _powerup_countdown_ticks()
+            + (SETMAP_OVERRIDE_EXTENSION_SECONDS // POWERUP_TICK_SECONDS) * 20
+        )
+        for tick in range(1, max_ticks + 1):
             await asyncio.sleep(POWERUP_TICK_SECONDS)
             if bot.bet_session is not session:
                 return
@@ -866,7 +916,11 @@ async def setmap_override(bot, user_id: str, map_name: str, amount: int = None) 
     e = duck_emote(bot)
     log.info("%s paid %s coins to override the map to %s", user_id, cost, canonical)
     if _in_grace_window(bot):
+        # Issue #202: each override buys the bidding war more time — extend
+        # the powerup deadline and re-render the countdown right away.
+        _extend_grace_window(bot)
         # The teams/match summary embed is already posted; retitle it so it
         # reflects the overridden map (issue #195).
         await _refresh_teams_embed(bot, canonical)
+        await _refresh_powerup_notice(bot)
     return f"<@{user_id}> paid {cost} {e} — the map is now **{canonical}**!"
