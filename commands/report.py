@@ -721,8 +721,12 @@ class ReportCommand(BotCommands):
             pid = str(p["id"])
             pre_stats = pre_update_mmr.get(pid, {})
             post_stats = self.bot.player_mmr.get(pid, {})
-            tier_before = rank_of(pre_stats.get("mmr", 0)) if has_played(pre_stats) else None
-            tier_after = rank_of(post_stats.get("mmr", 0)) if has_played(post_stats) else None
+            tier_before = (
+                rank_of(pre_stats.get("mmr", 0)) if has_played(pre_stats) else None
+            )
+            tier_after = (
+                rank_of(post_stats.get("mmr", 0)) if has_played(post_stats) else None
+            )
             if tier_before == tier_after:
                 continue
             if tier_before is None:
@@ -739,7 +743,9 @@ class ReportCommand(BotCommands):
                     i for i, (_, name, _) in enumerate(RANKS) if name == tier_after
                 )
                 arrow = "⬆️" if after_pos < before_pos else "⬇️"
-                rank_changes.append(f"<@{pid}> {arrow} **{tier_before}** → **{tier_after}**")
+                rank_changes.append(
+                    f"<@{pid}> {arrow} **{tier_before}** → **{tier_after}**"
+                )
         if rank_changes:
             results_embed.add_field(
                 name="🏅 Rank Changes",

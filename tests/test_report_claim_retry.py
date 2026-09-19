@@ -494,7 +494,9 @@ def demo():
         rank_field = summary.fields[2]
         assert rank_field["name"] == "🏅 Rank Changes", rank_field
         assert "⬇️" in rank_field["value"] and "<@2>" in rank_field["value"], rank_field
-        assert "Stone Rank" in rank_field["value"] and "Wood Rank" in rank_field["value"], rank_field
+        assert (
+            "Stone Rank" in rank_field["value"] and "Wood Rank" in rank_field["value"]
+        ), rank_field
 
         # Same match, but both players start at MMR 150 (Stone, stay Stone):
         # +37 keeps player 1 in Stone, -10 keeps player 2 in Stone → no
@@ -515,8 +517,8 @@ def demo():
 
         ctx = asyncio.run(_run_no_tier_change())
         summary = ctx.embeds[0]
-        assert (
-            all(f["name"] != "🏅 Rank Changes" for f in summary.fields)
+        assert all(
+            f["name"] != "🏅 Rank Changes" for f in summary.fields
         ), f"no rank field when nobody changed tier: {summary.fields}"
 
         # Issue #204: an unranked (0 matches) player's first match ranks
@@ -539,8 +541,12 @@ def demo():
         rank_field = next(
             (f for f in summary.fields if f["name"] == "🏅 Rank Changes"), None
         )
-        assert rank_field is not None, f"first-match player must show a rankup: {summary.fields}"
-        assert "now ranked" in rank_field["value"] and "<@2>" in rank_field["value"], rank_field
+        assert (
+            rank_field is not None
+        ), f"first-match player must show a rankup: {summary.fields}"
+        assert (
+            "now ranked" in rank_field["value"] and "<@2>" in rank_field["value"]
+        ), rank_field
         assert "Wood Rank" in rank_field["value"], rank_field
 
         bot, ctx = asyncio.run(_run_summary(set()))
