@@ -1,4 +1,5 @@
 import asyncio
+import discord
 import logging
 import os
 import sys
@@ -51,11 +52,14 @@ class FakeBot:
 class FakeCtx:
     def __init__(self):
         self.messages = []
+        # (content, kwargs) pairs, so tests can assert on view= sends.
+        self.sent = []
         self.guild = None
         self.channel = self
 
     async def send(self, content=None, **kwargs):
         self.messages.append(content)
+        self.sent.append((content, kwargs))
         return types.SimpleNamespace(
             edit=types.MethodType(
                 lambda self, **kw: asyncio.sleep(0), types.SimpleNamespace()
@@ -238,6 +242,116 @@ async def demo():
     assert not any(
         "unbalanced" in message for message in warnings
     ), f"shortcut misrouted the last pick; only the safety net fixed it: {warnings}"
+
+    # --- Draft UI is not recreated after a racing pick finalized the draft ---
+    # Regression for the stranded draft view: while send_current_draft_view is
+    # suspended on its message edits, a racing pick commits the final pick and
+    # finalizes (finalize_draft deletes the draft messages and posts the teams
+    # embed). The resumed render's edits then raise NotFound; recreating the
+    # UI there left a draft view (showing the last unpicked player) in the
+    # match-# channel with a live select menu, a fresh 120s timer, and
+    # nothing left to clean it up.
+    bot = FakeBot()
+    ctx, view = make_draft_view(bot, single_pick=False)
+    pool = list(view.remaining_players)  # ids "2".."9"
+    view.pick_count = 7  # final double-pick turn belongs to captain1
+    bot.team1 = [bot.captain1] + pool[0:3]
+    bot.team2 = [bot.captain2] + pool[3:6]
+    view.remaining_players = pool[6:8]
+
+    async def racing_finalize():
+        # Mirror select_callback's tail: commit the final pick, then let
+        # draft_next_player discover the draft is over and finalize.
+        player_dict = pool[6]
+        bot.team1.append(player_dict)
+        view.pick_count += 1
+        view.remaining_players.remove(player_dict)
+        await view.draft_next_player()
+
+    def _not_found():
+        response = types.SimpleNamespace(status=404, reason="Not Found")
+        return discord.NotFound(response, "Unknown Message")
+
+    class RaceThenNotFoundMessage:
+        """edit() runs the racing finalize first, then raises NotFound —
+        exactly the state of a real render suspended on an edit while a
+        concurrent interaction finalized and deleted the messages."""
+
+        def __init__(self):
+            self.raced = False
+
+        async def edit(self, **kwargs):
+            if not self.raced:
+                self.raced = True
+                await racing_finalize()
+            raise _not_found()
+
+        async def delete(self):
+            await asyncio.sleep(0)
+
+    view.remaining_players_message = RaceThenNotFoundMessage()
+    view.drafting_message = RaceThenNotFoundMessage()
+    view.captain_pick_message = RaceThenNotFoundMessage()
+
+    await view.send_current_draft_view()
+
+    assert view.draft_finished, "raced render did not see the finished draft"
+    assert (
+        len(bot.team1) == 5 and len(bot.team2) == 5
+    ), f"raced render broke team balance: {len(bot.team1)}/{len(bot.team2)}"
+    assert (
+        view.remaining_players_message is None
+        and view.drafting_message is None
+        and view.captain_pick_message is None
+    ), "finalize's message references were resurrected after the race"
+    assert not any(
+        "view" in kwargs for _, kwargs in ctx.sent
+    ), "stranded draft view was recreated after the teams embed was sent"
+
+    # --- Last-player shortcut survives a turn exhausted by a racing pick ---
+    # A racing pick can commit the final turn while the render is suspended
+    # on its edits without finalizing (as if suspended mid-select_callback).
+    # pick_count is then past the end of pick_order; the shortcut must
+    # finalize instead of raising IndexError and leaving the draft view
+    # (and its just-armed timer) behind.
+    bot = FakeBot()
+    ctx, view = make_draft_view(bot, single_pick=False)
+    pool = list(view.remaining_players)
+    view.pick_count = 7
+    bot.team1 = [bot.captain1] + pool[0:3]
+    bot.team2 = [bot.captain2] + pool[3:6]
+    view.remaining_players = pool[6:8]
+
+    class CommitOnEditMessage:
+        """First edit (any of the three) commits the final pick without
+        finalizing — mimicking a suspended render racing a manual pick."""
+
+        def __init__(self, state):
+            self.state = state
+
+        async def edit(self, **kwargs):
+            if not self.state["committed"]:
+                self.state["committed"] = True
+                bot.team1.append(pool[6])
+                view.pick_count += 1
+                view.remaining_players.remove(pool[6])
+            await asyncio.sleep(0)
+
+        async def delete(self):
+            await asyncio.sleep(0)
+
+    shared = {"committed": False}
+    view.remaining_players_message = CommitOnEditMessage(shared)
+    view.drafting_message = CommitOnEditMessage(shared)
+    view.captain_pick_message = CommitOnEditMessage(shared)
+
+    await view.send_current_draft_view()
+
+    assert view.draft_finished, "render crashed instead of finalizing"
+    assert (
+        len(bot.team1) == 5 and len(bot.team2) == 5
+    ), f"unbalanced teams after shortcut finalize: {len(bot.team1)}/{len(bot.team2)}"
+    assert view.draft_timer_task is None, "draft timer was left armed after finalize"
 
     print("all captain-timeout auto-decide self-checks passed")
 

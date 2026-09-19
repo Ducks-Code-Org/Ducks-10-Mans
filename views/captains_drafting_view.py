@@ -410,6 +410,17 @@ class CaptainsDraftingView(discord.ui.View):
                     await msg.delete()
                 except discord.NotFound:
                     pass
+                except (discord.HTTPException, AttributeError):
+                    # Deletion failed (e.g. missing permissions); at least
+                    # detach the live view so the dropdown stops working.
+                    try:
+                        await msg.edit(view=None)
+                    except (
+                        discord.NotFound,
+                        discord.HTTPException,
+                        AttributeError,
+                    ):
+                        pass
                 setattr(self, msg_attr, None)
 
         # final teams embed
@@ -577,6 +588,11 @@ class CaptainsDraftingView(discord.ui.View):
             self.draft_timer_task = None
 
     def _current_captain_name(self) -> str | None:
+        if self.pick_count >= len(self.pick_order):
+            # Pick order exhausted (a concurrent pick advanced the turn while
+            # a stale timer fired) — no current captain to name; callers
+            # treat None as "stop quietly".
+            return None
         current_captain_id = str(self.pick_order[self.pick_count]["id"])
         ud = users.find_one({"discord_id": current_captain_id})
         if ud:
@@ -651,6 +667,13 @@ class CaptainsDraftingView(discord.ui.View):
 
         self.auto_pick_in_progress = True
         try:
+            if self.draft_finished or self.pick_count >= len(self.pick_order):
+                # A manual pick raced the timer tail (advancing the turn past
+                # the last entry, possibly already finalizing). Don't index
+                # pick_order out of range: finalize distributes anything left.
+                self.draft_timer_task = None
+                await self.finalize_draft()
+                return
             if not self.remaining_players:
                 # We're inside the draft timer task; clear the reference so
                 # finalize_draft doesn't cancel this coroutine mid-finalize.
@@ -785,7 +808,6 @@ class CaptainsDraftingView(discord.ui.View):
         )
 
         # Prompt for current captain
-        current_captain_id = self.pick_order[self.pick_count]["id"]
         curr_captain_name = self._current_captain_name()
         if curr_captain_name is None:
             # Captain state was cleared (e.g. by !cancel) — stop the draft quietly.
@@ -814,6 +836,32 @@ class CaptainsDraftingView(discord.ui.View):
                 await self.drafting_message.edit(embed=drafting_embed)
                 await self.captain_pick_message.edit(content=message, view=self)
             except discord.NotFound:
+                # A pick that raced these in-flight edits may have already
+                # finalized the draft — finalize_draft deletes these very
+                # messages, so NotFound often means the draft is over, not
+                # that the messages moved. Recreating the UI there strands a
+                # draft view (showing the last unpicked player) in the match
+                # channel after the teams embed was sent, with nothing left
+                # to clean it up.
+                if self.draft_finished or self.is_setup_cancelled():
+                    try:
+                        self.stop()
+                    except Exception:
+                        pass
+                    return
+                # The draft is genuinely still live: delete whichever of the
+                # previous messages still exist so the rebuild doesn't leave
+                # orphaned duplicates behind.
+                for stale in (
+                    self.remaining_players_message,
+                    self.drafting_message,
+                    self.captain_pick_message,
+                ):
+                    if stale:
+                        try:
+                            await stale.delete()
+                        except (discord.NotFound, discord.HTTPException):
+                            pass
                 self.remaining_players_message = await self.ctx.send(
                     embed=remaining_players_embed
                 )
@@ -828,22 +876,36 @@ class CaptainsDraftingView(discord.ui.View):
             self.drafting_message = await self.ctx.send(embed=drafting_embed)
             self.captain_pick_message = await self.ctx.send(content=message, view=self)
 
+        # Arm the timer only if the draft is still live: a pick that
+        # finalized while the edits above were suspended must not leave a
+        # stray 120-second timer (and its auto-pick) running against a
+        # finished draft.
+        if self.draft_finished or self.is_setup_cancelled():
+            return
+
         self.start_draft_timer()
 
-        if not self.draft_finished:
-            # If only one player left, auto-assign and finalize
-            if len(self.remaining_players) == 1:
-                # Re-read the turn: a stale-menu pick can commit while the
-                # message edits above are suspended, advancing pick_count past
-                # current_captain_id and misrouting the last pick (4/6 teams).
-                current_captain_id = str(self.pick_order[self.pick_count]["id"])
-                player_dict = self.remaining_players[0]
-                captain1 = getattr(self.bot, "captain1", None)
-                if captain1 and current_captain_id == str(captain1["id"]):
-                    self.bot.team1.append(player_dict)
-                else:
-                    self.bot.team2.append(player_dict)
-                self.pick_count += 1
-                self.remaining_players.clear()
+        # If only one player left, auto-assign and finalize
+        if len(self.remaining_players) == 1:
+            if self.pick_count >= len(self.pick_order):
+                # A racing pick already used the final turn while this render
+                # was suspended on its edits. Finalize (its balancing step
+                # distributes the leftover player) instead of indexing
+                # pick_order out of range — that crash used to strand the
+                # draft view (and its just-armed timer) in the channel.
                 await self.finalize_draft()
                 return
+            # Re-read the turn: a stale-menu pick can commit while the
+            # message edits above are suspended, advancing pick_count past
+            # current_captain_id and misrouting the last pick (4/6 teams).
+            current_captain_id = str(self.pick_order[self.pick_count]["id"])
+            player_dict = self.remaining_players[0]
+            captain1 = getattr(self.bot, "captain1", None)
+            if captain1 and current_captain_id == str(captain1["id"]):
+                self.bot.team1.append(player_dict)
+            else:
+                self.bot.team2.append(player_dict)
+            self.pick_count += 1
+            self.remaining_players.clear()
+            await self.finalize_draft()
+            return
