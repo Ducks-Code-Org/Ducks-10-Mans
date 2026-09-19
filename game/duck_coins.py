@@ -569,9 +569,10 @@ async def _powerup_countdown(bot, session) -> None:
         # display follows extensions; the budget only bounds the loop.
         # ponytail: 20 overrides within one window is generous; bump the
         # headroom if bidding wars ever need more.
-        max_ticks = _powerup_countdown_ticks() + (
-            SETMAP_OVERRIDE_EXTENSION_SECONDS // POWERUP_TICK_SECONDS
-        ) * 20
+        max_ticks = (
+            _powerup_countdown_ticks()
+            + (SETMAP_OVERRIDE_EXTENSION_SECONDS // POWERUP_TICK_SECONDS) * 20
+        )
         for tick in range(1, max_ticks + 1):
             await asyncio.sleep(POWERUP_TICK_SECONDS)
             if bot.bet_session is not session:

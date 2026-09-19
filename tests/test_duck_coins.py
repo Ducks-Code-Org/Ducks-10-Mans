@@ -414,6 +414,14 @@ def demo():
         assert (
             bots[0].map_override_deadline == now + 150
         ), f"override must extend the deadline by 30s: {bots[0].map_override_deadline - now}"
+        # The extension applies to BOTH powerups: !doubledown shares this
+        # deadline, so a player can still double down after the override.
+        bots[0].double_downs = set()
+        DB["2"]["duck_coins"] = 100
+        reply = doubledown(bots[0], "2")
+        assert (
+            "doubled" in reply
+        ), f"doubledown must survive the extended window: {reply}"
         # Past the deadline: rejected without charge, naming the timeout.
         bots[1].map_override_deadline = now - 1
         reply = await setmap_override(bots[1], "1", "Haven")
