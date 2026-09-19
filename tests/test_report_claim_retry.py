@@ -40,11 +40,15 @@ sys.modules["services.maps_service"] = _maps_stub
 
 class _FakeEmbed:
     def __init__(self, *a, **k):
-        self.title = a[0] if a else None
+        self.title = a[0] if a else k.get("title")
         self.fields = []
+        self.footer = None
 
     def add_field(self, **kw):
         self.fields.append(kw)
+
+    def set_footer(self, **kw):
+        self.footer = kw.get("text")
 
 
 _discord_stub = types.ModuleType("discord")
@@ -397,6 +401,112 @@ def demo():
         ), "stale match channel and role must be deleted before the new signup"
 
     asyncio.run(_run_signup_cleanup())
+
+    # --- Doubledown players are tagged in the match summary embed ----------
+    # The summary must show which players' MMR gain/loss was doubled:
+    # their delta is bolded and tagged "×2", with a footer explaining the
+    # tag. Non-doubledown deltas stay plain.
+    _rm = report_mod
+
+    def _match_payload():
+        return {
+            "data": [
+                {
+                    "metadata": {"map": "Ascent", "rounds_played": 17},
+                    "players": [
+                        {"name": "p1", "tag": "t", "puuid": "a", "team_id": "Red"},
+                        {"name": "p2", "tag": "t", "puuid": "b", "team_id": "Blue"},
+                    ],
+                    "teams": [
+                        {"team_id": "Red", "won": True, "rounds_won": 13},
+                        {"team_id": "Blue", "won": False, "rounds_won": 4},
+                    ],
+                    "rounds": [],
+                }
+            ]
+        }
+
+    class EmbedCtx(FakeCtx):
+        def __init__(self):
+            super().__init__()
+            self.embeds = []
+
+        async def send(self, content=None, **kw):
+            await FakeCtx.send(self, content, **kw)
+            if kw.get("embed") is not None:
+                self.embeds.append(kw["embed"])
+
+    async def _run_summary(dd_ids):
+        bot = FakeBot()
+        bot.selected_map = "Ascent"
+        bot.double_downs = set(dd_ids)
+        # Veterans (matches_played > 0, wins+losses > 0) so MMR deltas come
+        # purely from this match's rounds — deterministic: 80/7 raw delta
+        # (13-4 win, equal team MMR, vlr 1.0) → +11 plain, +23 doubled.
+        bot.player_mmr = {
+            "1": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
+            "2": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
+        }
+        bot.save_mmr_data = lambda: None
+        cog = make_reporter(bot, fetch_result="ok", data_result=_match_payload())
+        ctx = EmbedCtx()
+        await cog.report(ctx)
+        return bot, ctx
+
+    _orig_enabled = _rm.duck_coins_enabled
+    _orig_sleep = _rm.asyncio.sleep
+    _orig_all_matches = _rm.all_matches
+    _orig_seasons = _rm.seasons
+    try:
+        _rm.duck_coins_enabled = lambda: True
+
+        async def _fast_sleep(*a, **k):
+            await _orig_sleep(0)
+
+        _rm.asyncio.sleep = _fast_sleep
+        _rm.all_matches = types.SimpleNamespace(
+            find_one=lambda *a, **k: None, insert_one=lambda *a, **k: None
+        )
+        _rm.seasons = types.SimpleNamespace(update_one=lambda *a, **k: None)
+
+        bot, ctx = asyncio.run(_run_summary({"1"}))
+        assert (
+            bot.match_not_reported is False
+        ), "happy-path report must consume the claim"
+        assert (
+            len(ctx.embeds) == 1
+        ), f"expected exactly the match summary embed, got {ctx.embeds}"
+        summary = ctx.embeds[0]
+        assert summary.title == "Match Summary | 10-Mans", summary.title
+        assert len(summary.fields) == 2, summary.fields
+        attackers, defenders = summary.fields[0], summary.fields[1]
+        assert (
+            "**+23** ×2" in attackers["value"]
+        ), f"doubled player's delta must be bolded and tagged ×2: {attackers}"
+        assert (
+            "+6" in defenders["value"] and "**" not in defenders["value"]
+        ), f"plain delta must not be bolded or tagged: {defenders}"
+        assert "×2" not in defenders["value"], defenders
+        assert summary.footer and "doubledown" in summary.footer.lower(), summary.footer
+        assert "×2" in summary.footer, summary.footer
+
+        bot, ctx = asyncio.run(_run_summary(set()))
+        summary = ctx.embeds[0]
+        for field in summary.fields:
+            assert (
+                "**" not in field["value"]
+            ), f"no delta may be bold without a doubledown: {field}"
+            assert (
+                "×2" not in field["value"]
+            ), f"no player may be tagged without a doubledown: {field}"
+        assert (
+            not summary.footer
+        ), f"footer must be omitted when nobody doubled down: {summary.footer}"
+    finally:
+        _rm.duck_coins_enabled = _orig_enabled
+        _rm.asyncio.sleep = _orig_sleep
+        _rm.all_matches = _orig_all_matches
+        _rm.seasons = _orig_seasons
 
     print("all report-claim retry self-checks passed")
 

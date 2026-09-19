@@ -11,6 +11,7 @@ from discord.ext import commands
 from commands import BotCommands
 from database import all_matches, mmr_collection, seasons, users
 from game.duck_coins import (
+    DOUBLEDOWN_COST,
     award_match_coins,
     doubledown_multiplier_of,
     duck_coins_enabled,
@@ -457,6 +458,12 @@ class ReportCommand(BotCommands):
             if duck_coins_enabled()
             else {}
         )
+        # Who actually doubled down (multiplier > 1), for the summary embed
+        # tag. Snapshot at the same time as the multipliers so a refund that
+        # clears double_downs mid-report can't flip the tag afterwards.
+        doubledown_ids = {
+            pid for pid, mult in double_down_multipliers.items() if mult > 1
+        }
 
         # Snapshot each player's leaderboard rank before this match is applied
         pre_played_ids = {
@@ -681,11 +688,17 @@ class ReportCommand(BotCommands):
                 rating = player_ratings.get(pid)
                 rating_part = f"({rating:.2f})" if rating is not None else ""
                 sign = "+" if delta >= 0 else ""
+                # Doubledown marker: bold the delta and tag doubled players
+                # with the coin emote ×2, so it's visible who paid to double
+                # their MMR change this match.
+                doubled = pid in doubledown_ids
+                delta_part = f"**{sign}{delta}**" if doubled else f"{sign}{delta}"
+                tag_part = " ×2" if doubled else ""
                 # Mention by Discord ID (<@id>) rather than the Riot ID: the
                 # summary posts in #10-mans, where a live mention is the
                 # clearest way to see who gained/lost MMR (and it survives
                 # Riot renames and purged links).
-                entries.append(f"<@{pid}>{rating_part}: {sign}{delta}")
+                entries.append(f"<@{pid}>{rating_part}: {delta_part}{tag_part}")
             mmr_lines.append((f"{label} ({rounds})", "\n".join(entries)))
 
         results_embed = discord.Embed(
@@ -694,6 +707,10 @@ class ReportCommand(BotCommands):
         )
         for label, entries_text in mmr_lines:
             results_embed.add_field(name=label, value=entries_text, inline=True)
+        if doubledown_ids:
+            results_embed.set_footer(
+                text=f"×2 = doubledown ({DOUBLEDOWN_COST} coins): this match's MMR change doubled"
+            )
 
         # Post the results in the persistent #10-mans channel; the match
         # channel gets deleted during cleanup, so posting there would lose
