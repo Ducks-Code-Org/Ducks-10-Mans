@@ -235,6 +235,10 @@ async def move_players_to_lobby(guild, players) -> None:
     if not team_channels:
         log.info("No team voice channels to move players out of")
         return
+    if lobby is None:
+        # Nowhere to move them to; disconnecting would be worse.
+        log.warning("No #lobby voice channel found; skipping lobby move")
+        return
 
     moved = 0
     for player in players or []:
@@ -251,9 +255,6 @@ async def move_players_to_lobby(guild, players) -> None:
                 or member.voice.channel.id not in team_channels
             ):
                 # Already left, disconnected, or not in a team channel.
-                continue
-            if lobby is None:
-                # Nowhere to move them to; disconnecting would be worse.
                 continue
             if member.voice.channel.id == lobby.id:
                 continue

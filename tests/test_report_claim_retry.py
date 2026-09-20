@@ -55,6 +55,7 @@ class _FakeEmbed:
 _discord_stub = types.ModuleType("discord")
 _discord_stub.Embed = _FakeEmbed
 _discord_stub.Color = types.SimpleNamespace(green=lambda: None, gold=lambda: None)
+_discord_stub.Colour = types.SimpleNamespace(from_str=lambda css: css)
 
 
 def _fake_utils_get(iterable=None, **kw):
@@ -174,7 +175,7 @@ class FakeGuild:
     def get_channel(self, cid):
         return None
 
-    async def create_role(self, name):
+    async def create_role(self, name, **kwargs):
         role = FakeRole(name, 9000 + len(self.roles))
         self.roles.append(role)
         return role
@@ -759,6 +760,85 @@ def demo():
         assert (
             not summary.footer
         ), f"footer must be omitted when nobody doubled down: {summary.footer}"
+
+        # --- Issue #213: /report moves team-channel players to the lobby ----
+        # End-to-end: the real report path must call move_players_to_lobby
+        # with BOTH teams while they are still populated (before the state
+        # reset clears them), and only when voice_presence is enabled.
+        class LobbyGuild(FakeGuild):
+            def __init__(self):
+                super().__init__()
+                self.lobby = types.SimpleNamespace(id=77, name="lobby")
+                self.attackers = types.SimpleNamespace(id=78, name="Attackers")
+                self.defenders = types.SimpleNamespace(id=79, name="Defenders")
+                self.voice_channels = [self.lobby, self.attackers, self.defenders]
+
+            def get_member(self, uid):
+                return self._members.get(str(uid))
+
+        class LobbyMember:
+            def __init__(self, channel):
+                self.voice = types.SimpleNamespace(channel=channel)
+                self.moves = []
+                # grant_season_roles runs just before the lobby move.
+                self.roles = []
+
+            async def move_to(self, channel):
+                self.moves.append(channel)
+                self.voice.channel = channel
+
+            async def add_roles(self, role):
+                self.roles.append(role)
+
+        async def _run_lobby_move(enabled):
+            bot = FakeBot()
+            bot.selected_map = "Ascent"
+            bot.double_downs = set()
+            bot.player_mmr = {
+                "1": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
+                "2": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
+            }
+            bot.save_mmr_data = lambda: None
+            cog = make_reporter(bot, fetch_result="ok", data_result=_match_payload())
+            ctx = EmbedCtx()
+            guild = LobbyGuild()
+            guild._members = {
+                "1": LobbyMember(guild.attackers),
+                "2": LobbyMember(guild.defenders),
+            }
+            ctx.guild = guild
+            moved_calls = []
+
+            async def _spy_move(g, players):
+                moved_calls.append(g)
+                # The teams must still be populated at call time (this runs
+                # before the report's state reset, not after).
+                assert [str(p["id"]) for p in players] == ["1", "2"], players
+                await _orig_move(g, players)
+
+            _rm.move_players_to_lobby = _spy_move
+            _orig_voice_enabled = _rm.voice_presence_enabled
+            _rm.voice_presence_enabled = lambda: enabled
+            try:
+                await cog.report(ctx)
+            finally:
+                _rm.voice_presence_enabled = _orig_voice_enabled
+                _rm.move_players_to_lobby = _orig_move
+            return guild, moved_calls
+
+        _orig_move = _rm.move_players_to_lobby
+
+        guild, calls = asyncio.run(_run_lobby_move(enabled=True))
+        assert len(calls) == 1, "voice_presence must trigger exactly one lobby move"
+        assert guild._members["1"].moves, "attackers player must be moved to lobby"
+        assert guild._members["2"].moves, "defenders player must be moved to lobby"
+        assert guild._members["1"].voice.channel is guild.lobby
+        assert guild._members["2"].voice.channel is guild.lobby
+
+        # Feature off: no move at all (voice management stays opt-in).
+        guild, calls = asyncio.run(_run_lobby_move(enabled=False))
+        assert not calls, "lobby move must be skipped when voice_presence is off"
+        assert not guild._members["1"].moves
     finally:
         _rm.duck_coins_enabled = _orig_enabled
         _rm.asyncio.sleep = _orig_sleep
