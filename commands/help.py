@@ -76,13 +76,13 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
             (
                 "bet",
                 "attackers|defenders <amount>",
-                "Bet Duck Coins on the match (hidden)",
+                "Bet Duck Coins on the match (public)",
             ),
-            ("doubledown", "", "Spend 5 Duck Coins to double your MMR change (hidden)"),
+            ("doubledown", "", "Spend 5 Duck Coins to double your MMR change (public)"),
             (
                 "setmap",
                 "<map> [amount]",
-                "Wager Duck Coins (min 3) to override the chosen map",
+                "Wager Duck Coins (min 3) to override the chosen map (public)",
             ),
         ],
     ),

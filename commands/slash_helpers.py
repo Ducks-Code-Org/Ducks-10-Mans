@@ -5,10 +5,10 @@ bot's CommandTree and keep working as `!` prefix commands (the prefix is kept
 registered for admins/emergencies, but users are directed to `/` forms).
 
 Visibility rules confirmed on issue #210:
-- Personal lookups (coins, bet, leaderboard, stats, ranks, help, linkriot)
-  reply hidden (ephemeral).
-- Broadcast surfaces (signup, report, setmap, cancel, substitute, ...) reply
-  publicly.
+- Personal lookups (coins, leaderboard, stats, ranks, help, linkriot) reply
+  hidden (ephemeral).
+- Broadcast surfaces (signup, report, bet, doubledown, setmap, cancel,
+  substitute, ...) reply publicly.
 - Every error, permission failure, and usage message replies hidden
   (ephemeral) so channels stay clean.
 """

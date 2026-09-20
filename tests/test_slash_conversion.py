@@ -137,6 +137,25 @@ async def demo():
     toggle_src = inspect.getsource(ac.AdminCommands.toggledev.callback)
     assert "ephemeral=True" not in toggle_src, "/toggledev must stay public"
 
+    # Issue #210 follow-up: /bet, /doubledown, and /setmap reply publicly.
+    # Rejections/errors stay hidden; only the result reply flips public.
+    for cmd in (
+        cc.CoinCommands.bet_attackers.callback,
+        cc.CoinCommands.bet_defenders.callback,
+        cc.CoinCommands.doubledown_command.callback,
+    ):
+        src = inspect.getsource(cmd)
+        assert "public=True" in src, f"/{cmd.__name__} must reply publicly"
+    setmap_src = inspect.getsource(cc.CoinCommands.setmap_command.callback)
+    assert "setmap_override" in setmap_src
+    assert (
+        "ephemeral=True" not in setmap_src.split("setmap_override", 1)[1]
+    ), "/setmap result reply must stay public"
+    gated_src = inspect.getsource(cc.CoinCommands._gated_send)
+    assert (
+        "ephemeral=not public" in gated_src
+    ), "_gated_send must hide rejections but allow public results"
+
     # toggledev no longer switches the prefix (slash commands make it moot).
     assert "command_prefix" not in toggle_src, "toggledev must not switch prefixes"
 

@@ -1,6 +1,7 @@
 """Duck Coins slash commands (issue #34, #193, #210): balance, betting,
-doubledown, and map overrides. Balance/bet/doubledown replies are hidden
-(ephemeral); a setmap override is public because it changes the match map."""
+doubledown, and map overrides. Balance lookups are hidden (ephemeral);
+bet, doubledown, and setmap all reply publicly so the whole channel sees
+the action (issue #210 follow-up)."""
 
 import logging
 
@@ -72,7 +73,7 @@ class CoinCommands(BotCommands):
     # ------------------------------------------------------------------
     @commands.hybrid_group(
         name="bet",
-        description="Bet Duck Coins on the current match",
+        description="Bet Duck Coins on the current match (public reply)",
         fallback="help",
     )
     async def bet(self, ctx: commands.Context):
@@ -87,6 +88,7 @@ class CoinCommands(BotCommands):
         await self._gated_send(
             ctx,
             lambda: place_bet(self.bot, str(ctx.author.id), "attackers", amount),
+            public=True,
         )
 
     @bet.command(name="defenders", description="Bet coins on the Defenders")
@@ -94,11 +96,12 @@ class CoinCommands(BotCommands):
         await self._gated_send(
             ctx,
             lambda: place_bet(self.bot, str(ctx.author.id), "defenders", amount),
+            public=True,
         )
 
     @commands.hybrid_command(
         name="doubledown",
-        description="Spend 5 Duck Coins to double your MMR change for this match",
+        description="Spend 5 Duck Coins to double your MMR change for this match (public reply)",
     )
     async def doubledown_command(self, ctx: commands.Context):
         # Powerup: only usable inside the generated match-# channel.
@@ -106,6 +109,7 @@ class CoinCommands(BotCommands):
             ctx,
             lambda: doubledown(self.bot, str(ctx.author.id)),
             channel=ctx.channel,
+            public=True,
         )
 
     @commands.hybrid_command(
@@ -145,6 +149,7 @@ class CoinCommands(BotCommands):
         message_factory,
         requires_running_match: bool = True,
         channel=None,
+        public: bool = False,
     ):
         rejection = command_available(
             self.bot,
@@ -159,4 +164,4 @@ class CoinCommands(BotCommands):
             )
             await ctx.send(rejection, ephemeral=True)
             return
-        await ctx.send(message_factory(), ephemeral=True)
+        await ctx.send(message_factory(), ephemeral=not public)
