@@ -89,6 +89,11 @@ async def cleanup_match_resources(bot, cancelled: bool = False):
         bot.match_ongoing = False
         bot.queue.clear()
 
+        # The channel/role these stamps belong to are gone; a later !signup
+        # must see the leftovers as stale (not a live setup) or it would
+        # refuse to run recovery cleanup.
+        bot.match_setup_generation = None
+
         # Stop a stale signup view before its message disappears: its live
         # buttons would otherwise keep answering clicks against a deleted
         # match channel, and every reply there fails with 10003 Unknown

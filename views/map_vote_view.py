@@ -356,6 +356,17 @@ class MapVoteView(discord.ui.View):
         if voice_presence_enabled() and self.ctx.guild:
             await move_teams_to_voice(self.ctx.guild, self.bot.team1, self.bot.team2)
 
+        # Last re-check before the flag writes: a second !signup (or !cancel)
+        # may have bumped setup_generation while this coroutine was awaiting
+        # sends above. Without this re-check the superseded cycle would
+        # resurrect match_not_reported/match_ongoing over the new signup's
+        # fresh state, permanently blocking !signup (issue #218).
+        if self.is_setup_cancelled():
+            log.info(
+                "Match setup superseded during finalization; skipping flag writes."
+            )
+            return
+
         self.bot.match_ongoing = True
         self.bot.match_not_reported = True
         if self.bot.match_channel:

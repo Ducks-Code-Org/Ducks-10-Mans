@@ -219,21 +219,28 @@ class SignupCommand(BotCommands):
             self.bot.load_mmr_data()
             log.debug("Reloaded MMR data at start of signup")
 
-            # Recover from a stuck previous match: if a report never
-            # completed (e.g. the match was never visible on the Riot API and
-            # the report claim blocked retrying), the old match channel/role
-            # and per-match flags are still set. Cleaning them up here lets
-            # the new signup start from a blank slate instead of piling a new
-            # signup on top of the old match channel. The new signup's
-            # generation bump (below) also invalidates any stale views.
-            # cleanup_match_resources also stops the stale signup view and
-            # deletes its message (issue #216): a view left answering clicks
-            # against the deleted channel replies 10003 Unknown Channel.
+            # Refuse to touch match resources owned by a LIVE setup cycle.
+            # Between the queue filling and the report, every flag !signup
+            # checks is False (signup_active flipped False by finalize_signup,
+            # match_not_reported/match_ongoing only set when the map vote
+            # ends) — a second !signup in that window would otherwise treat
+            # the live match channel/role as stale leftovers and delete them
+            # out from under the running match setup, deadlocking both
+            # signups (issue #218). Resources whose generation doesn't match
+            # the current one are genuinely stale (bot restarted mid-match,
+            # report never ran) and still get cleaned up below.
             if (
                 self.bot.match_channel is not None
                 or self.bot.match_role is not None
                 or self.bot.current_teams_message is not None
             ):
+                if self.bot.match_setup_generation == self.bot.setup_generation:
+                    await ctx.send(
+                        "A match is being set up right now (voting/draft in "
+                        "progress). Wait for it to finish, report it, or use "
+                        "`!cancel` to abort it."
+                    )
+                    return
                 log.warning(
                     "Stale match resources found at signup: channel=%r role=%r — cleaning up",
                     self.bot.match_channel,
@@ -253,6 +260,8 @@ class SignupCommand(BotCommands):
         # Bump the setup generation so any stale views from a previous
         # match-setup cycle are invalidated.
         self.bot.setup_generation += 1
+        # Stamp the new match resources with this cycle's generation.
+        self.bot.match_setup_generation = self.bot.setup_generation
         self.bot.signup_active = True
         self.bot.queue = []
         self.bot.captain1 = None
@@ -295,6 +304,9 @@ class SignupCommand(BotCommands):
         except Exception as e:
             # Cleanup
             self.bot.signup_active = False
+            # The leftovers must look stale to the next !signup (nothing
+            # bumped setup_generation on this path).
+            self.bot.match_setup_generation = None
             if getattr(self.bot, "match_role", None):
                 try:
                     await self.bot.match_role.delete()

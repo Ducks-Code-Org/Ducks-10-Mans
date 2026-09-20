@@ -43,6 +43,12 @@ class CustomBot(commands.Bot):
         # "this setup was cancelled or superseded" (e.g. by !cancel).
         self.setup_generation = 0
 
+        # The setup_generation that created the current match channel/role.
+        # The signup/match flags are all False during the match-setup phase
+        # (votes/captains draft after the queue fills), so !signup needs this
+        # to tell a LIVE setup apart from resources left by a crashed cycle.
+        self.match_setup_generation: int | None = None
+
         # Discord log mirror flush task (started in on_ready).
         self.mirror_flush_loop = None
 
