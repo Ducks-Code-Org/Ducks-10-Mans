@@ -737,6 +737,13 @@ def demo():
             "now ranked" in rank_field["value"] and "<@2>" in rank_field["value"]
         ), rank_field
         assert "<@&1000>" in rank_field["value"], rank_field  # Wood Rank mention
+        # Issue #211: player 2 has zero games, so their summary line carries
+        # the placement tag and the footer explains it; veteran 1 does not.
+        defenders = next(f for f in summary.fields if f["name"].startswith("Defenders"))
+        attackers = next(f for f in summary.fields if f["name"].startswith("Attackers"))
+        assert "placement" in defenders["value"], defenders
+        assert "placement" not in attackers["value"], attackers
+        assert summary.footer and "placement" in summary.footer, summary.footer
 
         bot, ctx = asyncio.run(_run_summary(set()))
         summary = ctx.embeds[0]
