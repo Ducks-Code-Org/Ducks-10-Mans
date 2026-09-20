@@ -709,6 +709,11 @@ class ReportCommand(BotCommands):
                 doubled = pid in doubledown_ids
                 delta_part = f"**{sign}{delta}**" if doubled else f"{sign}{delta}"
                 tag_part = " ×2" if doubled else ""
+                # Placement marker (issue #211): first match this season, so
+                # the MMR shown is the fresh 100×VLR seed rather than a
+                # normal delta.
+                if _is_new(pid):
+                    tag_part += " placement"
                 # Mention by Discord ID (<@id>) rather than the Riot ID: the
                 # summary posts in #10-mans, where a live mention is the
                 # clearest way to see who gained/lost MMR (and it survives
@@ -722,10 +727,17 @@ class ReportCommand(BotCommands):
         )
         for label, entries_text in mmr_lines:
             results_embed.add_field(name=label, value=entries_text, inline=True)
+        footer_parts = []
         if doubledown_ids:
-            results_embed.set_footer(
-                text=f"×2 = doubledown ({DOUBLEDOWN_COST} coins): this match's MMR change doubled"
+            footer_parts.append(
+                f"×2 = doubledown ({DOUBLEDOWN_COST} coins): this match's MMR change doubled"
             )
+        if any(_is_new(str(p["id"])) for p in self.bot.team1 + self.bot.team2):
+            footer_parts.append(
+                "placement = first match this season: MMR seeded from this game's performance"
+            )
+        if footer_parts:
+            results_embed.set_footer(text=" · ".join(footer_parts))
 
         # Issue #204: rank-tier changes this match (unranked → ranked, or
         # moving up/down between traditional MMR tiers). Optional section
