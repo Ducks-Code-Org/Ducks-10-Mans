@@ -715,17 +715,17 @@ class CaptainsDraftingView(discord.ui.View):
         """Whether this setup cycle was cancelled (e.g. by !cancel)."""
         return self.bot.setup_generation != self.setup_generation
 
-    def _player_mmr(self, player) -> int:
-        return self.bot.player_mmr.get(str(player["id"]), {}).get("mmr", DEFAULT_MMR)
-
-    def _player_rank(self, player) -> str:
+    def _player_rank(self, player, *, mention: bool = True) -> str:
         """Rank-role mention for display, or plaintext 'Unranked' (issue #212)."""
         stats = self.bot.player_mmr.get(str(player["id"]), {})
         matches = stats.get("matches_played", 0)
         if not matches:
             matches = stats.get("wins", 0) + stats.get("losses", 0)
         return display_rank_for(
-            self.ctx.guild, stats.get("mmr", DEFAULT_MMR), matches_played=matches
+            self.ctx.guild,
+            stats.get("mmr", DEFAULT_MMR),
+            matches_played=matches,
+            mention=mention,
         )
 
     async def send_current_draft_view(self):
@@ -762,7 +762,8 @@ class CaptainsDraftingView(discord.ui.View):
                 label = display_name_for(
                     user_data, guild=self.ctx.guild, discord_id=str(player["id"])
                 )
-            label = f"{label} ({self._player_rank(player)})"
+            # Select labels are plain text: a mention would show as <@&id>.
+            label = f"{label} ({self._player_rank(player, mention=False)})"
             options.append(discord.SelectOption(label=label, value=str(player["id"])))
         self.player_select.options = options
 

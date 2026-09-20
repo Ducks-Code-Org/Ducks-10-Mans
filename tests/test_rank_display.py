@@ -58,6 +58,14 @@ def demo():
     guild_no_role = _Guild([])
     assert display_rank_for(guild_no_role, 150, matches_played=5) == "@Stone Rank"
 
+    # Plain-text surfaces (select-menu labels) get the bare tier name, never
+    # a mention and never raw MMR.
+    assert display_rank_for(guild, 150, matches_played=5, mention=False) == "Stone Rank"
+    assert display_rank_for(guild_no_role, 150, matches_played=5, mention=False) == (
+        "Stone Rank"
+    )
+    assert display_rank_for(guild, 150, matches_played=0, mention=False) == "Unranked"
+
     # The exact RANKS thresholds still resolve (nothing drifted).
     for threshold, name, _ in RANKS:
         guild_all = _Guild([_Role(name)])

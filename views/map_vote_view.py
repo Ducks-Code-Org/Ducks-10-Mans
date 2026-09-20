@@ -6,6 +6,7 @@ import discord
 from discord.ui import Button
 
 from database import users
+from game.ranking import has_played
 from game.ranks import display_rank_for
 from game.stats_helper import DEFAULT_MMR
 from tracker_links import display_line_for
@@ -319,39 +320,18 @@ class MapVoteView(discord.ui.View):
             color=discord.Color.blue(),
         )
 
-        attackers = []
-        for p in self.bot.team1:
+        def rank_line(p):
             ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", DEFAULT_MMR)
-            played = (
-                self.bot.player_mmr.get(str(p["id"]), {}).get("matches_played", 0) > 0
-                or (
-                    self.bot.player_mmr.get(str(p["id"]), {}).get("wins", 0)
-                    + self.bot.player_mmr.get(str(p["id"]), {}).get("losses", 0)
-                )
-                > 0
-            )
+            stats = self.bot.player_mmr.get(str(p["id"]), {})
             rank = display_rank_for(
-                self.ctx.guild, mmr, matches_played=1 if played else 0
+                self.ctx.guild,
+                stats.get("mmr", DEFAULT_MMR),
+                matches_played=1 if has_played(stats) else 0,
             )
-            attackers.append(f"{display_line_for(ud)} ({rank})")
+            return f"{display_line_for(ud)} ({rank})"
 
-        defenders = []
-        for p in self.bot.team2:
-            ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", DEFAULT_MMR)
-            played = (
-                self.bot.player_mmr.get(str(p["id"]), {}).get("matches_played", 0) > 0
-                or (
-                    self.bot.player_mmr.get(str(p["id"]), {}).get("wins", 0)
-                    + self.bot.player_mmr.get(str(p["id"]), {}).get("losses", 0)
-                )
-                > 0
-            )
-            rank = display_rank_for(
-                self.ctx.guild, mmr, matches_played=1 if played else 0
-            )
-            defenders.append(f"{display_line_for(ud)} ({rank})")
+        attackers = [rank_line(p) for p in self.bot.team1]
+        defenders = [rank_line(p) for p in self.bot.team2]
 
         teams_embed.add_field(
             name="**Attackers:**", value="\n".join(attackers), inline=False
