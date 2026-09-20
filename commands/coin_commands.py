@@ -1,5 +1,6 @@
-"""Prefix commands for Duck Coins (issue #34, #193): balance, betting,
-doubledown, and map overrides."""
+"""Duck Coins slash commands (issue #34, #193, #210): balance, betting,
+doubledown, and map overrides. Balance/bet/doubledown replies are hidden
+(ephemeral); a setmap override is public because it changes the match map."""
 
 import logging
 
@@ -28,10 +29,18 @@ async def setup(bot):
 
 class CoinCommands(BotCommands):
     # ------------------------------------------------------------------
-    # !coins (from commands/coins.py, issue #193)
+    # /coins (issue #193)
     # ------------------------------------------------------------------
-    @commands.command(name="coins")
-    async def coins(self, ctx, *, target: str = None):
+    @commands.hybrid_command(
+        name="coins",
+        description="Show a player's Duck Coin balance (hidden reply)",
+    )
+    async def coins(
+        self,
+        ctx,
+        *,
+        target: str = None,
+    ):
         """Show a player's Duck Coin balance. Optional: Riot ID or @mention."""
         if not duck_coins_enabled():
             return
@@ -39,7 +48,8 @@ class CoinCommands(BotCommands):
         player_id = _resolve_player(self.bot, ctx, target)
         if player_id is None:
             await ctx.send(
-                "Could not find that player. Use a Riot ID (`Name#Tag`) or @mention."
+                "Could not find that player. Use a Riot ID (`Name#Tag`) or @mention.",
+                ephemeral=True,
             )
             return
 
@@ -52,38 +62,44 @@ class CoinCommands(BotCommands):
 
         coins = coins_of(player_id)
         emote = duck_emote(self.bot)
-        await ctx.reply(
-            f"**{display_name}** has **{coins}** Duck Coins {emote}",
-            mention_author=False,
+        await ctx.send(
+            f"**{display_name}** has **{coins}** Duck Coins {emote}", ephemeral=True
         )
         log.info("Coins lookup for %s by %s: %s coins", player_id, ctx.author, coins)
 
     # ------------------------------------------------------------------
     # Betting / doubledown / map overrides (issue #34)
     # ------------------------------------------------------------------
-    @commands.group(name="bet", invoke_without_command=True)
+    @commands.hybrid_group(
+        name="bet",
+        description="Bet Duck Coins on the current match",
+        fallback="help",
+    )
     async def bet(self, ctx: commands.Context):
-        """!bet attackers|defenders <amount> — bet Duck Coins on the match."""
+        """Pick a side: `/bet attackers <amount>` or `/bet defenders <amount>`."""
         await self._gated_send(
             ctx,
-            lambda: "Pick a side: `!bet attackers <amount>` or `!bet defenders <amount>`.",
+            lambda: "Pick a side: `/bet attackers <amount>` or `/bet defenders <amount>`.",
         )
 
-    @bet.command(name="attackers")
+    @bet.command(name="attackers", description="Bet coins on the Attackers")
     async def bet_attackers(self, ctx: commands.Context, amount: int):
         await self._gated_send(
             ctx,
             lambda: place_bet(self.bot, str(ctx.author.id), "attackers", amount),
         )
 
-    @bet.command(name="defenders")
+    @bet.command(name="defenders", description="Bet coins on the Defenders")
     async def bet_defenders(self, ctx: commands.Context, amount: int):
         await self._gated_send(
             ctx,
             lambda: place_bet(self.bot, str(ctx.author.id), "defenders", amount),
         )
 
-    @commands.command(name="doubledown")
+    @commands.hybrid_command(
+        name="doubledown",
+        description="Spend 5 Duck Coins to double your MMR change for this match",
+    )
     async def doubledown_command(self, ctx: commands.Context):
         # Powerup: only usable inside the generated match-# channel.
         await self._gated_send(
@@ -92,9 +108,14 @@ class CoinCommands(BotCommands):
             channel=ctx.channel,
         )
 
-    @commands.command(name="setmap")
-    async def setmap_command(self, ctx: commands.Context, *, args: str = ""):
-        """!setmap <map> [amount] — wager coins to override the chosen map.
+    @commands.hybrid_command(
+        name="setmap",
+        description="Wager Duck Coins to override the chosen map (public reply)",
+    )
+    async def setmap_command(
+        self, ctx: commands.Context, map_name: str, amount: int = None
+    ):
+        """Wager coins to override the chosen map (min 3, must outbid).
 
         Without an amount the cost escalates one coin over the last override
         (min 3). With an amount, you pay exactly that much and it must beat
@@ -103,10 +124,6 @@ class CoinCommands(BotCommands):
         # Overrides must land after map voting and before teams are decided —
         # during the captains draft, or the same window in Balanced mode, plus
         # the 2-minute grace after teams finalize. Powerup: match-# channel only.
-        parts = args.rsplit(" ", 1)
-        map_name, amount = args, None
-        if len(parts) == 2 and parts[1].isdigit():
-            map_name, amount = parts[0], int(parts[1])
         rejection = command_available(
             self.bot, requires_running_match=False, channel=ctx.channel
         )
@@ -116,7 +133,7 @@ class CoinCommands(BotCommands):
                 ctx.author,
                 rejection,
             )
-            await ctx.send(rejection)
+            await ctx.send(rejection, ephemeral=True)
             return
         await ctx.send(
             await setmap_override(self.bot, str(ctx.author.id), map_name, amount)
@@ -140,6 +157,6 @@ class CoinCommands(BotCommands):
                 ctx.author,
                 rejection,
             )
-            await ctx.send(rejection)
+            await ctx.send(rejection, ephemeral=True)
             return
-        await ctx.send(message_factory())
+        await ctx.send(message_factory(), ephemeral=True)

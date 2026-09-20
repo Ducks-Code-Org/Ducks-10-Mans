@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from commands import BotCommands
@@ -32,14 +33,16 @@ async def setup(bot):
 
 
 class AdminCommands(BotCommands):
-    @commands.command(name="newseason")
+    @commands.hybrid_command(
+        name="newseason",
+        description="Start a new season and crown the SSR winner",
+    )
     @commands.has_role("Owner")
+    @app_commands.describe(no_reset="Pass 'noreset' to keep everyone's stats")
     async def new_season(self, ctx, *, no_reset: str | None = None):
         """
         Creates a new season, saving seasons stats, and assigning SSR rank.
-        By default, resets everyone’s MMR + stats. If you pass 'noreset', it will keep stats.
-        Usage: !newseason    (resets)
-            !newseason noreset
+        By default, resets everyone's MMR + stats. Pass 'noreset' to keep stats.
         """
         reset = True
         if no_reset and no_reset.lower() in {"noreset", "keep", "false", "0"}:
@@ -51,7 +54,8 @@ class AdminCommands(BotCommands):
         )
         if winner_doc is None:
             await ctx.send(
-                "No player has played a match yet; there is no winner to crown."
+                "No player has played a match yet; there is no winner to crown.",
+                ephemeral=True,
             )
             return
 
@@ -102,7 +106,10 @@ class AdminCommands(BotCommands):
         else:
             await ctx.send(message)
 
-    @commands.command()
+    @commands.hybrid_command(
+        name="initialize_rounds",
+        description="Zero every player's total rounds played",
+    )
     @commands.has_role("Owner")
     async def initialize_rounds(self, ctx):
         result = mmr_collection.update_many({}, {"$set": {"total_rounds_played": 0}})
@@ -115,7 +122,10 @@ class AdminCommands(BotCommands):
             f"Initialized total_rounds_played for {result.modified_count} players."
         )
 
-    @commands.command()
+    @commands.hybrid_command(
+        name="simulate_queue",
+        description="Fill the queue with 10 fake players for testing",
+    )
     @commands.has_role("Owner")
     async def simulate_queue(self, ctx):
         log.info("Simulated queue started by %s", ctx.author)
@@ -130,7 +140,8 @@ class AdminCommands(BotCommands):
 
         if self.bot.signup_active:
             await ctx.send(
-                "A signup is already in progress. Resetting queue for simulation."
+                "A signup is already in progress. Resetting queue for simulation.",
+                ephemeral=True,
             )
         self.bot.queue.clear()
 
@@ -159,11 +170,18 @@ class AdminCommands(BotCommands):
         mode_vote = ModeVoteView(ctx, self.bot, self.bot.setup_generation)
         await mode_vote.send_view()
 
-    @commands.command(name="setcaptain")
+    @commands.hybrid_command(
+        name="setcaptain",
+        description="Manually set a draft captain (Captains mode, before map vote ends)",
+    )
     @commands.has_permissions(administrator=True)
-    async def setcaptain(self, ctx, slot: str = "", *, target: str = ""):
+    @app_commands.describe(
+        slot="Which captain slot to set: 1 or 2",
+        target="Player to make captain (@mention or linked Name#Tag)",
+    )
+    async def setcaptain(self, ctx, slot: str, target: str):
         """Manually set a draft captain (Captains mode, before map vote ends).
-        Usage: !setcaptain <1|2> <@user|Name#Tag>
+
         Valid between the mode vote picking Captains and the map vote ending:
         assign_captains() (map vote end) skips auto-assignment only when both
         slots are pre-filled; once selected_map exists the draft is running and
@@ -172,43 +190,51 @@ class AdminCommands(BotCommands):
         slot = (slot or "").strip()
         target = (target or "").strip()
         if slot not in {"1", "2"} or not target:
-            await ctx.send("Usage: `!setcaptain <1|2> <@user|Name#Tag>`")
+            await ctx.send(
+                "Usage: `/setcaptain <1|2> <@user|Name#Tag>`", ephemeral=True
+            )
             return
         if self.bot.match_ongoing or self.bot.match_not_reported:
             await ctx.send(
-                "A match is already ongoing or awaiting report — captains are locked in."
+                "A match is already ongoing or awaiting report — captains are locked in.",
+                ephemeral=True,
             )
             return
         if self.bot.chosen_mode != "Captains":
             await ctx.send(
-                "Captains can only be set once the mode vote has picked Captains."
+                "Captains can only be set once the mode vote has picked Captains.",
+                ephemeral=True,
             )
             return
         if self.bot.selected_map:
             await ctx.send(
                 "The map vote already ended — the captain draft has started, "
-                "so captains can no longer be changed."
+                "so captains can no longer be changed.",
+                ephemeral=True,
             )
             return
         if not self.bot.queue:
-            await ctx.send("There is no queue to set captains from.")
+            await ctx.send("There is no queue to set captains from.", ephemeral=True)
             return
 
         pid = resolve_user_arg(target, ctx.guild)
         if not pid:
             await ctx.send(
-                f"Could not resolve player `{target}` — use an @mention or a linked `Name#Tag`."
+                f"Could not resolve player `{target}` — use an @mention or a linked `Name#Tag`.",
+                ephemeral=True,
             )
             return
         player = next((p for p in self.bot.queue if str(p["id"]) == str(pid)), None)
         if player is None:
-            await ctx.send("That player is not in the current queue.")
+            await ctx.send("That player is not in the current queue.", ephemeral=True)
             return
 
         attr = "captain1" if slot == "1" else "captain2"
         other = self.bot.captain2 if slot == "1" else self.bot.captain1
         if other and str(other["id"]) == str(pid):
-            await ctx.send(f"**{player['name']}** is already the other captain.")
+            await ctx.send(
+                f"**{player['name']}** is already the other captain.", ephemeral=True
+            )
             return
 
         previous = getattr(self.bot, attr)
@@ -228,7 +254,10 @@ class AdminCommands(BotCommands):
         )
 
     # Set the bot to development mode
-    @commands.command()
+    @commands.hybrid_command(
+        name="toggledev",
+        description="Toggle developer mode (admins only, hides bot activity)",
+    )
     @commands.has_permissions(administrator=True)
     async def toggledev(self, ctx):
         log.info(
@@ -238,8 +267,7 @@ class AdminCommands(BotCommands):
         )
         if not self.dev_mode:
             self.dev_mode = True
-            await ctx.send("Developer Mode Enabled")
-            self.bot.command_prefix = "^"
+            await ctx.send("Developer Mode Enabled (commands are now admin-only)")
             try:
                 await self.bot.change_presence(
                     status=discord.Status.do_not_disturb,
@@ -250,7 +278,6 @@ class AdminCommands(BotCommands):
         else:
             self.dev_mode = False
             await ctx.send("Developer Mode Disabled")
-            self.bot.command_prefix = "!"
             try:
                 await self.bot.change_presence(
                     status=discord.Status.online, activity=discord.Game(name="10 Mans!")
@@ -259,7 +286,10 @@ class AdminCommands(BotCommands):
                 pass
 
     # Stop the signup process or cancel an active match
-    @commands.command()
+    @commands.hybrid_command(
+        name="cancel",
+        description="Cancel the active signup, setup, or match and refund coins",
+    )
     @commands.has_permissions(administrator=True)
     async def cancel(self, ctx):
         # Serialize against !report: a cancel must not tear down the match
@@ -304,7 +334,7 @@ class AdminCommands(BotCommands):
                 await announce_cancellation_async(self.bot, ctx.guild)
 
             await ctx.send(
-                "Canceled active signup. Feel free to start a new one with `!signup`."
+                "Canceled active signup. Feel free to start a new one with `/signup`."
             )
             log.info("Cancelling signup...")
 
@@ -326,7 +356,7 @@ class AdminCommands(BotCommands):
             if refunded:
                 await announce_cancellation_async(self.bot, ctx.guild)
             await ctx.send(
-                "Cancelled active match. Feel free to start a new one with `!signup`."
+                "Cancelled active match. Feel free to start a new one with `/signup`."
             )
             await cleanup_match_resources(self.bot, cancelled=True)
             log.info("Cancelling active match...")
@@ -348,7 +378,7 @@ class AdminCommands(BotCommands):
             if refunded:
                 await announce_cancellation_async(self.bot, ctx.guild)
             await ctx.send(
-                "Cancelled match setup. Feel free to start a new one with `!signup`."
+                "Cancelled match setup. Feel free to start a new one with `/signup`."
             )
             await cleanup_match_resources(self.bot, cancelled=True)
             log.info("Cancelling match setup...")

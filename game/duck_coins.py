@@ -371,12 +371,12 @@ def _powerups_announcement(bot, remaining: int) -> str:
         header = f"⚔️ **Powerups enabled for {_fmt_clock(remaining)}**"
     else:
         header = (
-            "⌛ **Powerup window closed** — `!doubledown` and `!setmap` are locked."
+            "⌛ **Powerup window closed** — `/doubledown` and `/setmap` are locked."
         )
     return (
         f"{header}\n"
-        f"`!doubledown` costs {DOUBLEDOWN_COST} {e} to double your MMR change for this match.\n"
-        f"Override the chosen map with `!setmap <map> [amount]` — wager {SETMAP_BASE_COST}+ {e} "
+        f"`/doubledown` costs {DOUBLEDOWN_COST} {e} to double your MMR change for this match.\n"
+        f"Override the chosen map with `/setmap <map> [amount]` — wager {SETMAP_BASE_COST}+ {e} "
         f"(outbid the last override) to swap the map."
     )
 
@@ -402,8 +402,8 @@ def _betting_embed(bot, session, remaining: int) -> discord.Embed:
 
     if remaining:
         opener = (
-            f"{e} **Betting is open for the match below!** Bet with `!bet attackers <amount>` "
-            f"or `!bet defenders <amount>` (min 1). Players in this match cannot bet."
+            f"{e} **Betting is open for the match below!** Bet with `/bet attackers <amount>` "
+            f"or `/bet defenders <amount>` (min 1). Players in this match cannot bet."
         )
     else:
         opener = f"{e} **Betting is closed.**"
@@ -607,7 +607,7 @@ def place_bet(bot, user_id: str, side: str, amount: int) -> str:
         return "No betting window is open right now."
     side = (side or "").lower()
     if side not in session["bets"]:
-        return "Pick a side: `!bet attackers <amount>` or `!bet defenders <amount>`."
+        return "Pick a side: `/bet attackers <amount>` or `/bet defenders <amount>`."
     if str(user_id) in _match_players(bot):
         return "You can't bet on a match you're playing in."
     if amount < 1:

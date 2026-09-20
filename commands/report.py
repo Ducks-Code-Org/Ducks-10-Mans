@@ -154,12 +154,15 @@ async def grant_season_roles(guild, players) -> None:
 
 
 class ReportCommand(BotCommands):
-    @commands.command()
+    @commands.hybrid_command(
+        name="report",
+        description="Report match results and update MMR",
+    )
     async def report(self, ctx):
         log.info("Match report requested by %s", ctx.author)
         # ---------------------------------------------------------
         # Acquire report_lock to prevent concurrent double-reporting.
-        # Only one !report command may run at a time.  We additionally
+        # Only one /report command may run at a time.  We additionally
         # atomically clear match_not_reported so a second reporter who
         # acquires the lock after us sees the flag as already cleared.
         # ---------------------------------------------------------
@@ -170,7 +173,8 @@ class ReportCommand(BotCommands):
             current_user = users.find_one({"discord_id": str(ctx.author.id)})
             if not current_user:
                 await ctx.send(
-                    "You need to link your Riot account first using `!linkriot Name#Tag`"
+                    "You need to link your Riot account first using `/linkriot Name#Tag`",
+                    ephemeral=True,
                 )
                 return
 
@@ -178,17 +182,19 @@ class ReportCommand(BotCommands):
             tag = (current_user.get("tag") or "").lower().strip()
             if not name or not tag:
                 await ctx.send(
-                    "Your Riot account looks incomplete. Re-link with `!linkriot Name#Tag`."
+                    "Your Riot account looks incomplete. Re-link with `/linkriot Name#Tag`.",
+                    ephemeral=True,
                 )
                 return
 
             if not self.bot.match_ongoing:
                 await ctx.send(
-                    "No match is currently active, use `!signup` to start one"
+                    "No match is currently active, use `/signup` to start one",
+                    ephemeral=True,
                 )
                 return
             if not self.bot.selected_map:
-                await ctx.send("No map was selected for this match.")
+                await ctx.send("No map was selected for this match.", ephemeral=True)
                 return
 
             # ------------------------------------------------------------
@@ -198,7 +204,8 @@ class ReportCommand(BotCommands):
             if not self.bot.match_not_reported:
                 await ctx.send(
                     "This match has already been reported (a report is in progress "
-                    "or completed)."
+                    "or completed).",
+                    ephemeral=True,
                 )
                 return
             self.bot.match_not_reported = False  # claim it right now
@@ -271,18 +278,19 @@ class ReportCommand(BotCommands):
                 )
         except (RiotApiInconclusive, aiohttp.ClientError, asyncio.TimeoutError) as e:
             log.error("Network error fetching recent matches: %s", e, exc_info=e)
-            await ctx.send(f"Network error reaching HenrikDev API: {e}")
+            await ctx.send(f"Network error reaching HenrikDev API: {e}", ephemeral=True)
             return
 
         if data is None:
             await ctx.send(
                 "No recent matches found for your Riot ID yet — the game may "
-                "still be processing on the Riot API. Try again in a minute."
+                "still be processing on the Riot API. Try again in a minute.",
+                ephemeral=True,
             )
             return
 
         if not data.get("data"):
-            await ctx.send("Could not retrieve match data.")
+            await ctx.send("Could not retrieve match data.", ephemeral=True)
             return
 
         match = data["data"][0]
@@ -297,7 +305,7 @@ class ReportCommand(BotCommands):
                 "Report ignored: match %s was already recorded",
                 api_match_id,
             )
-            await ctx.send("This match has already been recorded.")
+            await ctx.send("This match has already been recorded.", ephemeral=True)
             return
 
         map_field = metadata.get("map")
@@ -313,7 +321,8 @@ class ReportCommand(BotCommands):
                 api_map,
             )
             await ctx.send(
-                "Map doesn't match your most recent match. Unable to report it."
+                "Map doesn't match your most recent match. Unable to report it.",
+                ephemeral=True,
             )
             return
 
@@ -329,16 +338,17 @@ class ReportCommand(BotCommands):
             except (TypeError, ValueError):
                 await ctx.send(
                     "Could not read the round count from the match data; "
-                    "try again once the match finishes processing."
+                    "try again once the match finishes processing.",
+                    ephemeral=True,
                 )
                 return
         else:
-            await ctx.send("No team data found in match data.")
+            await ctx.send("No team data found in match data.", ephemeral=True)
             return
 
         match_players = match.get("players", [])
         if not match_players:
-            await ctx.send("No players found in match data.")
+            await ctx.send("No players found in match data.", ephemeral=True)
             return
 
         # Resolve every queued player to their Discord id (the persistent
@@ -407,15 +417,15 @@ class ReportCommand(BotCommands):
                 "1. Did you or someone make a change to their Riot name/tag?\n"
             )
             mismatch_message += "2. Are you trying to report the correct match?\n\n"
-            mismatch_message += "If you changed your Riot ID, please use `!linkriot NewName#NewTag` to update it."
+            mismatch_message += "If you changed your Riot ID, please use `/linkriot NewName#NewTag` to update it."
 
-            await ctx.send(mismatch_message)
+            await ctx.send(mismatch_message, ephemeral=True)
             return
 
         # Determine which team won
         teams = match.get("teams", [])
         if not teams:
-            await ctx.send("No team data found in match data.")
+            await ctx.send("No team data found in match data.", ephemeral=True)
             return
 
         winning_team_id = None
@@ -426,7 +436,7 @@ class ReportCommand(BotCommands):
 
         log.debug("Winning team: %s", winning_team_id)
         if not winning_team_id:
-            await ctx.send("Could not determine the winning team.")
+            await ctx.send("Could not determine the winning team.", ephemeral=True)
             return
 
         match_team_players = {"red": {}, "blue": {}}
@@ -454,7 +464,9 @@ class ReportCommand(BotCommands):
                 str(p["id"]) for p in self.bot.team1
             ]
         else:
-            await ctx.send("Could not match the winning team to our teams.")
+            await ctx.send(
+                "Could not match the winning team to our teams.", ephemeral=True
+            )
             return
 
         for player_id in playing_team_ids:

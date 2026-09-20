@@ -278,6 +278,12 @@ class CustomBot(commands.Bot):
         }
 
     async def setup_hook(self):
+        # Global check + shared error replies for every (hybrid) command
+        # (issue #210). Registered before the cogs load so nothing can slip
+        # past the dev-mode gate.
+        from commands.slash_helpers import register_error_handlers
+
+        register_error_handlers(self)
         await self.load_extension("commands.admin_commands")
         await self.load_extension("commands.bug")
         await self.load_extension("commands.coin_commands")
@@ -348,8 +354,10 @@ class CustomBot(commands.Bot):
             pass
 
     async def on_command(self, ctx):
+        name = getattr(ctx.command, "qualified_name", ctx.command)
+        prefix = "/" if getattr(ctx, "interaction", None) is not None else "!"
         log.info(
-            "Command !%s invoked by %s in #%s", ctx.command, ctx.author, ctx.channel
+            "Command %s%s invoked by %s in #%s", prefix, name, ctx.author, ctx.channel
         )
 
     async def on_app_command_completion(self, interaction, command):
@@ -375,18 +383,20 @@ class CustomBot(commands.Bot):
         log.error("Unhandled exception in event %s", event_method, exc_info=True)
 
     async def on_command_error(self, ctx, error):
+        # User-facing replies are handled by slash_helpers (issue #210);
+        # this method stays the logging backstop for anything unhandled.
         if isinstance(error, commands.CommandNotFound):
             log.debug("Unknown command from %s: %s", ctx.author, ctx.message.content)
             return
         if isinstance(error, commands.MissingPermissions):
-            log.warning("%s lacks permissions for !%s", ctx.author, ctx.command)
+            log.warning("%s lacks permissions for %s", ctx.author, ctx.command)
         elif isinstance(error, (commands.MissingRole, commands.MissingAnyRole)):
-            log.warning("%s lacks role for !%s", ctx.author, ctx.command)
+            log.warning("%s lacks role for %s", ctx.author, ctx.command)
         elif isinstance(error, commands.CheckFailure):
-            log.warning("Check failed for !%s by %s", ctx.command, ctx.author)
+            log.warning("Check failed for %s by %s", ctx.command, ctx.author)
         else:
             log.error(
-                "Unhandled error in !%s by %s: %r",
+                "Unhandled error in %s by %s: %r",
                 ctx.command,
                 ctx.author,
                 error,
