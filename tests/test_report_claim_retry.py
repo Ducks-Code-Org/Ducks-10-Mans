@@ -35,6 +35,7 @@ sys.modules["database"] = _database_stub
 
 _maps_stub = types.ModuleType("services.maps_service")
 _maps_stub.get_standard_maps = lambda: ["Ascent", "Bind"]
+_maps_stub.get_competitive_maps = lambda: ["Ascent", "Bind"]
 sys.modules["services.maps_service"] = _maps_stub
 
 
@@ -75,6 +76,13 @@ _discord_stub.Forbidden = type("Forbidden", (_discord_stub.HTTPException,), {})
 _discord_stub.Guild = type("Guild", (), {})
 _discord_stub.Role = type("Role", (), {})
 _discord_stub.Member = type("Member", (), {})
+_discord_stub.Interaction = type("Interaction", (), {})
+_discord_stub.ui = types.SimpleNamespace(
+    View=type("View", (), {"__init__": lambda self, **kw: None}),
+    Button=type("Button", (), {}),
+    Select=type("Select", (), {}),
+)
+sys.modules["discord.ui"] = _discord_stub.ui
 _discord_stub.ext = types.SimpleNamespace()
 _discord_stub.ext.commands = types.SimpleNamespace(
     command=lambda *a, **k: (lambda f: f),
@@ -454,6 +462,120 @@ def demo():
         ), "stale match channel and role must be deleted before the new signup"
 
     asyncio.run(_run_signup_cleanup())
+
+    # --- Stale cleanup must also drop the stale signup message and view ----
+    # A prior signup's message/view outlive their deleted match channel:
+    # buttons that still answer clicks there produce 10003 Unknown Channel
+    # followups, and the notification failure then aborted match setup
+    # (issue #216). Cleanup must delete the stale message and stop the view.
+    class _DeletedMessage:
+        def __init__(self):
+            self.deleted = False
+
+        async def delete(self):
+            self.deleted = True
+
+    class _FakeStaleView:
+        def __init__(self):
+            self.cleaned = False
+
+        def cleanup(self):
+            self.cleaned = True
+
+    async def _run_stale_signup_message_cleanup():
+        bot3 = _FakeSignupBot()
+        old_message = _DeletedMessage()
+        old_view = _FakeStaleView()
+        bot3.match_channel = _DeletedChannel("match-0001")
+        bot3.match_role = _DeletedRole("match-0001")
+        bot3.current_signup_message = old_message
+        bot3.signup_view = old_view
+
+        await _report_mod.cleanup_match_resources(bot3, cancelled=True)
+
+        assert old_message.deleted, (
+            "the stale signup message must be deleted with the stale match "
+            "channel, or its live buttons keep answering clicks against a "
+            "deleted channel (10003 Unknown Channel)"
+        )
+        assert bot3.current_signup_message is None
+        assert old_view.cleaned, "the stale signup view's tasks must be stopped"
+        assert bot3.signup_view is None
+
+    asyncio.run(_run_stale_signup_message_cleanup())
+
+    # --- A failed signup notification must never strand a full queue -------
+    # Issue #216: the "added to the queue" followup raised (10003 Unknown
+    # Channel) and aborted finalize, so a 10/10 queue never reached match
+    # setup. The notification is best-effort; the signup pipeline continues.
+    class _NotifyFailBot:
+        def __init__(self):
+            self.setup_generation = 1
+            self.queue = [{"id": str(i), "name": f"p{i}"} for i in range(9)]
+            self.player_mmr = {}
+            self.player_names = {}
+            self.match_name = "match-0001"
+            self.current_signup_message = types.SimpleNamespace(
+                edit=lambda **kw: asyncio.sleep(0)
+            )
+            self.team1 = []
+            self.team2 = []
+            self.match_channel = types.SimpleNamespace(
+                send=lambda *a, **kw: asyncio.sleep(0)
+            )
+            self.match_ongoing = False
+
+        def ensure_player_mmr(self, *a, **k):
+            pass
+
+    class _RaisingNotify:
+        def __init__(self):
+            self.failed = 0
+
+        async def __call__(self, msg):
+            self.failed += 1
+            raise _discord_stub.HTTPException(
+                "400 Bad Request (10003): Unknown Channel"
+            )
+
+    async def _run_notify_failure_finalize():
+        from views.signup_view import SignupView
+
+        bot4 = _NotifyFailBot()
+        ctx = types.SimpleNamespace(
+            guild=None,
+            channel=types.SimpleNamespace(send=lambda *a, **kw: asyncio.sleep(0)),
+        )
+        view = SignupView.__new__(SignupView)
+        view.ctx = ctx
+        view.bot = bot4
+        view.setup_generation = bot4.setup_generation
+        view.last_activity_time = 0
+        view.sign_up_button = types.SimpleNamespace(label="")
+        view.children = []
+        # finalize_signup is the observable "match setup started" marker.
+        finalized = []
+
+        async def _fake_finalize(channel):
+            finalized.append(channel)
+
+        view.finalize_signup = _fake_finalize
+
+        notify = _RaisingNotify()
+        result = await view.signup_player(
+            "9",
+            "p9",
+            notify=notify,
+            channel=ctx.channel,
+            verified_user={"discord_id": "9", "name": "p9", "tag": "t"},
+        )
+
+        assert result is True, "the signup must still succeed"
+        assert len(bot4.queue) == 10, "the player must still be queued"
+        assert notify.failed == 1, "the failed notification must have run"
+        assert finalized, "a failed notification must not abort the queue-full handoff"
+
+    asyncio.run(_run_notify_failure_finalize())
 
     # --- Doubledown players are tagged in the match summary embed ----------
     # The summary must show which players' MMR gain/loss was doubled:
