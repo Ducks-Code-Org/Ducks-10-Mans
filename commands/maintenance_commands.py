@@ -348,7 +348,7 @@ def resolve_match_players(players) -> tuple[dict[int, str], list[str]]:
 
 class MaintenanceCommands(BotCommands):
     @commands.command(name="rollback")
-    @commands.has_permissions(administrator=True)
+    @commands.has_role("Owner")
     async def rollback(self, ctx):
         """Revert the database to a snapshot from before the most recent match."""
         log.info("Rollback requested by %s", ctx.author)
@@ -387,7 +387,7 @@ class MaintenanceCommands(BotCommands):
         )
 
     @commands.command(name="editplayer")
-    @commands.has_permissions(administrator=True)
+    @commands.has_role("Owner")
     async def editplayer(self, ctx, *, args: str = ""):
         """
         Edit a player's stats or linked Riot ID.
@@ -618,7 +618,7 @@ class MaintenanceCommands(BotCommands):
         )
 
     @commands.command(name="fixmap")
-    @commands.has_permissions(administrator=True)
+    @commands.has_role("Owner")
     async def fixmap(self, ctx, *, map_name: str = ""):
         """Force-set the current match's map (fixes 'map doesn't match' report errors)."""
         if not (self.bot.match_ongoing or self.bot.selected_map):
@@ -771,7 +771,7 @@ class MaintenanceCommands(BotCommands):
         await ctx.send(f"```\n{info[:1900]}\n```")
 
     @commands.command(name="addcoins")
-    @commands.has_permissions(administrator=True)
+    @commands.has_role("Owner")
     async def addcoins(self, ctx, *, args: str = ""):
         """Grant (or, with a negative amount, remove) Duck Coins for a player."""
         if not duck_coins_enabled():
@@ -801,7 +801,7 @@ class MaintenanceCommands(BotCommands):
         await ctx.send(f"<@{pid}> now has {coins_of(pid)} {duck_emote(self.bot)}.")
 
     @commands.command(name="resetplayer")
-    @commands.has_permissions(administrator=True)
+    @commands.has_role("Owner")
     async def resetplayer(self, ctx, *, args: str = ""):
         """Reset one player's season stats and MMR (corrupt-data recovery)."""
         user_arg = (args or "").strip()
@@ -1016,7 +1016,7 @@ class MaintenanceCommands(BotCommands):
             )
 
     @commands.command(name="resetseason")
-    @commands.has_permissions(administrator=True)
+    @commands.has_role("Owner")
     async def resetseason(self, ctx, *, confirm: str = ""):
         """
         Wipe all stats for the current season, without ending it.
@@ -1154,7 +1154,7 @@ class MaintenanceCommands(BotCommands):
         )
 
     @commands.command(name="recoverseason")
-    @commands.has_permissions(administrator=True)
+    @commands.has_role("Owner")
     async def recoverseason(self, ctx, *, arg: str = ""):
         """
         Overwrite the current season's data from a !snapshotseason .json file

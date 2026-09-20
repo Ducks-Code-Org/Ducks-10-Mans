@@ -33,7 +33,7 @@ async def setup(bot):
 
 class AdminCommands(BotCommands):
     @commands.command(name="newseason")
-    @commands.has_permissions(administrator=True)
+    @commands.has_role("Owner")
     async def new_season(self, ctx, *, no_reset: str | None = None):
         """
         Creates a new season, saving seasons stats, and assigning SSR rank.
@@ -116,7 +116,7 @@ class AdminCommands(BotCommands):
         )
 
     @commands.command()
-    @commands.has_permissions(administrator=True)
+    @commands.has_role("Owner")
     async def simulate_queue(self, ctx):
         log.info("Simulated queue started by %s", ctx.author)
         # Start a new setup cycle: invalidate any stale views first.
@@ -229,7 +229,7 @@ class AdminCommands(BotCommands):
 
     # Set the bot to development mode
     @commands.command()
-    @commands.has_role("blood")
+    @commands.has_permissions(administrator=True)
     async def toggledev(self, ctx):
         log.info(
             "Developer mode %s by %s",
@@ -260,7 +260,7 @@ class AdminCommands(BotCommands):
 
     # Stop the signup process or cancel an active match
     @commands.command()
-    @commands.has_role("Owner")
+    @commands.has_permissions(administrator=True)
     async def cancel(self, ctx):
         # Serialize against !report: a cancel must not tear down the match
         # channel or refund coins while a report is mid-commit (and must not
