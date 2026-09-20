@@ -279,6 +279,7 @@ class AdminCommands(BotCommands):
             # tasks see the cancellation and bail out instead of resurrecting
             # match setup.
             self.bot.setup_generation += 1
+            self.bot.match_setup_generation = None
 
             if self.bot.signup_view:
                 self.bot.signup_view.cleanup()
@@ -311,6 +312,7 @@ class AdminCommands(BotCommands):
         # Handle a match that is already in progress
         elif self.bot.match_ongoing or self.bot.selected_map:
             self.bot.setup_generation += 1
+            self.bot.match_setup_generation = None
 
             self.bot.match_not_reported = False
             self.bot.match_ongoing = False
@@ -332,6 +334,7 @@ class AdminCommands(BotCommands):
         # team-mode vote, map-pool vote, map vote, or captains draft)
         elif self.bot.match_channel:
             self.bot.setup_generation += 1
+            self.bot.match_setup_generation = None
 
             self.bot.match_not_reported = False
             self.bot.match_ongoing = False

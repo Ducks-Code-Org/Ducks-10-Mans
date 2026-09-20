@@ -223,6 +223,7 @@ class SignupView(discord.ui.View):
             await self.bot.match_channel.delete()
         except discord.HTTPException:
             pass
+        self.bot.match_setup_generation = None
 
         # Cleanup view
         self.stop()
