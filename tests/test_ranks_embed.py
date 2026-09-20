@@ -55,7 +55,7 @@ class _Ctx:
         self.author = types.SimpleNamespace(id=1, name="tester")
         self.sent = _Sent()
 
-    async def reply(self, *args, **kwargs):
+    async def send(self, *args, **kwargs):
         self.sent.kwargs = kwargs
         return None
 
@@ -92,6 +92,9 @@ def demo():
 
     # The title exists so the embed renders as a proper card.
     assert embed.title, "embed needs a title"
+
+    # /ranks stays a hidden personal reply (issue #210).
+    assert ctx.sent.kwargs.get("ephemeral") is True, "/ranks must reply hidden"
 
     print("ranks-embed self-checks passed")
 

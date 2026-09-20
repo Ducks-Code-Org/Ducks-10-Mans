@@ -1,4 +1,4 @@
-"""Display the current rank thresholds (issues #194, #214)."""
+"""Display the current rank thresholds (issues #194, #210, #214)."""
 
 import logging
 
@@ -15,10 +15,14 @@ async def setup(bot):
     await bot.add_cog(RanksCommand(bot))
 
 
-def ranks_text(guild) -> str:
-    """Rank threshold list derived from game.ranks.RANKS, role-mentioned."""
-    lines = []
+def ranks_embed(guild) -> discord.Embed:
+    """Rank threshold embed derived from game.ranks.RANKS, role-mentioned."""
+    embed = discord.Embed(
+        title="Rank Roles & MMR Thresholds",
+        color=discord.Color.green(),
+    )
     ordered = sorted(RANKS, key=lambda r: r[0])
+    lines = []
     for i, (threshold, name, _) in enumerate(ordered):
         upper = ordered[i + 1][0] - 1 if i + 1 < len(ordered) else None
         if upper is None:
@@ -27,18 +31,18 @@ def ranks_text(guild) -> str:
             span = f"({threshold}-{upper} MMR)"
         lines.append(f"{role_mention(guild, name)} {span}")
     lines.append(f"{role_mention(guild, SSR_NAME)} (Rank 1)")
-    return "\n".join(lines)
+    embed.description = "\n".join(lines)
+    return embed
 
 
 class RanksCommand(BotCommands):
-    @commands.command(name="ranks")
+    @commands.hybrid_command(
+        name="ranks",
+        description="Show every rank role and its MMR threshold range (hidden reply)",
+    )
     async def ranks(self, ctx):
         """Show every rank role and its MMR threshold range."""
-        # Issue #214: same content as before, wrapped in an embed.
-        embed = discord.Embed(
-            title="Rank Roles & MMR Thresholds",
-            description=ranks_text(ctx.guild),
-            color=discord.Color.green(),
-        )
-        await ctx.reply(embed=embed, mention_author=False)
+        # Issue #214: post the same thresholds inside an embed (hidden reply
+        # per issue #210). Content is unchanged — only the wrapper changed.
+        await ctx.send(embed=ranks_embed(ctx.guild), ephemeral=True)
         log.info("Rank thresholds shown to %s", ctx.author)

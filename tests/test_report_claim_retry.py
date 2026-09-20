@@ -86,12 +86,19 @@ sys.modules["discord.ui"] = _discord_stub.ui
 _discord_stub.ext = types.SimpleNamespace()
 _discord_stub.ext.commands = types.SimpleNamespace(
     command=lambda *a, **k: (lambda f: f),
+    hybrid_command=lambda *a, **k: (lambda f: f),
     has_permissions=lambda **k: (lambda f: f),
     Cog=type("Cog", (), {"__init_subclass__": classmethod(lambda cls, **kw: None)}),
 )
 sys.modules["discord"] = _discord_stub
 sys.modules["discord.ext"] = _discord_stub.ext
 sys.modules["discord.ext.commands"] = _discord_stub.ext.commands
+_app_stub = types.SimpleNamespace(
+    describe=lambda **k: (lambda f: f),
+    Attachment=object,
+)
+_discord_stub.app_commands = _app_stub
+sys.modules["discord.app_commands"] = _app_stub
 
 import commands.report as report_mod  # noqa: E402
 from commands.report import ReportCommand  # noqa: E402
