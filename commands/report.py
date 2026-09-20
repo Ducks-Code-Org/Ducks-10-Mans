@@ -22,6 +22,7 @@ from game.ranking import has_played
 from game.ranks import RANKS, SSR_NAME, rank_of, role_mention, sync_player_rank
 from game.recent_queue import remember_recent_queue
 from game.stats_helper import update_stats
+from game.voice_presence import move_players_to_lobby, voice_presence_enabled
 from globals import feature_enabled
 from services.riot_api import RiotApiInconclusive, get_recent_matches_async
 from services.vlr_rating import estimate_ratings_v4
@@ -908,6 +909,16 @@ class ReportCommand(BotCommands):
             await grant_season_roles(ctx.guild, self.bot.team1 + self.bot.team2)
         except Exception as e:
             log.error("Failed to grant season roles: %s", e, exc_info=e)
+
+        # Issue #213: with voice_presence enabled, move everyone still in the
+        # Attackers/Defenders team channels back to #lobby. Players who
+        # already left or moved themselves elsewhere are left alone. Must
+        # run BEFORE the team lists are reset below.
+        if voice_presence_enabled() and ctx.guild:
+            try:
+                await move_players_to_lobby(ctx.guild, self.bot.team1 + self.bot.team2)
+            except Exception as e:
+                log.warning("Lobby move failed: %s", e)
 
         await asyncio.sleep(5)
         self.bot.match_not_reported = False
