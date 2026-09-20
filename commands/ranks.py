@@ -1,7 +1,8 @@
-"""Display the current rank thresholds (issue #194)."""
+"""Display the current rank thresholds (issues #194, #214)."""
 
 import logging
 
+import discord
 from discord.ext import commands
 
 from commands import BotCommands
@@ -33,5 +34,11 @@ class RanksCommand(BotCommands):
     @commands.command(name="ranks")
     async def ranks(self, ctx):
         """Show every rank role and its MMR threshold range."""
-        await ctx.reply(ranks_text(ctx.guild), mention_author=False)
+        # Issue #214: same content as before, wrapped in an embed.
+        embed = discord.Embed(
+            title="Rank Roles & MMR Thresholds",
+            description=ranks_text(ctx.guild),
+            color=discord.Color.green(),
+        )
+        await ctx.reply(embed=embed, mention_author=False)
         log.info("Rank thresholds shown to %s", ctx.author)
