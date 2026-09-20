@@ -211,3 +211,58 @@ async def move_teams_to_voice(guild, team1, team2) -> None:
                 log.warning("Could not move %s to '%s': %s", player_id, name, e)
             except (AttributeError, TypeError) as e:
                 log.warning("Could not inspect member %s: %s", player_id, e)
+
+
+async def move_players_to_lobby(guild, players) -> None:
+    """Move match players back to the lobby voice channel after a report.
+
+    Players who already left voice (or moved themselves elsewhere) are left
+    alone: only members still sitting in the Attackers/Defenders team
+    channels are moved. Missing permissions and API errors are logged and
+    skipped so the report pipeline never breaks on voice cleanup.
+    """
+    channels = _guild_voice_channels(guild)
+    if channels is None:
+        log.warning("Could not inspect voice channels; skipping lobby move")
+        return
+
+    lobby = _find_channel(channels, LOBBY_CHANNEL_NAME)
+    team_channels = {
+        channel.id
+        for name in (ATTACKERS_CHANNEL_NAME, DEFENDERS_CHANNEL_NAME)
+        if (channel := _find_channel(channels, name)) is not None
+    }
+    if not team_channels:
+        log.info("No team voice channels to move players out of")
+        return
+    if lobby is None:
+        # Nowhere to move them to; disconnecting would be worse.
+        log.warning("No #lobby voice channel found; skipping lobby move")
+        return
+
+    moved = 0
+    for player in players or []:
+        player_id = _player_id(player)
+        if player_id is None:
+            log.warning("Skipping malformed player entry: %r", player)
+            continue
+        try:
+            member = guild.get_member(player_id)
+            if (
+                not member
+                or not member.voice
+                or member.voice.channel is None
+                or member.voice.channel.id not in team_channels
+            ):
+                # Already left, disconnected, or not in a team channel.
+                continue
+            if member.voice.channel.id == lobby.id:
+                continue
+            await member.move_to(lobby)
+            moved += 1
+        except (discord.HTTPException, asyncio.TimeoutError) as e:
+            log.warning("Could not move %s back to the lobby: %s", player_id, e)
+        except (AttributeError, TypeError) as e:
+            log.warning("Could not inspect member %s: %s", player_id, e)
+    if moved:
+        log.info("Moved %s player(s) back to the lobby after the report", moved)
