@@ -219,14 +219,6 @@ class SignupCommand(BotCommands):
             self.bot.load_mmr_data()
             log.debug("Reloaded MMR data at start of signup")
 
-            # Tear down any existing signup view. Just dropping the reference
-            # leaks its background tasks, which then race the new signup's
-            # refresh task over current_signup_message — recreating stale
-            # embeds/buttons or deleting them (issue #181).
-            if self.bot.signup_view is not None:
-                self.bot.signup_view.cleanup()
-                self.bot.signup_view = None
-
             # Recover from a stuck previous match: if a report never
             # completed (e.g. the match was never visible on the Riot API and
             # the report claim blocked retrying), the old match channel/role
@@ -234,6 +226,9 @@ class SignupCommand(BotCommands):
             # the new signup start from a blank slate instead of piling a new
             # signup on top of the old match channel. The new signup's
             # generation bump (below) also invalidates any stale views.
+            # cleanup_match_resources also stops the stale signup view and
+            # deletes its message (issue #216): a view left answering clicks
+            # against the deleted channel replies 10003 Unknown Channel.
             if (
                 self.bot.match_channel is not None
                 or self.bot.match_role is not None

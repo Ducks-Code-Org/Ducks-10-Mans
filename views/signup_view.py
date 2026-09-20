@@ -282,10 +282,19 @@ class SignupView(discord.ui.View):
             notify = lambda _msg: None  # noqa: E731 — silent by default
 
         async def send_notify(msg: str):
-            """Run notify, awaiting async callables and calling sync ones."""
-            result = notify(msg)
-            if hasattr(result, "__await__"):
-                await result
+            """Run notify, awaiting async callables and calling sync ones.
+
+            Best-effort: a failed user-facing reply (e.g. a followup whose
+            interaction channel no longer exists — 10003 Unknown Channel)
+            must never abort the signup pipeline, or a 10/10 queue silently
+            never reaches match setup (issue #216).
+            """
+            try:
+                result = notify(msg)
+                if hasattr(result, "__await__"):
+                    await result
+            except discord.HTTPException as e:
+                log.warning("Could not send signup notification %r: %s", msg, e)
 
         # If this signup was cancelled (e.g. by !cancel), stop processing.
         if self.bot is None or self.bot.setup_generation != self.setup_generation:

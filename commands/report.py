@@ -89,6 +89,15 @@ async def cleanup_match_resources(bot, cancelled: bool = False):
         bot.match_ongoing = False
         bot.queue.clear()
 
+        # Stop a stale signup view before its message disappears: its live
+        # buttons would otherwise keep answering clicks against a deleted
+        # match channel, and every reply there fails with 10003 Unknown
+        # Channel (issue #216).
+        stale_view = getattr(bot, "signup_view", None)
+        if stale_view is not None:
+            stale_view.cleanup()
+            bot.signup_view = None
+
         if bot.current_signup_message:
             await _delete_signup_message_safely(bot.current_signup_message)
             bot.current_signup_message = None
