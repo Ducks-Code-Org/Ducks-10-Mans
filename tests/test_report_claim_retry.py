@@ -86,12 +86,19 @@ sys.modules["discord.ui"] = _discord_stub.ui
 _discord_stub.ext = types.SimpleNamespace()
 _discord_stub.ext.commands = types.SimpleNamespace(
     command=lambda *a, **k: (lambda f: f),
+    hybrid_command=lambda *a, **k: (lambda f: f),
     has_permissions=lambda **k: (lambda f: f),
     Cog=type("Cog", (), {"__init_subclass__": classmethod(lambda cls, **kw: None)}),
 )
 sys.modules["discord"] = _discord_stub
 sys.modules["discord.ext"] = _discord_stub.ext
 sys.modules["discord.ext.commands"] = _discord_stub.ext.commands
+_app_stub = types.SimpleNamespace(
+    describe=lambda **k: (lambda f: f),
+    Attachment=object,
+)
+_discord_stub.app_commands = _app_stub
+sys.modules["discord.app_commands"] = _app_stub
 
 import commands.report as report_mod  # noqa: E402
 from commands.report import ReportCommand  # noqa: E402
@@ -730,6 +737,13 @@ def demo():
             "now ranked" in rank_field["value"] and "<@2>" in rank_field["value"]
         ), rank_field
         assert "<@&1000>" in rank_field["value"], rank_field  # Wood Rank mention
+        # Issue #211: player 2 has zero games, so their summary line carries
+        # the placement tag and the footer explains it; veteran 1 does not.
+        defenders = next(f for f in summary.fields if f["name"].startswith("Defenders"))
+        attackers = next(f for f in summary.fields if f["name"].startswith("Attackers"))
+        assert "placement" in defenders["value"], defenders
+        assert "placement" not in attackers["value"], attackers
+        assert summary.footer and "placement" in summary.footer, summary.footer
 
         bot, ctx = asyncio.run(_run_summary(set()))
         summary = ctx.embeds[0]

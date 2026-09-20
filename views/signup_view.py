@@ -19,6 +19,27 @@ from game.voice_presence import voice_presence_enabled, wait_for_lobby
 log = logging.getLogger(__name__)
 
 
+class ChannelContext:
+    """A minimal ctx bound to one channel (the match channel).
+
+    Slash contexts post interaction followups to the channel the command was
+    invoked in, so after the signup moves into the generated match channel the
+    downstream vote/draft views need a ctx whose `send` targets that channel
+    (the prefix path previously faked this by reassigning ctx.channel).
+    Exposes only what the setup views use: send, guild, channel, author.
+    """
+
+    def __init__(self, channel, guild=None, author=None):
+        self.channel = channel
+        self.guild = guild if guild is not None else getattr(channel, "guild", None)
+        self.author = author
+
+    async def send(self, content=None, **kwargs):
+        # Interactions-only kwargs (ephemeral/silent) don't apply to channel sends.
+        kwargs.pop("ephemeral", None)
+        return await self.channel.send(content, **kwargs)
+
+
 class SignupView(discord.ui.View):
     def __init__(self, ctx, bot):
         super().__init__(timeout=None)
@@ -190,7 +211,7 @@ class SignupView(discord.ui.View):
         except discord.HTTPException:
             pass  # In case channel is deleted or something
 
-        # Remember who was in the queue for !pingrecent
+        # Remember who was in the queue for /pingrecent
         if self.bot.queue:
             remember_recent_queue(self.bot.queue, cancelled=True)
 
@@ -273,7 +294,7 @@ class SignupView(discord.ui.View):
         Runs the same gates (capacity, duplicates, Riot link), queue add,
         MMR seeding, match role, and signup-embed refresh for both paths.
         `verified_user` skips the Riot re-verification for callers that just
-        verified the identity themselves (the !signup command, which runs
+        verified the identity themselves (the /signup command, which runs
         ensure_current_riot_identity first). `notify` receives user-facing
         feedback (interaction followup or ctx.send); `channel` is where the
         full-queue handoff to match setup happens. Returns True when the
@@ -322,7 +343,7 @@ class SignupView(discord.ui.View):
         )
         if not db_user:
             await send_notify(
-                "❌ You must link your Riot account first using `!linkriot <Name#Tag>`."
+                "❌ You must link your Riot account first using `/linkriot <Name#Tag>`."
             )
             return False
 
@@ -347,7 +368,7 @@ class SignupView(discord.ui.View):
             if not linked_user or str(linked_user.get("discord_id")) != user_id:
                 await send_notify(
                     "❌ Your Riot ID is linked to a different Discord account, or was changed "
-                    "after another user linked it. Please re-link it using `!linkriot <Name#Tag>`."
+                    "after another user linked it. Please re-link it using `/linkriot <Name#Tag>`."
                 )
                 return False
 
@@ -437,7 +458,13 @@ class SignupView(discord.ui.View):
                 return
 
         self.bot.signup_active = False
-        self.ctx.channel = self.bot.match_channel
+        # From here on the setup runs inside the match channel. A slash ctx
+        # always posts followups to the command's invocation channel, so bind
+        # a channel-bound ctx instead of reassigning ctx.channel (which only
+        # worked for prefix invocations).
+        self.ctx = ChannelContext(
+            self.bot.match_channel, guild=self.ctx.guild, author=self.ctx.author
+        )
 
         for child in self.children:
             if isinstance(child, discord.ui.Button):

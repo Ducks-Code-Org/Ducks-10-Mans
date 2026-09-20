@@ -6,6 +6,8 @@ import discord
 from discord.ui import Button
 
 from database import users
+from game.ranking import has_played
+from game.ranks import display_rank_for
 from game.stats_helper import DEFAULT_MMR
 from tracker_links import display_line_for
 from views import safe_reply
@@ -318,17 +320,18 @@ class MapVoteView(discord.ui.View):
             color=discord.Color.blue(),
         )
 
-        attackers = []
-        for p in self.bot.team1:
+        def rank_line(p):
             ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", DEFAULT_MMR)
-            attackers.append(f"{display_line_for(ud)} (MMR:{mmr})")
+            stats = self.bot.player_mmr.get(str(p["id"]), {})
+            rank = display_rank_for(
+                self.ctx.guild,
+                stats.get("mmr", DEFAULT_MMR),
+                matches_played=1 if has_played(stats) else 0,
+            )
+            return f"{display_line_for(ud)} ({rank})"
 
-        defenders = []
-        for p in self.bot.team2:
-            ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = self.bot.player_mmr.get(str(p["id"]), {}).get("mmr", DEFAULT_MMR)
-            defenders.append(f"{display_line_for(ud)} (MMR:{mmr})")
+        attackers = [rank_line(p) for p in self.bot.team1]
+        defenders = [rank_line(p) for p in self.bot.team2]
 
         teams_embed.add_field(
             name="**Attackers:**", value="\n".join(attackers), inline=False
@@ -344,7 +347,7 @@ class MapVoteView(discord.ui.View):
             [p.get("name") for p in self.bot.team2],
         )
         self.bot.current_teams_message = await self.ctx.send(embed=teams_embed)
-        await self.ctx.send("Start match, then `!report` to finalize results.")
+        await self.ctx.send("Start match, then `/report` to finalize results.")
 
         from game.duck_coins import on_teams_announced, open_map_override_grace
 

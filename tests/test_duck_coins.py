@@ -563,7 +563,7 @@ def demo():
     ), "!setmap must pass its channel so the match-channel gate applies"
     # !bet must NOT pass a channel: spectators bet from #10-mans.
     bet_body = command_src.split("async def bet_attackers")[1].split(
-        "@commands.command(name="
+        '@bet.command(name="defenders"'
     )[0]
     assert (
         "channel=ctx.channel" not in bet_body
@@ -702,12 +702,12 @@ def demo():
     # --- Post-setup announcements: powerup notice + betting embed ---------
     from game.duck_coins import _betting_embed, _powerups_announcement
 
-    # The match-channel powerup notice must mention !setmap and !doubledown.
+    # The match-channel powerup notice must mention /setmap and /doubledown.
     text = _powerups_announcement(bot, 120)
-    assert "!setmap" in text and "Override" in text, text
-    assert "!doubledown" in text, text
+    assert "/setmap" in text and "Override" in text, text
+    assert "/doubledown" in text, text
 
-    # The #10-mans betting embed must explain !bet and show both teams with
+    # The #10-mans betting embed must explain /bet and show both teams with
     # pools, expected payout multipliers, and the countdown.
     fake_session = {
         "open": True,
@@ -719,11 +719,24 @@ def demo():
         "ends_at": 0,
     }
     embed = _betting_embed(bot, fake_session, 300)
-    assert "!bet attackers" in embed.description, embed.description
+    assert "/bet attackers" in embed.description, embed.description
     assert "Attackers" in embed.fields[0]["name"], embed.fields
     assert "Defenders" in embed.fields[1]["name"], embed.fields
     assert any("pays" in f["value"] for f in embed.fields), embed.fields
     assert "4:60" not in embed.footer["text"] and "5:00" in embed.footer["text"]
+
+    # Issue #212: team lines show rank mentions, never raw MMR. Player 1 has
+    # played (rank fallback "@Stone Rank" with no guild), player 2 has not
+    # ("Unranked").
+    bot.player_mmr = {
+        "1": {"mmr": 150, "matches_played": 3},
+        "2": {"mmr": 0, "matches_played": 0},
+    }
+    embed = _betting_embed(bot, fake_session, 300)
+    assert "MMR" not in embed.fields[0]["value"], embed.fields[0]
+    assert "@Stone Rank" in embed.fields[0]["value"], embed.fields[0]
+    assert "Unranked" in embed.fields[1]["value"], embed.fields[1]
+    assert "MMR" not in embed.fields[1]["value"], embed.fields[1]
 
     class _FakeFeatureGlobals:
         pass
@@ -739,7 +752,7 @@ def demo():
         assert (
             len(match_ch.messages) == 1
         ), "powerup notice must post once to the match channel"
-        assert "!setmap" in match_ch.messages[0]
+        assert "/setmap" in match_ch.messages[0]
         assert (
             len(ctx.channel.messages) == 1
         ), "betting embed must fall back to ctx.channel without a guild"
@@ -753,7 +766,7 @@ def demo():
         assert (
             len(ctx2.channel.messages) == 2
         ), "fallback must post powerup notice + betting embed"
-        assert "!setmap" in ctx2.channel.messages[0]
+        assert "/setmap" in ctx2.channel.messages[0]
 
     asyncio.run(_run_announcement_routing())
 
