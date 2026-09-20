@@ -725,6 +725,19 @@ def demo():
     assert any("pays" in f["value"] for f in embed.fields), embed.fields
     assert "4:60" not in embed.footer["text"] and "5:00" in embed.footer["text"]
 
+    # Issue #212: team lines show rank mentions, never raw MMR. Player 1 has
+    # played (rank fallback "@Stone Rank" with no guild), player 2 has not
+    # ("Unranked").
+    bot.player_mmr = {
+        "1": {"mmr": 150, "matches_played": 3},
+        "2": {"mmr": 0, "matches_played": 0},
+    }
+    embed = _betting_embed(bot, fake_session, 300)
+    assert "MMR" not in embed.fields[0]["value"], embed.fields[0]
+    assert "@Stone Rank" in embed.fields[0]["value"], embed.fields[0]
+    assert "Unranked" in embed.fields[1]["value"], embed.fields[1]
+    assert "MMR" not in embed.fields[1]["value"], embed.fields[1]
+
     class _FakeFeatureGlobals:
         pass
 

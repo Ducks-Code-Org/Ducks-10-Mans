@@ -50,11 +50,14 @@ class FakeBot:
 class FakeCtx:
     def __init__(self):
         self.messages = []
+        self.embeds = []
         self.guild = None
         self.channel = self
 
     async def send(self, content=None, **kwargs):
         self.messages.append(content)
+        if kwargs.get("embed") is not None:
+            self.embeds.append(kwargs["embed"])
         return types.SimpleNamespace(
             edit=types.MethodType(
                 lambda self, **kw: asyncio.sleep(0), types.SimpleNamespace()
@@ -159,6 +162,37 @@ async def demo():
         {"Ascent": 3, "Bind": 3, "Haven": 4}, [p["id"] for p in FakeBot().queue]
     )
     assert ended and chosen in ("Ascent", "Bind", "Haven")
+
+    # Issue #212: the Balanced-mode match setup summary (finalize_match_setup)
+    # shows rank mentions, never raw MMR: played players get their rank
+    # fallback ("@Stone Rank" without a guild), unplayed players "Unranked".
+    async def _run_balanced_finalize():
+        ctx = FakeCtx()
+        bot = FakeBot()
+        bot.chosen_mode = "Balanced"
+        bot.selected_map = "Ascent"
+        bot.team1 = [{"id": str(i), "name": f"p{i}"} for i in range(5)]
+        bot.team2 = [{"id": str(i), "name": f"p{i}"} for i in range(5, 10)]
+        bot.player_mmr = {
+            pid: {"mmr": 150, "matches_played": 3, "wins": 2, "losses": 1}
+            for pid in ("0", "1", "2", "3", "4", "5", "6", "7", "8")
+        }
+        bot.player_mmr["9"] = {"mmr": 0, "matches_played": 0, "wins": 0, "losses": 0}
+        view = MapVoteView(ctx, bot, ["Ascent", "Bind", "Haven"])
+        await view.finalize_match_setup()
+        view.cancel_interaction_queue_task()
+        view.cancel_timeout_timer()
+        return ctx
+
+    ctx = await _run_balanced_finalize()
+    teams_embed = next(
+        (e for e in ctx.embeds if (e.title or "").startswith("Teams on ")), None
+    )
+    assert teams_embed is not None, [e.title for e in ctx.embeds]
+    all_values = "\n".join(f.value for f in teams_embed.fields)
+    assert "MMR" not in all_values, all_values
+    assert "@Stone Rank" in all_values, all_values
+    assert "Unranked" in all_values, all_values
 
     print("all vote skip-wait self-checks passed")
 

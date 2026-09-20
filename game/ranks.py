@@ -74,6 +74,25 @@ def role_mention(guild: discord.Guild, name: str) -> str:
     return role.mention if role else f"@{name}"
 
 
+def display_rank_for(
+    guild: discord.Guild, mmr: int, *, matches_played: int, mention: bool = True
+) -> str:
+    """Rank-role mention for display, or plaintext 'Unranked' (issue #212).
+
+    Replaces raw MMR on the team displays: match setup summary, captains
+    draft, and the Duck Coin betting embed. Unplayed players have no rank
+    role, so they show 'Unranked' in plaintext.
+
+    Pass `mention=False` for surfaces that cannot render a mention as a pill
+    (select-menu option labels are plain text), so they show the tier name
+    instead of a literal `<@&id>`.
+    """
+    tier = rank_of(mmr) if matches_played > 0 else None
+    if tier is None:
+        return "Unranked"
+    return role_mention(guild, tier) if mention else tier
+
+
 async def _role_for(guild: discord.Guild, name: str, color_hex: str):
     """Find a role by name, creating it with the tier color if missing."""
     role = discord.utils.get(guild.roles, name=name)

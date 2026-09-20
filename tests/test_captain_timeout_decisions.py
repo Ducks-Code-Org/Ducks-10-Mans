@@ -54,12 +54,15 @@ class FakeCtx:
         self.messages = []
         # (content, kwargs) pairs, so tests can assert on view= sends.
         self.sent = []
+        self.embeds = []
         self.guild = None
         self.channel = self
 
     async def send(self, content=None, **kwargs):
         self.messages.append(content)
         self.sent.append((content, kwargs))
+        if kwargs.get("embed") is not None:
+            self.embeds.append(kwargs["embed"])
         return types.SimpleNamespace(
             edit=types.MethodType(
                 lambda self, **kw: asyncio.sleep(0), types.SimpleNamespace()
@@ -160,6 +163,57 @@ async def demo():
     assert (
         bot.match_ongoing and bot.match_not_reported
     ), "empty-pool auto-pick skipped finalize_draft (teams never announced)"
+
+    # --- Issue #212: draft surfaces show rank mentions, never raw MMR -----
+    bot = FakeBot()
+    ctx, view = make_draft_view(bot, single_pick=True)
+    bot.player_mmr = {
+        "0": {"mmr": 150, "matches_played": 3, "wins": 2, "losses": 1},
+        "1": {"mmr": 0, "matches_played": 0, "wins": 0, "losses": 0},
+        "2": {"mmr": 500, "matches_played": 9, "wins": 6, "losses": 3},
+        "3": {"mmr": 0, "matches_played": 0, "wins": 0, "losses": 0},
+    }
+    remaining = [p for p in view.remaining_players]
+    assert {p["id"] for p in remaining} >= {"2", "3"}
+    await view.send_current_draft_view()
+
+    remaining_embed = next(
+        (e for e in ctx.embeds if e.title == "Remaining Players"), None
+    )
+    assert remaining_embed is not None, [e.title for e in ctx.embeds]
+    assert "MMR" not in remaining_embed.description, remaining_embed.description
+    assert (
+        "@Duck-Master Rank" in remaining_embed.description
+    ), remaining_embed.description
+    assert "Unranked" in remaining_embed.description, remaining_embed.description
+
+    drafting_embed = next((e for e in ctx.embeds if e.title == "Current Draft"), None)
+    assert drafting_embed is not None
+    team_values = "\n".join(f.value for f in drafting_embed.fields)
+    assert "MMR" not in team_values, team_values
+    assert "@Stone Rank" in team_values, team_values
+    assert "Unranked" in team_values, team_values
+
+    # The pick dropdown labels carry the same rank text, but as plain text:
+    # select labels cannot render a mention pill, so a raw <@&id> would leak.
+    labels = [o.label for o in view.player_select.options]
+    assert any("Duck-Master Rank" in l for l in labels), labels
+    assert any("Unranked" in l for l in labels), labels
+    assert not any("MMR" in l for l in labels), labels
+    assert not any("<@&" in l for l in labels), labels
+
+    # The finalized teams embed (finalize_draft) shows ranks too.
+    await view.finalize_draft()
+    teams_embed = next(
+        (e for e in ctx.embeds if (e.title or "").startswith("Teams on ")), None
+    )
+    assert teams_embed is not None, [e.title for e in ctx.embeds]
+    final_values = "\n".join(f.value for f in teams_embed.fields)
+    assert "MMR" not in final_values, final_values
+    assert (
+        "@Stone Rank" in final_values or "@Duck-Master Rank" in final_values
+    ), final_values
+    assert "Unranked" in final_values, final_values
 
     # --- !cancel still works mid-draft (setup generation bumped) ---
     bot = FakeBot()

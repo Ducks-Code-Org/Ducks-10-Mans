@@ -382,14 +382,21 @@ def _powerups_announcement(bot, remaining: int) -> str:
 
 
 def _team_lines(bot, team) -> list[str]:
-    """One display line per player: tracker link + MMR."""
+    """One display line per player: tracker link + rank mention (issue #212)."""
+    from game.ranks import display_rank_for
+
     lines = []
     for p in team:
         ud = users.find_one({"discord_id": str(p["id"])})
-        mmr = (
-            getattr(bot, "player_mmr", {}).get(str(p["id"]), {}).get("mmr", DEFAULT_MMR)
+        stats = getattr(bot, "player_mmr", {}).get(str(p["id"]), {})
+        matches = stats.get("matches_played", 0)
+        if not matches:
+            matches = stats.get("wins", 0) + stats.get("losses", 0)
+        guild = getattr(getattr(bot, "match_channel", None), "guild", None)
+        rank = display_rank_for(
+            guild, stats.get("mmr", DEFAULT_MMR), matches_played=matches
         )
-        lines.append(f"{display_line_for(ud)} (MMR:{mmr})")
+        lines.append(f"{display_line_for(ud)} ({rank})")
     return lines
 
 
