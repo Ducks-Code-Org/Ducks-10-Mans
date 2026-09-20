@@ -18,7 +18,7 @@ async def ensure_current_riot_identity(discord_id: int):
     if not doc:
         return (
             False,
-            "You need to link your Riot account first using `!linkriot Name#Tag`.",
+            "You need to link your Riot account first using `/linkriot Name#Tag`.",
             None,
         )
 
@@ -29,7 +29,7 @@ async def ensure_current_riot_identity(discord_id: int):
     if not puuid and (not name or not tag):
         return (
             False,
-            "Your Riot link looks incomplete. Re-link with `!linkriot Name#Tag`.",
+            "Your Riot link looks incomplete. Re-link with `/linkriot Name#Tag`.",
             None,
         )
 
@@ -51,7 +51,7 @@ async def ensure_current_riot_identity(discord_id: int):
         if acc is None:
             return (
                 False,
-                "I couldn’t find your Riot account anymore. Re-link with `!linkriot Name#Tag`.",
+                "I couldn’t find your Riot account anymore. Re-link with `/linkriot Name#Tag`.",
                 None,
             )
 
