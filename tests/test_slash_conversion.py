@@ -137,6 +137,11 @@ async def demo():
     toggle_src = inspect.getsource(ac.AdminCommands.toggledev.callback)
     assert "ephemeral=True" not in toggle_src, "/toggledev must stay public"
 
+    # The global gate reads bot.dev_mode, so /toggledev must update that same
+    # shared state rather than a cog-local attribute.
+    assert "self.bot.dev_mode = True" in toggle_src
+    assert "self.bot.dev_mode = False" in toggle_src
+
     # Issue #210 follow-up: /bet, /doubledown, and /setmap reply publicly.
     # Rejections/errors stay hidden; only the result reply flips public.
     for cmd in (

@@ -262,11 +262,11 @@ class AdminCommands(BotCommands):
     async def toggledev(self, ctx):
         log.info(
             "Developer mode %s by %s",
-            "disabled" if self.dev_mode else "enabled",
+            "disabled" if getattr(self.bot, "dev_mode", False) else "enabled",
             ctx.author,
         )
-        if not self.dev_mode:
-            self.dev_mode = True
+        if not getattr(self.bot, "dev_mode", False):
+            self.bot.dev_mode = True
             await ctx.send("Developer Mode Enabled (commands are now admin-only)")
             try:
                 await self.bot.change_presence(
@@ -276,7 +276,7 @@ class AdminCommands(BotCommands):
             except discord.HTTPException:
                 pass
         else:
-            self.dev_mode = False
+            self.bot.dev_mode = False
             await ctx.send("Developer Mode Disabled")
             try:
                 await self.bot.change_presence(
