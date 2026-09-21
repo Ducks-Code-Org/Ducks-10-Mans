@@ -297,7 +297,24 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.signup")
         await self.load_extension("commands.stats")
         self.tree.on_error = self._on_app_command_error
-        await self.tree.sync()
+        # Slash registration must never kill startup (issue #227): a failed
+        # sync (missing `applications.commands` scope, Discord 4xx, network)
+        # used to propagate out of login() and crash the bot with no hint,
+        # while a "successful" sync against an invite lacking the
+        # applications.commands scope silently registered nothing — both
+        # leaving `!` as the only working prefix, indistinguishably. Log the
+        # outcome either way so `/` availability is provable from the logs.
+        try:
+            synced = await self.tree.sync()
+            log.info("Synced %d slash command(s) to Discord.", len(synced))
+        except Exception as e:
+            log.error(
+                "Slash command sync failed (%s: %s). Slash (/) commands will "
+                "not appear; `!` prefix commands keep working. Re-invite the "
+                "bot with the `applications.commands` scope and restart.",
+                type(e).__name__,
+                e,
+            )
         log.info("Bot is ready and cogs are loaded.")
 
     async def on_ready(self):
