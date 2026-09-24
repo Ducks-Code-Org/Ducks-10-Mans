@@ -19,6 +19,60 @@ from game.voice_presence import voice_presence_enabled, wait_for_lobby
 log = logging.getLogger(__name__)
 
 
+async def add_match_role(bot, guild, user_id) -> None:
+    """Grant the current match-# role to a member (best effort; issue #234).
+
+    Resolves the member at grant time (cache, then fetch) so callers don't
+    have to pre-resolve one; every failure is logged, never raised — a role
+    hiccup must never break the signup pipeline.
+    """
+    role = getattr(bot, "match_role", None)
+    if role is None or guild is None:
+        return
+    try:
+        member = guild.get_member(int(user_id))
+        if member is None:
+            member = await guild.fetch_member(int(user_id))
+    except (discord.NotFound, discord.HTTPException, ValueError, TypeError) as e:
+        log.warning("Could not resolve member %s for the match role: %s", user_id, e)
+        return
+    try:
+        if role not in member.roles:
+            await member.add_roles(role)
+    except discord.HTTPException as e:
+        log.warning("Could not add the match role to %s: %s", user_id, e)
+    except (AttributeError, TypeError) as e:
+        log.warning("Could not inspect member %s for roles: %s", user_id, e)
+
+
+async def remove_match_role(bot, guild, user_id) -> None:
+    """Strip the current match-# role from a member (best effort; issue #234).
+
+    Mirrors add_match_role: unresolved members and API failures are logged
+    and skipped so the leave/cleanup path never crashes after the queue
+    state was already updated.
+    """
+    role = getattr(bot, "match_role", None)
+    if role is None or guild is None:
+        return
+    try:
+        member = guild.get_member(int(user_id))
+        if member is None:
+            member = await guild.fetch_member(int(user_id))
+    except (discord.NotFound, discord.HTTPException, ValueError, TypeError) as e:
+        log.warning(
+            "Could not resolve member %s to remove the match role: %s", user_id, e
+        )
+        return
+    try:
+        if role in member.roles:
+            await member.remove_roles(role)
+    except discord.HTTPException as e:
+        log.warning("Could not remove the match role from %s: %s", user_id, e)
+    except (AttributeError, TypeError) as e:
+        log.warning("Could not inspect member %s for roles: %s", user_id, e)
+
+
 class ChannelContext:
     """A minimal ctx bound to one channel (the match channel).
 
@@ -146,12 +200,8 @@ class SignupView(discord.ui.View):
             ephemeral=True,
         )
 
-        # Remove the match role from the user
-        member: discord.Member = interaction.guild.get_member(
-            interaction.user.id
-        ) or await interaction.guild.fetch_member(interaction.user.id)
-        if member:
-            await member.remove_roles(self.bot.match_role)
+        # Remove the match role from the user (best effort; issue #234).
+        await remove_match_role(self.bot, interaction.guild, interaction.user.id)
 
     async def process_signup_queue(self):
         while True:
@@ -260,21 +310,10 @@ class SignupView(discord.ui.View):
         async def notify(msg: str):
             await safe_reply(interaction, msg, ephemeral=True)
 
-        # Resolve the member for the match-role grant (best effort).
-        member = None
-        guild = interaction.guild
-        if guild is not None:
-            member = guild.get_member(interaction.user.id)
-            if member is None:
-                try:
-                    member = await guild.fetch_member(interaction.user.id)
-                except (discord.NotFound, discord.HTTPException):
-                    member = None
-
         await self.signup_player(
             user_id,
             interaction.user.name,
-            member=member,
+            guild=interaction.guild,
             notify=notify,
             channel=interaction.channel,
         )
@@ -284,7 +323,7 @@ class SignupView(discord.ui.View):
         user_id: str,
         display_name: str,
         *,
-        member=None,
+        guild=None,
         notify=None,
         channel=None,
         verified_user: dict | None = None,
@@ -386,12 +425,9 @@ class SignupView(discord.ui.View):
         # Update last activity
         self.last_activity_time = asyncio.get_event_loop().time()
 
-        # Add match role to the new player (best effort)
-        if member is not None and getattr(self.bot, "match_role", None):
-            try:
-                await member.add_roles(self.bot.match_role)
-            except discord.HTTPException:
-                log.warning("Could not add the match role to %s", display_name)
+        # Add match role to the new player (best effort; issue #234).
+        if guild is not None:
+            await add_match_role(self.bot, guild, user_id)
 
         # Update the message and the signup button. Prefer the canonical
         # signup message: a stale/deleted message is recreated below so the

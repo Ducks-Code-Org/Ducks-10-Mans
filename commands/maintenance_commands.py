@@ -602,19 +602,11 @@ class MaintenanceCommands(BotCommands):
             persist_escrow(self.bot)
 
         # Swap match roles and move the incoming player to their team voice
-        # channel (best effort).
-        if self.bot.match_role:
-            if member:
-                try:
-                    await member.add_roles(self.bot.match_role)
-                except discord.HTTPException:
-                    pass
-            out_member = ctx.guild.get_member(int(out_pid)) if ctx.guild else None
-            if out_member:
-                try:
-                    await out_member.remove_roles(self.bot.match_role)
-                except discord.HTTPException:
-                    pass
+        # channel (best effort; issue #234).
+        from views.signup_view import add_match_role, remove_match_role
+
+        await add_match_role(self.bot, ctx.guild, in_pid)
+        await remove_match_role(self.bot, ctx.guild, out_pid)
         if voice_presence_enabled() and ctx.guild:
             try:
                 await move_teams_to_voice(ctx.guild, self.bot.team1, self.bot.team2)

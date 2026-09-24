@@ -337,7 +337,7 @@ class SignupCommand(BotCommands):
         await self.bot.signup_view.signup_player(
             author_id,
             ctx.author.name,
-            member=ctx.author,
+            guild=ctx.guild,
             verified_user=_db_user,
             notify=lambda msg: ctx.send(msg, ephemeral=True),
             channel=ctx.channel,
