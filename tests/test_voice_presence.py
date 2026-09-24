@@ -69,6 +69,23 @@ class FakeGuild:
         return channel
 
 
+def wait_for_lobby_with_joiner(guild, queue, send, joiner, **kwargs):
+    """Run wait_for_lobby while `joiner` runs alongside it.
+
+    `joiner` is a coroutine that mutates guild state; it gets the wait task
+    so it can time its join. Returns (result, joiner_result).
+    """
+
+    async def run():
+        task = asyncio.create_task(
+            wait_for_lobby(guild, queue, send, lambda: False, **kwargs)
+        )
+        joiner_result = await joiner(task)
+        return await task, joiner_result
+
+    return asyncio.run(run())
+
+
 class FakeMemberMovable(FakeMember):
     def __init__(self, uid, channel=None):
         super().__init__(uid, channel)
@@ -193,6 +210,51 @@ def demo():
 
         # A 10 minute lobby window is the documented requirement.
         assert LOBBY_WAIT_SECONDS == 600
+
+        # A player joining during the final poll window is still detected:
+        # the timeout check runs after the presence re-check, so the last
+        # poll that sees everyone in the lobby wins (issue #233).
+        guild = FakeGuild([], [lobby])
+
+        async def join_in_final_window(task):
+            # Join between the second-to-last and last poll: past the old
+            # pre-poll deadline check, visible only to the final poll.
+            await asyncio.sleep(0.045)
+            guild._members[2] = FakeMember(2, lobby)
+            return "joined"
+
+        result, _ = wait_for_lobby_with_joiner(
+            guild,
+            [{"id": "2"}],
+            send,
+            join_in_final_window,
+            timeout_seconds=0.05,
+            poll_seconds=0.01,
+        )
+        assert result is True, "a join inside the last poll window must be detected"
+
+        # Staged messaging (issue #233): the first notice must NOT ping the
+        # missing players, only tell them to join.
+        guild = FakeGuild([], [lobby])
+        sent.clear()
+        assert not asyncio.run(
+            wait_for_lobby(
+                guild,
+                [{"id": "1"}, {"id": "2"}],
+                send,
+                lambda: False,
+                timeout_seconds=0.05,
+                poll_seconds=0.01,
+            )
+        )
+        first = sent[0]
+        assert "please join" in first, "initial notice must instruct players to join"
+        assert (
+            "<@1>" not in first and "<@2>" not in first
+        ), "initial notice must not ping missing players"
+        assert any(
+            "auto-cancelled in about" in m and "<@1>" in m for m in sent[1:]
+        ), "final warning must ping missing players with a synced countdown"
 
         # Case/whitespace-insensitive detection for all three channels.
         weird_lobby = FakeChannel(20, "  LOBBY ")
