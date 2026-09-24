@@ -13,6 +13,7 @@ This guide will cover everything you need to do to set up the codebase for local
 - Head over to the [Discord Developer Portal](https://discord.com/developers/applications) and select "New Application"
   - Name it something useful
   - Invite this new bot to a discord server of your choice (for testing)
+    - Use the OAuth2 URL generator with **both** the `bot` and `applications.commands` scopes checked. Without `applications.commands` the `/` slash commands (all commands since the #210 conversion) will never appear in Discord — only the legacy `!` prefix fallback keeps working, and the sync outcome is logged at startup either way.
 - Click on "Bot" on the left menu, then select "Reset Token"
   - Copy this token somewhere useful
 - Head to the [MongoDB Atlas](https://www.mongodb.com/try?tck=community_atlas_ct) site, and add a new cluster
