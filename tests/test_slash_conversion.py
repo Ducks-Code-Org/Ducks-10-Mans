@@ -137,6 +137,43 @@ async def demo():
     toggle_src = inspect.getsource(ac.AdminCommands.toggledev.callback)
     assert "ephemeral=True" not in toggle_src, "/toggledev must stay public"
 
+    # Issue #228: drive the gate end-to-end in both invocation modes. Source
+    # text can't prove the gate fires — replacing the gate body with
+    # `return True`, or reverting toggledev to a cog-local flag, must fail.
+    from unittest import mock
+
+    toggle = ac.AdminCommands.toggledev.callback
+    admin_cog = bot.get_cog("AdminCommands")
+    bot.change_presence = mock.AsyncMock()
+    toggle_ctx = mock.Mock(author="self-check", send=mock.AsyncMock())
+
+    def gate_ctx(mode, admin):
+        perms = discord.Permissions(administrator=admin)
+        ctx = mock.Mock(bot=bot, permissions=perms, guild=mock.Mock(id=1))
+        if mode == "slash":
+            interaction = mock.Mock(client=bot, permissions=perms)
+            ctx.interaction = interaction
+            interaction._baton = ctx
+        else:
+            ctx.interaction = None
+        return ctx
+
+    async def gate_allows(mode, admin):
+        try:
+            return await bot.get_command("coins").can_run(gate_ctx(mode, admin))
+        except commands.CheckFailure:
+            return False
+
+    for mode in ("slash", "prefix"):
+        assert await gate_allows(mode, False), f"{mode}: normal mode must not gate"
+        await toggle(admin_cog, toggle_ctx)
+        assert not await gate_allows(
+            mode, False
+        ), f"{mode}: dev mode must block non-admins"
+        assert await gate_allows(mode, True), f"{mode}: dev mode must keep admins"
+        await toggle(admin_cog, toggle_ctx)
+        assert await gate_allows(mode, False), f"{mode}: disabling must reopen the gate"
+
     # Issue #210 follow-up: /bet, /doubledown, and /setmap reply publicly.
     # Rejections/errors stay hidden; only the result reply flips public.
     for cmd in (
