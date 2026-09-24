@@ -585,6 +585,81 @@ def demo():
 
     asyncio.run(_run_notify_failure_finalize())
 
+    # --- A cancel during Riot verification must not confirm the signup ----
+    # Issue #236: signup_player checked the cancellation gate only BEFORE
+    # the (multi-second) Riot verification await, so a !cancel landing
+    # during it still appended the player to the cleared queue and replied
+    # "added to the queue!" for a dead signup. The gate must run again
+    # after the await; the confirmation only fires for a live signup.
+    async def _run_cancel_during_verification():
+        from views.signup_view import SignupView
+
+        class _CancelDuringVerifyBot:
+            def __init__(self):
+                self.setup_generation = 1
+                self.queue = []
+                self.player_mmr = {}
+                self.player_names = {}
+                self.match_name = "match-0001"
+                self.current_signup_message = types.SimpleNamespace(
+                    edit=lambda **kw: asyncio.sleep(0)
+                )
+                self.team1 = []
+                self.team2 = []
+                self.match_channel = types.SimpleNamespace(
+                    send=lambda *a, **kw: asyncio.sleep(0)
+                )
+
+        bot5 = _CancelDuringVerifyBot()
+        ctx = types.SimpleNamespace(guild=None)
+        view = SignupView.__new__(SignupView)
+        view.ctx = ctx
+        view.bot = bot5
+        view.setup_generation = 1
+        view.last_activity_time = 0
+        view.sign_up_button = types.SimpleNamespace(label="")
+        view.children = []
+
+        sent = []
+
+        async def notify(msg):
+            sent.append(msg)
+
+        async def slow_verify(session, name, tag):
+            # The !cancel lands while the Riot check is in flight.
+            bot5.setup_generation = 2
+            return (True, "")
+
+        import views.signup_view as sv_mod
+
+        orig_verify = sv_mod.verify_riot_account_async
+        orig_users = sv_mod.users
+        sv_mod.verify_riot_account_async = slow_verify
+        sv_mod.users = types.SimpleNamespace(
+            find_one=lambda *a, **k: {
+                "discord_id": "7",
+                "name": "p7",
+                "tag": "t",
+            }
+        )
+        try:
+            result = await view.signup_player(
+                "7",
+                "p7",
+                notify=notify,
+                verified_user=None,
+                channel=None,
+            )
+        finally:
+            sv_mod.verify_riot_account_async = orig_verify
+            sv_mod.users = orig_users
+
+        assert result is False, "a cancelled signup must not report success"
+        assert bot5.queue == [], "a cancelled signup must not append to the queue"
+        assert any("cancelled" in m for m in sent), sent
+
+    asyncio.run(_run_cancel_during_verification())
+
     # --- Doubledown players are tagged in the match summary embed ----------
     # The summary must show which players' MMR gain/loss was doubled:
     # their delta is bolded and tagged "×2", with a footer explaining the

@@ -372,6 +372,15 @@ class SignupView(discord.ui.View):
                 )
                 return False
 
+        # Re-check the cancellation gate AFTER the awaits above (issue #236):
+        # the Riot verification can take seconds, and a !cancel or queue
+        # timeout during that window invalidates this signup cycle. Without
+        # this re-check the player is appended to a dead queue — and told
+        # "added to the queue!" for a signup that no longer exists.
+        if self.bot is None or self.bot.setup_generation != self.setup_generation:
+            await send_notify("This signup was cancelled.")
+            return False
+
         # Add the user the queue, and create mmr data if not present
         self.bot.queue.append({"id": user_id, "name": display_name})
         if user_id not in self.bot.player_mmr:
