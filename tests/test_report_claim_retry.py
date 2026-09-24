@@ -54,7 +54,9 @@ class _FakeEmbed:
 
 _discord_stub = types.ModuleType("discord")
 _discord_stub.Embed = _FakeEmbed
-_discord_stub.Color = types.SimpleNamespace(green=lambda: None, gold=lambda: None)
+_discord_stub.Color = types.SimpleNamespace(
+    green=lambda: None, gold=lambda: None, yellow=lambda: None
+)
 _discord_stub.Colour = types.SimpleNamespace(from_str=lambda css: css)
 
 
@@ -82,6 +84,11 @@ _discord_stub.ui = types.SimpleNamespace(
     View=type("View", (), {"__init__": lambda self, **kw: None}),
     Button=type("Button", (), {}),
     Select=type("Select", (), {}),
+)
+_discord_stub.PermissionOverwrite = type(
+    "PermissionOverwrite",
+    (),
+    {"__init__": lambda self, **kw: None},
 )
 sys.modules["discord.ui"] = _discord_stub.ui
 _discord_stub.ext = types.SimpleNamespace()
@@ -659,6 +666,200 @@ def demo():
         assert any("cancelled" in m for m in sent), sent
 
     asyncio.run(_run_cancel_during_verification())
+
+    # --- A cancel during the post-append awaits must not confirm ----------
+    # Issue #236 (residual window): the queue append itself is not the last
+    # await. A !cancel landing during the match-role grant clears the queue
+    # and nulls the view's bot (cancel_signup.cleanup()); the embed refresh
+    # is awaited too. Each await after the append must re-check and never
+    # confirm an add that did not survive.
+    async def _run_cancel_after_append():
+        from views.signup_view import SignupView
+
+        class _PostAppendBot:
+            def __init__(self, edit=None):
+                self.setup_generation = 1
+                self.queue = []
+                self.player_mmr = {}
+                self.player_names = {}
+                self.match_name = "match-0001"
+                self.team1 = []
+                self.team2 = []
+                self.match_role = object()
+                self.current_signup_message = types.SimpleNamespace(
+                    edit=edit or (lambda **kw: asyncio.sleep(0))
+                )
+                self.match_channel = types.SimpleNamespace(
+                    send=lambda *a, **kw: asyncio.sleep(0)
+                )
+
+        def _make_view(bot):
+            view = SignupView.__new__(SignupView)
+            # A guild whose get_member resolves, so get_signup_embed can list
+            # the queued player without falling into the NotFound fallback.
+            view.ctx = types.SimpleNamespace(
+                guild=types.SimpleNamespace(
+                    get_member=lambda _mid: types.SimpleNamespace(display_name="p")
+                )
+            )
+            view.bot = bot
+            view.setup_generation = 1
+            view.last_activity_time = 0
+            view.sign_up_button = types.SimpleNamespace(label="")
+            view.children = []
+            return view
+
+        async def notify(msg):
+            sent.append(msg)
+
+        # (a) cancel during the match-role grant: the real cancel calls
+        # cleanup(), which nulls view.bot and bumps the generation.
+        def _make_cancel_member(view, bot):
+            class _CancelDuringRoleGrantMember:
+                async def add_roles(self, role):
+                    bot.setup_generation += 1
+                    bot.queue = []
+                    view.bot = None  # cleanup() nulls it
+
+            return _CancelDuringRoleGrantMember()
+
+        bot6 = _PostAppendBot()
+        view = _make_view(bot6)
+        sent = []
+        result = await view.signup_player(
+            "8",
+            "p8",
+            member=_make_cancel_member(view, bot6),
+            notify=notify,
+            verified_user={"discord_id": "8", "name": "p8", "tag": "t"},
+        )
+        assert result is False, "an add that did not survive must report failure"
+        assert bot6.queue == [], "a cancelled signup must not keep the player queued"
+        assert not any("added to the queue" in m for m in sent), sent
+        assert any("cancelled" in m for m in sent), sent
+
+        # (b) cancel during the signup embed refresh (the last await before
+        # the confirmation): no member, so the first post-append await is the
+        # edit itself.
+        class _CancelOnEditBot(_PostAppendBot):
+            def __init__(self):
+                super().__init__(edit=self._cancel_on_edit)
+
+            async def _cancel_on_edit(self, **kw):
+                self.setup_generation += 1
+                self.queue = []
+
+        bot7 = _CancelOnEditBot()
+        view = _make_view(bot7)
+        sent = []
+        result = await view.signup_player(
+            "9",
+            "p9",
+            notify=notify,
+            verified_user={"discord_id": "9", "name": "p9", "tag": "t"},
+        )
+        assert result is False, "a cancelled embed refresh must report failure"
+        assert bot7.queue == [], "a cancelled signup must not keep the player queued"
+        assert not any("added to the queue" in m for m in sent), sent
+        assert any("cancelled" in m for m in sent), sent
+
+    asyncio.run(_run_cancel_after_append())
+
+    # --- /signup must not confirm when the add was cancelled ---------------
+    # The /signup runner ignored signup_player's result and unconditionally
+    # sent "You have been automatically added to the queue!" even when a
+    # !cancel during the add returned False (issue #236).
+    async def _run_slash_signup_confirmation():
+        import commands.signup as signup_mod
+        from commands.signup import SignupCommand
+
+        bot = types.SimpleNamespace()
+        bot.signup_lock = asyncio.Lock()
+        bot.signup_active = False
+        bot.match_not_reported = False
+        bot.setup_generation = 1
+        bot.match_setup_generation = None
+        bot.match_channel = None
+        bot.match_role = None
+        bot.current_teams_message = None
+        bot.current_signup_message = None
+        bot.queue = []
+        bot.load_mmr_data = lambda: None
+
+        class _CancelledView:
+            def __init__(self, ctx_, bot_):
+                self.bot = bot_
+
+            def get_signup_embed(self):
+                return None
+
+            async def signup_player(self, *a, **k):
+                return False  # cancelled during the add
+
+        class _CreatedChannel:
+            id = 3
+
+            async def send(self, *a, **k):
+                return None
+
+            async def delete(self):
+                pass
+
+        class _CreatedRole:
+            id = 2
+
+            async def delete(self):
+                pass
+
+        async def _created(kind):
+            if kind == "channel":
+                return _CreatedChannel()
+            return _CreatedRole()
+
+        async def _noop(**kw):
+            return None
+
+        ctx = FakeCtx(user_id="1")
+        ctx.channel = types.SimpleNamespace(category=None)
+        ctx.guild = types.SimpleNamespace(
+            default_role=object(),
+            me=types.SimpleNamespace(
+                guild_permissions=types.SimpleNamespace(
+                    manage_roles=True, manage_channels=True
+                )
+            ),
+            create_role=lambda **kw: _created("role"),
+            edit_role_positions=lambda **kw: _noop(),
+            create_text_channel=lambda **kw: _created("channel"),
+        )
+
+        cog = SignupCommand.__new__(SignupCommand)
+        cog.bot = bot
+
+        async def _ok_perms(_ctx):
+            return True
+
+        async def _ok_identity(_discord_id):
+            return (True, "", {"discord_id": "1"})
+
+        orig_perms = signup_mod.ensure_perms
+        orig_identity = signup_mod.ensure_current_riot_identity
+        orig_view = signup_mod.SignupView
+        signup_mod.ensure_perms = _ok_perms
+        signup_mod.ensure_current_riot_identity = _ok_identity
+        signup_mod.SignupView = _CancelledView
+        try:
+            await cog.signup(ctx)
+        finally:
+            signup_mod.ensure_perms = orig_perms
+            signup_mod.ensure_current_riot_identity = orig_identity
+            signup_mod.SignupView = orig_view
+
+        assert not any(
+            "automatically added" in (m or "") for m in ctx.sent
+        ), f"/signup confirmed a cancelled add: {ctx.sent}"
+
+    asyncio.run(_run_slash_signup_confirmation())
 
     # --- Doubledown players are tagged in the match summary embed ----------
     # The summary must show which players' MMR gain/loss was doubled:

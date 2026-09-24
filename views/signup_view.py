@@ -402,6 +402,14 @@ class SignupView(discord.ui.View):
             except discord.HTTPException:
                 log.warning("Could not add the match role to %s", display_name)
 
+        # The role grant is an await: a !cancel landing during it bumps
+        # setup_generation, clears the queue, and (via cleanup) may null out
+        # this view's bot — the add did not survive, so bail before touching
+        # the dead view and never confirm it (issue #236).
+        if self.bot is None or self.bot.setup_generation != self.setup_generation:
+            await send_notify("This signup was cancelled.")
+            return False
+
         # Update the message and the signup button. Prefer the canonical
         # signup message: a stale/deleted message is recreated below so the
         # queue embed and live buttons are never left missing (issue #181).
@@ -420,6 +428,14 @@ class SignupView(discord.ui.View):
                 )
             except (discord.NotFound, discord.HTTPException, AttributeError):
                 pass
+
+        # The embed refresh above is also an await; re-check so the
+        # confirmation only fires for a player still queued in a live signup
+        # (issue #236).
+        if self.bot is None or self.bot.setup_generation != self.setup_generation:
+            await send_notify("This signup was cancelled.")
+            return False
+
         await send_notify(f"{display_name} added to the queue!")
 
         # Check if queue is full

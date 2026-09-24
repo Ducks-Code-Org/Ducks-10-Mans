@@ -334,7 +334,7 @@ class SignupCommand(BotCommands):
         # identity above, so their doc is passed straight through (no second
         # API round-trip). Failures just surface as a normal reply.
         author_id = str(ctx.author.id)
-        await self.bot.signup_view.signup_player(
+        added = await self.bot.signup_view.signup_player(
             author_id,
             ctx.author.name,
             member=ctx.author,
@@ -342,10 +342,14 @@ class SignupCommand(BotCommands):
             notify=lambda msg: ctx.send(msg, ephemeral=True),
             channel=ctx.channel,
         )
-        await ctx.send(
-            f"You have been automatically added to the queue! ({len(self.bot.queue)}/10)",
-            ephemeral=True,
-        )
+        # Only confirm when the add actually survived; a !cancel landing on
+        # any of signup_player's awaits returns False and has already sent
+        # its own cancellation notice (issue #236).
+        if added:
+            await ctx.send(
+                f"You have been automatically added to the queue! ({len(self.bot.queue)}/10)",
+                ephemeral=True,
+            )
 
 
 async def ensure_perms(ctx) -> bool:
