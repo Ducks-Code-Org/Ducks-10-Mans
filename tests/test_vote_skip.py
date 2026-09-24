@@ -194,6 +194,26 @@ async def demo():
     assert "@Stone Rank" in all_values, all_values
     assert "Unranked" in all_values, all_values
 
+    # Issue #235: the match flags must flip BEFORE the teams embed is sent,
+    # so /doubledown (gated on match_ongoing) already works while the powerup
+    # notice counts down — the slow voice moves after the announcement must
+    # not leave the gate answering "no match is running".
+    async def _run_balanced_finalize_flags():
+        ctx = FakeCtx()
+        bot = FakeBot()
+        bot.chosen_mode = "Balanced"
+        bot.selected_map = "Ascent"
+        bot.team1 = [{"id": "0", "name": "p0"}]
+        bot.team2 = [{"id": "1", "name": "p1"}]
+        view = MapVoteView(ctx, bot, ["Ascent", "Bind", "Haven"])
+        await view.finalize_match_setup()
+        view.cancel_interaction_queue_task()
+        view.cancel_timeout_timer()
+        return bot
+
+    bot = await _run_balanced_finalize_flags()
+    assert bot.match_ongoing and bot.match_not_reported
+
     print("all vote skip-wait self-checks passed")
 
 

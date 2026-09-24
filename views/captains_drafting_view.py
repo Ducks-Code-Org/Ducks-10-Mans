@@ -458,6 +458,15 @@ class CaptainsDraftingView(discord.ui.View):
             [p.get("name") for p in self.bot.team1],
             [p.get("name") for p in self.bot.team2],
         )
+
+        # Flip the match flags BEFORE announcing teams (issue #235): the
+        # powerup notice opens its countdown right away, and the slow voice
+        # moves below must not leave /doubledown answering "no match is
+        # running" while that notice is already live. The cancellation check
+        # above guarantees a superseded cycle never reaches these writes.
+        self.bot.match_ongoing = True
+        self.bot.match_not_reported = True
+
         self.bot.current_teams_message = await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match and use `/report` to finalize results.")
 
@@ -471,8 +480,6 @@ class CaptainsDraftingView(discord.ui.View):
         if voice_presence_enabled() and self.ctx.guild:
             await move_teams_to_voice(self.ctx.guild, self.bot.team1, self.bot.team2)
 
-        self.bot.match_ongoing = True
-        self.bot.match_not_reported = True
         if self.bot.match_channel:
             try:
                 await self.bot.match_channel.edit(
