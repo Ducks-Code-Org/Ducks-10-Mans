@@ -411,6 +411,15 @@ class SignupView(discord.ui.View):
                 )
                 return False
 
+        # Re-check the cancellation gate AFTER the awaits above (issue #236):
+        # the Riot verification can take seconds, and a !cancel or queue
+        # timeout during that window invalidates this signup cycle. Without
+        # this re-check the player is appended to a dead queue — and told
+        # "added to the queue!" for a signup that no longer exists.
+        if self.bot is None or self.bot.setup_generation != self.setup_generation:
+            await send_notify("This signup was cancelled.")
+            return False
+
         # Add the user the queue, and create mmr data if not present
         self.bot.queue.append({"id": user_id, "name": display_name})
         if user_id not in self.bot.player_mmr:
@@ -428,6 +437,14 @@ class SignupView(discord.ui.View):
         # Add match role to the new player (best effort; issue #234).
         if guild is not None:
             await add_match_role(self.bot, guild, user_id)
+
+        # The role grant is an await: a !cancel landing during it bumps
+        # setup_generation, clears the queue, and (via cleanup) may null out
+        # this view's bot — the add did not survive, so bail before touching
+        # the dead view and never confirm it (issue #236).
+        if self.bot is None or self.bot.setup_generation != self.setup_generation:
+            await send_notify("This signup was cancelled.")
+            return False
 
         # Update the message and the signup button. Prefer the canonical
         # signup message: a stale/deleted message is recreated below so the
@@ -447,6 +464,14 @@ class SignupView(discord.ui.View):
                 )
             except (discord.NotFound, discord.HTTPException, AttributeError):
                 pass
+
+        # The embed refresh above is also an await; re-check so the
+        # confirmation only fires for a player still queued in a live signup
+        # (issue #236).
+        if self.bot is None or self.bot.setup_generation != self.setup_generation:
+            await send_notify("This signup was cancelled.")
+            return False
+
         await send_notify(f"{display_name} added to the queue!")
 
         # Check if queue is full

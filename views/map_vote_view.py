@@ -346,6 +346,25 @@ class MapVoteView(discord.ui.View):
             [p.get("name") for p in self.bot.team1],
             [p.get("name") for p in self.bot.team2],
         )
+
+        # Last re-check before the flag writes: a second !signup (or !cancel)
+        # may have bumped setup_generation while this coroutine was awaiting
+        # sends above. Without this re-check the superseded cycle would
+        # resurrect match_not_reported/match_ongoing over the new signup's
+        # fresh state, permanently blocking !signup (issue #218).
+        if self.is_setup_cancelled():
+            log.info(
+                "Match setup superseded during finalization; skipping flag writes."
+            )
+            return
+
+        # Flip the match flags BEFORE announcing teams (issue #235): the
+        # powerup notice opens its countdown right away, and the slow voice
+        # moves below must not leave /doubledown answering "no match is
+        # running" while that notice is already live.
+        self.bot.match_ongoing = True
+        self.bot.match_not_reported = True
+
         self.bot.current_teams_message = await self.ctx.send(embed=teams_embed)
         await self.ctx.send("Start match, then `/report` to finalize results.")
 
@@ -359,19 +378,6 @@ class MapVoteView(discord.ui.View):
         if voice_presence_enabled() and self.ctx.guild:
             await move_teams_to_voice(self.ctx.guild, self.bot.team1, self.bot.team2)
 
-        # Last re-check before the flag writes: a second !signup (or !cancel)
-        # may have bumped setup_generation while this coroutine was awaiting
-        # sends above. Without this re-check the superseded cycle would
-        # resurrect match_not_reported/match_ongoing over the new signup's
-        # fresh state, permanently blocking !signup (issue #218).
-        if self.is_setup_cancelled():
-            log.info(
-                "Match setup superseded during finalization; skipping flag writes."
-            )
-            return
-
-        self.bot.match_ongoing = True
-        self.bot.match_not_reported = True
         if self.bot.match_channel:
             try:
                 await self.bot.match_channel.edit(

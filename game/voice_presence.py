@@ -27,6 +27,9 @@ ATTACKERS_CHANNEL_NAME = "Attackers"
 DEFENDERS_CHANNEL_NAME = "Defenders"
 LOBBY_WAIT_SECONDS = 600  # 10 minutes to join the lobby
 POLL_SECONDS = 15
+# When this much of the lobby window is left, everyone still missing gets
+# pinged with a countdown synced to the auto-cancel deadline (issue #233).
+LOBBY_PING_SECONDS = 120
 
 # Sentinel: voice state could not be inspected, so presence is unknown.
 _UNKNOWN = object()
@@ -123,6 +126,11 @@ async def wait_for_lobby(
     Returns True once everyone is connected, or when presence cannot be
     checked at all. Returns False if the wait timed out or setup was
     cancelled (e.g. !cancel). Progress messages go through `send`.
+
+    Messaging is staged (issue #233): the first message only lists who is
+    missing and tells them to join — nobody gets pinged right away. When
+    the auto-cancel window is down to LOBBY_PING_SECONDS, everyone still
+    outside the lobby gets pinged with a countdown synced to the timeout.
     """
     channels = _guild_voice_channels(guild)
     if not channels:
@@ -143,22 +151,23 @@ async def wait_for_lobby(
         if _find_channel(channels, LOBBY_CHANNEL_NAME) is not None
         else "a **voice channel**"
     )
+    # List who is missing without pinging them (issue #233); the pinged
+    # nudge only comes with the final warning near the timeout.
+    who = ", ".join(f"<@{pid}>" for pid in missing).replace("<@", "<@\u200b")
     try:
         await send(
             f"Waiting for everyone to join {room} before match setup: "
-            + " ".join(f"<@{pid}>" for pid in missing)
-            + f" — you have {timeout_seconds // 60} minutes or the match is cancelled."
+            + who
+            + " — please join! The match is cancelled if not everyone joins."
         )
     except discord.HTTPException:
         pass
 
     deadline = asyncio.get_event_loop().time() + timeout_seconds
+    pinged = False
     while True:
         await asyncio.sleep(poll_seconds)
         if is_cancelled():
-            return False
-        if asyncio.get_event_loop().time() >= deadline:
-            log.warning("Lobby wait timed out with players still missing")
             return False
         missing = missing_lobby_players(guild, queue)
         if not missing:
@@ -168,6 +177,23 @@ async def wait_for_lobby(
             except discord.HTTPException:
                 pass
             return True
+        if asyncio.get_event_loop().time() >= deadline:
+            log.warning("Lobby wait timed out with players still missing")
+            return False
+        remaining = int(deadline - asyncio.get_event_loop().time())
+        if not pinged and remaining <= LOBBY_PING_SECONDS:
+            # Final warning: ping everyone still outside the lobby with a
+            # countdown matching the auto-cancel window.
+            pinged = True
+            minutes = max(remaining // 60, 1)
+            try:
+                await send(
+                    "⚠️ Still waiting in the lobby for match setup: "
+                    + " ".join(f"<@{pid}>" for pid in missing)
+                    + f" — the match is auto-cancelled in about {minutes} minute(s)!"
+                )
+            except discord.HTTPException:
+                pass
 
 
 async def move_teams_to_voice(guild, team1, team2) -> None:
