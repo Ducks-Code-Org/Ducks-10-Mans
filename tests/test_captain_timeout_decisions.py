@@ -164,6 +164,26 @@ async def demo():
         bot.match_ongoing and bot.match_not_reported
     ), "empty-pool auto-pick skipped finalize_draft (teams never announced)"
 
+    # --- Issue #235: the match flags flip before the teams embed is sent ---
+    # The powerup notice opens as soon as teams are announced; /doubledown is
+    # gated on match_ongoing, so that flag must be live before (not ~15s of
+    # voice moves after) the announcement.
+    bot = FakeBot()
+    ctx, view = make_draft_view(bot, single_pick=True)
+    view.remaining_players.clear()
+    flags_during_announce = []
+    _real_send = ctx.send
+
+    async def flag_check_send(content=None, **kwargs):
+        flags_during_announce.append((bot.match_ongoing, bot.match_not_reported))
+        await _real_send(content, **kwargs)
+
+    ctx.send = flag_check_send
+    await view._auto_pick_on_timeout("someone")
+    assert any(
+        ongoing and reported for ongoing, reported in flags_during_announce
+    ), f"match flags must be live by the time the teams embed is sent: {flags_during_announce}"
+
     # --- Issue #212: draft surfaces show rank mentions, never raw MMR -----
     bot = FakeBot()
     ctx, view = make_draft_view(bot, single_pick=True)
