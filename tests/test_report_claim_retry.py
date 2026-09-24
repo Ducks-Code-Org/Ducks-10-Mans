@@ -713,15 +713,23 @@ def demo():
             sent.append(msg)
 
         # (a) cancel during the match-role grant: the real cancel calls
-        # cleanup(), which nulls view.bot and bumps the generation.
-        def _make_cancel_member(view, bot):
+        # cleanup(), which nulls view.bot and bumps the generation. The grant
+        # resolves the member through the guild now (issue #234), so the
+        # cancel fires from the resolved member's add_roles.
+        def _make_cancel_guild(view, bot):
             class _CancelDuringRoleGrantMember:
+                roles = []
+
                 async def add_roles(self, role):
                     bot.setup_generation += 1
                     bot.queue = []
                     view.bot = None  # cleanup() nulls it
 
-            return _CancelDuringRoleGrantMember()
+            class _Guild:
+                def get_member(self, _uid):
+                    return _CancelDuringRoleGrantMember()
+
+            return _Guild()
 
         bot6 = _PostAppendBot()
         view = _make_view(bot6)
@@ -729,7 +737,7 @@ def demo():
         result = await view.signup_player(
             "8",
             "p8",
-            member=_make_cancel_member(view, bot6),
+            guild=_make_cancel_guild(view, bot6),
             notify=notify,
             verified_user={"discord_id": "8", "name": "p8", "tag": "t"},
         )

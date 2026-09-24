@@ -450,27 +450,37 @@ async def _run_role_helpers():
             self.roles.remove(role)
 
     class _Guild:
-        def __init__(self, members=None):
+        def __init__(self, members=None, fetched=None):
             self._members = dict(members or {})
+            self._fetched = dict(fetched or {})
 
         def get_member(self, uid):
             return self._members.get(int(uid))
 
         async def fetch_member(self, uid):
-            raise _discord_stub.NotFound()
+            member = self._fetched.get(int(uid))
+            if member is None:
+                raise _discord_stub.NotFound()
+            return member
 
     bot = types.SimpleNamespace(match_role=_Role("match-0001"))
 
-    # Grant: cache miss -> fetch fallback; the member gets the role once.
-    guild = _Guild()
-    member = _Member()
-    guild._members[7] = member
+    # Grant: cached member gets the role once.
+    guild = _Guild({7: _Member()})
+    member = guild._members[7]
     await add_match_role(bot, guild, "7")
     assert len(member.added) == 1, "the match role must be granted"
 
     # Grant is idempotent: no double role when the player already has it.
     await add_match_role(bot, guild, "7")
     assert len(member.added) == 1, "the role must not be granted twice"
+
+    # Cache miss -> fetch fallback: the fetched member is granted the role,
+    # not silently skipped (issue #234's reported failure).
+    guild = _Guild(fetched={11: _Member()})
+    fetched_member = guild._fetched[11]
+    await add_match_role(bot, guild, "11")
+    assert len(fetched_member.added) == 1, "a cache-missed member must be fetched"
 
     # Unresolvable member (cache miss + NotFound fetch): logged, not raised,
     # and retried on the next signup rather than permanently skipped.
@@ -482,8 +492,12 @@ async def _run_role_helpers():
 
     # No match role (cancel cleared it): a no-op, never an AttributeError.
     bot.match_role = None
-    await add_match_role(bot, _Guild({9: _Member()}), "9")
-    await remove_match_role(bot, _Guild({9: _Member()}), "9")
+    guild = _Guild({9: _Member()})
+    member = guild._members[9]
+    await add_match_role(bot, guild, "9")
+    assert member.added == [], "a cleared match role must not be granted"
+    await remove_match_role(bot, guild, "9")
+    assert member.removed == [], "a cleared match role must not be removed"
     bot.match_role = _Role("match-0002")
 
     # Removal: strips an existing role; a member without it is untouched.
