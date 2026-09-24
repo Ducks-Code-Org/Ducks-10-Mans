@@ -194,6 +194,39 @@ async def demo():
     assert "@Stone Rank" in all_values, all_values
     assert "Unranked" in all_values, all_values
 
+    # Issue #235: the match flags must flip BEFORE the teams embed is sent,
+    # so /doubledown (gated on match_ongoing) already works while the powerup
+    # notice counts down — the slow voice moves after the announcement must
+    # not leave the gate answering "no match is running". Asserting only
+    # after finalize returns would pass with the old ordering too (the flags
+    # end up set either way), so spy on the embed send itself.
+    async def _run_balanced_finalize_flags():
+        ctx = FakeCtx()
+        bot = FakeBot()
+        bot.chosen_mode = "Balanced"
+        bot.selected_map = "Ascent"
+        bot.team1 = [{"id": "0", "name": "p0"}]
+        bot.team2 = [{"id": "1", "name": "p1"}]
+        flags_at_embed = []
+        _real_send = ctx.send
+
+        async def flag_check_send(content=None, **kwargs):
+            if kwargs.get("embed") is not None:
+                flags_at_embed.append((bot.match_ongoing, bot.match_not_reported))
+            await _real_send(content, **kwargs)
+
+        ctx.send = flag_check_send
+        view = MapVoteView(ctx, bot, ["Ascent", "Bind", "Haven"])
+        await view.finalize_match_setup()
+        view.cancel_interaction_queue_task()
+        view.cancel_timeout_timer()
+        return bot, flags_at_embed
+
+    bot, flags_at_embed = await _run_balanced_finalize_flags()
+    assert flags_at_embed and all(
+        ongoing and reported for ongoing, reported in flags_at_embed
+    ), f"match flags must be live by the teams embed send: {flags_at_embed}"
+
     print("all vote skip-wait self-checks passed")
 
 
