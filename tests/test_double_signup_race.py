@@ -419,4 +419,111 @@ async def _run_cleanup_clears_stamp():
 
 asyncio.run(_run_cleanup_clears_stamp())
 
+
+# --- Match-# role grant/removal survives every failure path (issue #234) ---
+# The grant previously lived inline in signup_player with a caller-resolved
+# member: a cache miss + failed fetch meant the role was silently skipped,
+# and the removal in leave_queue_callback used an unguarded fetch + untyped
+# removal that could crash after the queue state was already updated. Both
+# now route through best-effort helpers that resolve the member themselves
+# and log-and-continue on every failure.
+async def _run_role_helpers():
+    from views.signup_view import add_match_role, remove_match_role
+
+    class _Role:
+        def __init__(self, name):
+            self.name = name
+            self.deleted = False
+
+    class _Member:
+        def __init__(self, roles=None):
+            self.roles = list(roles or [])
+            self.added = []
+            self.removed = []
+
+        async def add_roles(self, role):
+            self.added.append(role)
+            self.roles.append(role)
+
+        async def remove_roles(self, role):
+            self.removed.append(role)
+            self.roles.remove(role)
+
+    class _Guild:
+        def __init__(self, members=None, fetched=None):
+            self._members = dict(members or {})
+            self._fetched = dict(fetched or {})
+
+        def get_member(self, uid):
+            return self._members.get(int(uid))
+
+        async def fetch_member(self, uid):
+            member = self._fetched.get(int(uid))
+            if member is None:
+                raise _discord_stub.NotFound()
+            return member
+
+    bot = types.SimpleNamespace(match_role=_Role("match-0001"))
+
+    # Grant: cached member gets the role once.
+    guild = _Guild({7: _Member()})
+    member = guild._members[7]
+    await add_match_role(bot, guild, "7")
+    assert len(member.added) == 1, "the match role must be granted"
+
+    # Grant is idempotent: no double role when the player already has it.
+    await add_match_role(bot, guild, "7")
+    assert len(member.added) == 1, "the role must not be granted twice"
+
+    # Cache miss -> fetch fallback: the fetched member is granted the role,
+    # not silently skipped (issue #234's reported failure).
+    guild = _Guild(fetched={11: _Member()})
+    fetched_member = guild._fetched[11]
+    await add_match_role(bot, guild, "11")
+    assert len(fetched_member.added) == 1, "a cache-missed member must be fetched"
+
+    # Unresolvable member (cache miss + NotFound fetch): logged, not raised,
+    # and retried on the next signup rather than permanently skipped.
+    async def _unresolvable():
+        guild2 = _Guild()
+        await add_match_role(bot, guild2, "8")  # fetch raises NotFound
+
+    await _unresolvable()
+
+    # No match role (cancel cleared it): a no-op, never an AttributeError.
+    bot.match_role = None
+    guild = _Guild({9: _Member()})
+    member = guild._members[9]
+    await add_match_role(bot, guild, "9")
+    assert member.added == [], "a cleared match role must not be granted"
+    await remove_match_role(bot, guild, "9")
+    assert member.removed == [], "a cleared match role must not be removed"
+    bot.match_role = _Role("match-0002")
+
+    # Removal: strips an existing role; a member without it is untouched.
+    holder = _Member([bot.match_role])
+    plain = _Member()
+    await remove_match_role(bot, _Guild({1: holder, 2: plain}), "1")
+    assert holder.removed == [bot.match_role], "the role must be removed on leave"
+    await remove_match_role(bot, _Guild({2: plain}), "2")
+    assert plain.removed == [], "a member without the role must not be touched"
+
+    # Removal of an unresolvable member: logged, not raised.
+    await remove_match_role(bot, _Guild(), "3")
+
+    # A grant failure (HTTPException) is swallowed so the signup pipeline
+    # (which continues to the embed refresh + confirmation) never aborts.
+    class _FailingRole(_Role):
+        pass
+
+    class _FailingMember(_Member):
+        async def add_roles(self, role):
+            raise _discord_stub.HTTPException("403 Forbidden")
+
+    bot2 = types.SimpleNamespace(match_role=_FailingRole("match-0002"))
+    await add_match_role(bot2, _Guild({5: _FailingMember()}), "5")
+
+
+asyncio.run(_run_role_helpers())
+
 print("all double-signup race self-checks passed")
