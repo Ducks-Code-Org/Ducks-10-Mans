@@ -173,19 +173,74 @@ def main():
             assert (
                 pre_solved[d] == p
             ), f"legacy inversion mismatch for {d}: solved={pre_solved[d]} actual={p}"
-    # The recovered averages are veteran-only (first-match players revert to
-    # 0 and are excluded), so compare against the veteran-only effective
-    # averages — the per-player pre-MMRs above are already asserted exact.
-    vet_w = [d for d in team1_ids if not was_new[d]]
-    vet_l = [d for d in team2_ids if not was_new[d]]
-    assert abs(w_avg - sum(effective(d) for d in vet_w) / len(vet_w)) < 1.0, (
-        w_avg,
-        sum(effective(d) for d in vet_w) / len(vet_w),
-    )
-    assert abs(l_avg - sum(effective(d) for d in vet_l) / len(vet_l)) < 1.0, (
-        l_avg,
-        sum(effective(d) for d in vet_l) / len(vet_l),
-    )
+    # The recovered averages must be report.py's team averages — the whole
+    # side, first-match players counted at their seed — because that is what
+    # the deltas were computed from. (The solver used to average veterans
+    # only; the shared scenario's rounding hid it, hence the extra leg below.)
+    assert abs(w_avg - team1_avg) < 1e-9, (w_avg, team1_avg)
+    assert abs(l_avg - team2_avg) < 1e-9, (l_avg, team2_avg)
+
+    # --- Path B regression: placements must stay in the team averages ------
+    # Two veterans + three placements vs five mixed veterans. One placement
+    # has no usable rating this match: report.py counts it at seed 0 in the
+    # average while its delta still uses vlr 1.0, so both halves of the
+    # placement handling are exercised. The veteran-only average (548 vs
+    # 310) differs from report.py's real one (271.2 vs 309.8), so the old
+    # veteran-only solver mis-recovers every veteran (e.g. pw1 185 → 190)
+    # and its returned pre-MMRs do not even replay through the formula.
+    # Every pre-MMR must come back exact and the returned averages must be
+    # report.py's whole-team ones.
+    pl_roster = [
+        ("pw1", 185, 1.3, False),
+        ("pw2", 911, 1.0, False),
+        ("pw3", 0, 1.3, True),
+        ("pw4", 0, 1.3, True),
+        ("pw5", 0, None, True),
+        ("pl1", 422, 1.3, False),
+        ("pl2", 130, 1.3, False),
+        ("pl3", 229, 0.7, False),
+        ("pl4", 173, 0.7, False),
+        ("pl5", 595, 1.3, False),
+    ]
+    pl_w = pl_roster[:5]
+    pl_l = pl_roster[5:]
+
+    def pl_seed(v):
+        return max(0, round(100.0 * v)) if isinstance(v, (int, float)) else 0
+
+    pl_avg_w = sum(pl_seed(v) if new else pre for _, pre, v, new in pl_w) / 5
+    pl_avg_l = sum(pl_seed(v) if new else pre for _, pre, v, new in pl_l) / 5
+    vet_avg_w = sum(pre for _, pre, _, new in pl_w if not new) / 2
+    assert abs(pl_avg_w - vet_avg_w) > 200, "placement leg must be distinguishable"
+    pl_post = {}
+    for did, pre, v, new in pl_roster:
+        won = did.startswith("pw")
+        our, opp = (W_R, L_R) if won else (L_R, W_R)
+        ta, oa = (pl_avg_w, pl_avg_l) if won else (pl_avg_l, pl_avg_w)
+        vlr = v if isinstance(v, (int, float)) else 1.0
+        d = delta_mmr(our, opp, ta, oa, vlr)
+        pl_post[did] = max(0, round((pl_seed(v) if new else pre) + d))
+    pl_players = [
+        {
+            "discord_id": did,
+            "current_mmr": pl_post[did],
+            "vlr": v,
+            "was_new": new,
+            "won": did.startswith("pw"),
+        }
+        for did, pre, v, new in pl_roster
+    ]
+    pl_solved = solve_pre_match_mmr_legacy(delta_mmr, pl_players, W_R, L_R)
+    assert pl_solved is not None, "placement-heavy legacy inversion returned None"
+    pl_pre, pl_w_avg, pl_l_avg = pl_solved
+    assert abs(pl_w_avg - pl_avg_w) < 1e-9, (pl_w_avg, pl_avg_w)
+    assert abs(pl_l_avg - pl_avg_l) < 1e-9, (pl_l_avg, pl_avg_l)
+    for did, pre, v, new in pl_roster:
+        want = 0 if new else pre
+        assert pl_pre[did] == want, (
+            f"placement-heavy inversion mismatch for {did}: "
+            f"solved={pl_pre[did]} actual={want}"
+        )
 
     # --- Rating-totals revert mirrors _apply_rating --------------------------
     # A player with prior totals gains rating×rounds each match; the revert

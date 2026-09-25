@@ -149,33 +149,6 @@ def _load_delta_mmr():
 
 
 # ---------------------------------------------------------------------------
-# MMR inversion against the live delta_mmr
-# ---------------------------------------------------------------------------
-
-
-def _replay_veteran(
-    delta_mmr,
-    *,
-    pre_mmr: int,
-    team_avg: float,
-    opp_avg: float,
-    rounds: int,
-    opp_rounds: int,
-    vlr: float,
-    mult: int,
-) -> int:
-    """Reproduce update_stats' post-match MMR for a veteran player."""
-    d = delta_mmr(
-        our_rounds=rounds,
-        opp_rounds=opp_rounds,
-        our_mmr=team_avg,
-        opp_mmr=opp_avg,
-        vlr=vlr,
-    )
-    return max(0, round(pre_mmr + d * mult))
-
-
-# ---------------------------------------------------------------------------
 # Legacy numeric inversion of the live delta_mmr (matches without mmr_context)
 # ---------------------------------------------------------------------------
 
@@ -194,9 +167,11 @@ def solve_pre_match_mmr_legacy(
     winners_pre_avg, losers_pre_avg) or None.
 
     The delta never depends on a player's own pre-MMR — only on the two team
-    averages, which are themselves built from the pre-MMRs being solved for
-    (first-match players contribute their 100×vlr seed). That mutual
-    dependency is resolved by iteration: start from the current MMRs,
+    averages, which are themselves built from the pre-MMRs being solved for.
+    report.py averages the WHOLE team, counting each first-match player at
+    their 100×vlr seed (0 when this match has no usable rating), so those
+    seeds stay fixed while the veterans' pre-MMRs are being solved. The
+    mutual dependency is resolved by iteration: start from the current MMRs,
     compute each veteran's pre = post − round(delta), rebuild the averages,
     repeat until stable. Convergence is quick because the delta moves by
     only O(Δavg/10) per step.
@@ -209,50 +184,60 @@ def solve_pre_match_mmr_legacy(
     if not players:
         return None
 
-    winners = [p["discord_id"] for p in players if p["won"] and not p["was_new"]]
-    losers = [p["discord_id"] for p in players if not p["won"] and not p["was_new"]]
+    by_id = {p["discord_id"]: p for p in players}
+    winners = [p["discord_id"] for p in players if p["won"]]
+    losers = [p["discord_id"] for p in players if not p["won"]]
     new_ids = [p["discord_id"] for p in players if p["was_new"]]
+    vet_winners = [d for d in winners if not by_id[d]["was_new"]]
+    vet_losers = [d for d in losers if not by_id[d]["was_new"]]
     cur = {p["discord_id"]: int(p["current_mmr"]) for p in players}
-    vlr_of = {
-        p["discord_id"]: (
-            float(p["vlr"]) if isinstance(p.get("vlr"), (int, float)) else 1.0
-        )
-        for p in players
-    }
-    seed_of = {d: max(0, round(100.0 * vlr_of[d])) for d in new_ids}
+
+    def rating_of(d: str) -> float:
+        # update_stats uses vlr=1.0 when this match has no usable rating,
+        # while report.py's team average counts a rating-less placement at 0.
+        v = by_id[d].get("vlr")
+        return float(v) if isinstance(v, (int, float)) and v == v else 1.0
+
+    def seed_of(d: str) -> int:
+        v = by_id[d].get("vlr")
+        if isinstance(v, (int, float)) and v == v:
+            return max(0, round(100.0 * float(v)))
+        return 0
+
+    seed = {d: seed_of(d) for d in new_ids}
 
     def _avg(mmr_by_did: dict[str, float], dids: list[str]) -> float:
         return sum(mmr_by_did[d] for d in dids) / len(dids) if dids else 0.0
 
-    # Team averages as report.py computed them: effective MMR (seed for
-    # first-match players, otherwise pre-match MMR) averaged per side.
+    # Team averages exactly as report.py computed them: every player on the
+    # side counts, placements at their seed rather than a solved pre-MMR.
     eff = {d: float(cur[d]) for d in cur}
-    eff.update(seed_of)
+    eff.update(seed)
     w_avg = _avg(eff, winners)
     l_avg = _avg(eff, losers)
 
     pre: dict[str, int] = {}
-    for _ in range(50):
-        for did in winners:
+    for _ in range(200):
+        for did in vet_winners:
             d = delta_mmr(
                 our_rounds=rounds_won,
                 opp_rounds=rounds_lost,
                 our_mmr=w_avg,
                 opp_mmr=l_avg,
-                vlr=vlr_of[did],
+                vlr=rating_of(did),
             )
             pre[did] = max(0, cur[did] - round(d))
-        for did in losers:
+        for did in vet_losers:
             d = delta_mmr(
                 our_rounds=rounds_lost,
                 opp_rounds=rounds_won,
                 our_mmr=l_avg,
                 opp_mmr=w_avg,
-                vlr=vlr_of[did],
+                vlr=rating_of(did),
             )
             pre[did] = max(0, cur[did] - round(d))
         new_eff = {d: float(m) for d, m in pre.items()}
-        new_eff.update(seed_of)
+        new_eff.update(seed)
         new_w = _avg(new_eff, winners)
         new_l = _avg(new_eff, losers)
         if abs(new_w - w_avg) < 0.25 and abs(new_l - l_avg) < 0.25:
@@ -367,20 +352,6 @@ def get_total_rounds(match: dict) -> int:
     if rounds:
         return int(rounds)
     return len(match.get("rounds") or [])
-
-
-def compute_round_diff(match: dict) -> int:
-    rounds_won: dict[str, int] = {}
-    for team in match.get("teams", []):
-        tid = (team.get("team_id") or "").strip().title()
-        r = team.get("rounds")
-        if isinstance(r, dict):
-            rounds_won[tid] = int(r.get("won", 0))
-        elif isinstance(r, (int, float)):
-            rounds_won[tid] = int(r)
-    blue = rounds_won.get("Blue", 0)
-    red = rounds_won.get("Red", 0)
-    return abs(blue - red)
 
 
 def winning_team_id(match: dict) -> str | None:
