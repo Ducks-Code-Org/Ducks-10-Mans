@@ -14,10 +14,18 @@ The script:
   2. Backs up all affected db documents to backups/revert_backup_*.json.
   3. Subtracts each player's per-match stat totals (kills, deaths, score,
      rounds, matches_played, wins/losses).
-  4. Recovers each player's exact pre-match MMR by numerically solving the
-     per-player delta equations produced by stats_helper._calc_mmr_delta
-     (10 players -> 10 equations in only 2 unknowns: the two team MMR sums).
-  5. Recomputes average_combat_score / kill_death_ratio from the reverted totals.
+  4. Recovers each player's exact pre-match MMR. Two paths:
+       * Matches reported with a persisted `mmr_context` block (written by
+         report.py since 2026-09-24) contain the exact inputs — pre-match
+         MMRs, team averages, per-side rounds, VLR ratings, and doubledown
+         multipliers — so the revert restores those pre-MMRs directly and
+         cross-checks them against the live delta_mmr formula.
+       * Older matches are inverted numerically against game/stats_helper's
+         delta_mmr (imported live, so the tool can never drift from the
+         production formula). Doubledown multipliers were not persisted for
+         these, so the revert refuses to run when Duck Coins are enabled.
+  5. Recomputes average_combat_score / kill_death_ratio from the reverted
+     totals, and subtracts the match's VLR rating contribution.
   6. Removes the match document and decrements seasons.current.matches_played.
 
 All writes happen in a single MongoDB transaction, so a failure leaves the
@@ -112,202 +120,153 @@ def get_client() -> MongoClient:
 
 
 # ---------------------------------------------------------------------------
-# MMR delta logic (mirrors stats_helper._calc_mmr_delta exactly)
+# Live delta_mmr import (the single source of truth for the inversion)
 # ---------------------------------------------------------------------------
 
 
-def calc_mmr_delta(
-    *, won: bool, team_sum: float, opp_sum: float, acs: float, round_diff: int
-) -> int:
-    team_sum = float(team_sum)
-    opp_sum = float(opp_sum)
-    if team_sum <= 0 or opp_sum <= 0:
-        return 0
-    if won:
-        ratio = opp_sum / team_sum
-        base = (ratio * 16) + (((ratio * acs) // 100) - 2)
-        rd = 0
-        if round_diff >= 4:
-            mult = (
-                1
-                if round_diff < 7
-                else (2 if round_diff < 10 else (3 if round_diff < 13 else 4))
-            )
-            rd = mult * ratio
-    else:
-        ratio = team_sum / opp_sum
-        base = (ratio * -16) + (((ratio * acs) // 100) - 2)
-        rd = 0
-        if round_diff >= 4:
-            mult = (
-                1
-                if round_diff < 7
-                else (2 if round_diff < 10 else (3 if round_diff < 13 else 4))
-            )
-            rd = -(mult * ratio)
-    return int((base + rd) // 1)
+def _load_delta_mmr():
+    """Import the live delta_mmr from game/stats_helper without touching Mongo.
 
-
-# ---------------------------------------------------------------------------
-# MMR inversion (exact recovery of pre-match MMR values)
-# ---------------------------------------------------------------------------
-
-
-def _sw_from_dw(sl: float, dw: int, acs: float, rd: int) -> float | None:
-    """Solve calc_mmr_delta(won=True, sw, sl, acs, rd) == dw for sw>0 via bisection on log(sw)."""
-    lo, hi = 1e-3, 1e8
-    f = (
-        lambda sw: calc_mmr_delta(
-            won=True, team_sum=sw, opp_sum=sl, acs=acs, round_diff=rd
-        )
-        - dw
-    )
-    flo, fhi = f(lo), f(hi)
-    if flo == 0:
-        return lo
-    if fhi == 0:
-        return hi
-    if flo * fhi > 0:
-        return None
-    for _ in range(80):
-        mid = (lo + hi) / 2
-        fm = f(mid)
-        if fm == 0:
-            return mid
-        if flo * fm < 0:
-            hi, fhi = mid, fm
-        else:
-            lo, flo = mid, fm
-    return (lo + hi) / 2
-
-
-def solve_pre_match_mmr(
-    winners: list[tuple[str, int, float]],
-    losers: list[tuple[str, int, float]],
-    round_diff: int,
-) -> tuple[dict[str, int], float, float] | None:
-    """Recover each player's exact pre-match MMR.
-
-    `winners`/`losers` are lists of (discord_id, current_mmr, acs).
-    Returns ({did: pre_mmr}, sum_winners_pre, sum_losers_pre) or None.
-
-    Approach: brute-force over the small space of integer pre-match MMR
-    bounds. Each player's delta must satisfy |delta| <= ~22 (16 + acs-part
-    + rd-part), so their pre-match MMR is in [current, current+22] for
-    winners and [current-22, current] for losers.  We enumerate the team
-    sums (sum of pre-match MMRs) across all combinations, then for each
-    candidate (s_win, s_los) we compute every player's implied delta and
-    check it reproduces their MMR change.  The search space is tiny
-    (~23^10) but we prune aggressively:
-      * s_win / s_los together define every player's delta deterministically.
-      * We enumerate s_win as a sum of winner bounds, find the s_los that
-        keeps the anchor loser's delta consistent, then verify all players.
+    game/stats_helper imports database, which connects to MongoDB at import
+    time and SystemExits if unreachable. The tool only needs the pure math,
+    so `database` is stubbed with inert attributes first — the same trick
+    the test suite uses.
     """
-    # Build the bounds for each player's pre-match MMR
-    # delta = |base| + |acs_part| + |rd_part| <= 16 + (400/100*ratio) + 4*ratio
-    # For ratio up to 3, that's up to ~44. Use 60 as a generous envelope.
-    MAX_DELTA = 60
-    w_bounds = [
-        (did, cur, acs, max(0, cur - MAX_DELTA), cur + MAX_DELTA)
-        for did, cur, acs in winners
-    ]
-    l_bounds = [
-        (did, cur, acs, max(0, cur - MAX_DELTA), cur + MAX_DELTA)
-        for did, cur, acs in losers
-    ]
+    import types
 
-    # Team sum bounds
-    s_win_min = sum(l for _, _, _, l, _ in w_bounds)
-    s_win_max = sum(h for _, _, _, _, h in w_bounds)
-    s_los_min = sum(l for _, _, _, l, _ in l_bounds)
-    s_los_max = sum(h for _, _, _, _, h in l_bounds)
+    if "game.stats_helper" in sys.modules:
+        return sys.modules["game.stats_helper"].delta_mmr
 
-    best = None
-    best_score = float("inf")
-    seen: set[tuple[int, int]] = set()
+    stub = types.ModuleType("database")
+    stub.users = stub.mmr_collection = stub.all_matches = None
+    stub.seasons = stub.interests = stub.recent_queue = stub.coin_escrow = None
+    stub.client = stub.db = None
+    sys.modules["database"] = stub
+    sys.path.insert(0, str(REPO_ROOT))
+    import game.stats_helper as sh
 
-    # For each candidate s_win in the valid range (integer steps of 1):
-    # s_win must be reachable as a sum of integers within the bounds —
-    # that set is always a contiguous range when bounds are contiguous,
-    # so we can just iterate over every integer in [s_win_min, s_win_max].
-    for s_win in range(s_win_min, s_win_max + 1):
-        for s_los in range(s_los_min, s_los_max + 1):
-            if (s_win, s_los) in seen:
-                continue
-            seen.add((s_win, s_los))
+    return sh.delta_mmr
 
-            # Compute each player's delta
-            deltas = {}
-            ok = True
-            for did, cur, acs, lo_b, hi_b in w_bounds:
-                d = calc_mmr_delta(
-                    won=True,
-                    team_sum=s_win,
-                    opp_sum=s_los,
-                    acs=acs,
-                    round_diff=round_diff,
-                )
-                pre = cur - d
-                if not (lo_b <= pre <= hi_b):
-                    ok = False
-                    break
-                deltas[did] = pre
-            if not ok:
-                continue
-            for did, cur, acs, lo_b, hi_b in l_bounds:
-                d = calc_mmr_delta(
-                    won=False,
-                    team_sum=s_los,
-                    opp_sum=s_win,
-                    acs=acs,
-                    round_diff=round_diff,
-                )
-                pre = cur - d
-                if not (lo_b <= pre <= hi_b):
-                    ok = False
-                    break
-                deltas[did] = pre
-            if not ok:
-                continue
 
-            # Check self-consistency: the sums must match exactly
-            sum_w = sum(deltas[did] for did, _, _, _, _ in w_bounds)
-            sum_l = sum(deltas[did] for did, _, _, _, _ in l_bounds)
-            err = abs(sum_w - s_win) + abs(sum_l - s_los)
-            if err == 0:
-                # Verify every player still maps to the exact integer we computed
-                # (eliminates float-precision edge cases from the solver)
-                exact = True
-                for did, cur, acs, lo_b, hi_b in w_bounds:
-                    d = calc_mmr_delta(
-                        won=True,
-                        team_sum=s_win,
-                        opp_sum=s_los,
-                        acs=acs,
-                        round_diff=round_diff,
-                    )
-                    if cur - d != deltas[did]:
-                        exact = False
-                        break
-                if exact:
-                    for did, cur, acs, lo_b, hi_b in l_bounds:
-                        d = calc_mmr_delta(
-                            won=False,
-                            team_sum=s_los,
-                            opp_sum=s_win,
-                            acs=acs,
-                            round_diff=round_diff,
-                        )
-                        if cur - d != deltas[did]:
-                            exact = False
-                            break
-                if exact:
-                    return deltas, s_win, s_los
-            elif err < best_score:
-                best_score = err
-                best = (deltas, s_win, s_los)
+# ---------------------------------------------------------------------------
+# MMR inversion against the live delta_mmr
+# ---------------------------------------------------------------------------
 
-    return best
+
+def _replay_veteran(
+    delta_mmr,
+    *,
+    pre_mmr: int,
+    team_avg: float,
+    opp_avg: float,
+    rounds: int,
+    opp_rounds: int,
+    vlr: float,
+    mult: int,
+) -> int:
+    """Reproduce update_stats' post-match MMR for a veteran player."""
+    d = delta_mmr(
+        our_rounds=rounds,
+        opp_rounds=opp_rounds,
+        our_mmr=team_avg,
+        opp_mmr=opp_avg,
+        vlr=vlr,
+    )
+    return max(0, round(pre_mmr + d * mult))
+
+
+# ---------------------------------------------------------------------------
+# Legacy numeric inversion of the live delta_mmr (matches without mmr_context)
+# ---------------------------------------------------------------------------
+
+
+def solve_pre_match_mmr_legacy(
+    delta_mmr,
+    players: list[dict],
+    rounds_won: int,
+    rounds_lost: int,
+) -> tuple[dict[str, int], float, float] | None:
+    """Recover each player's pre-match MMR by fixed-point iteration.
+
+    `players`: [{"discord_id", "current_mmr", "vlr": float|None,
+                 "was_new": bool, "won": bool}]. Winners share rounds_won as
+    their our_rounds; losers share rounds_lost. Returns ({did: pre_mmr},
+    winners_pre_avg, losers_pre_avg) or None.
+
+    The delta never depends on a player's own pre-MMR — only on the two team
+    averages, which are themselves built from the pre-MMRs being solved for
+    (first-match players contribute their 100×vlr seed). That mutual
+    dependency is resolved by iteration: start from the current MMRs,
+    compute each veteran's pre = post − round(delta), rebuild the averages,
+    repeat until stable. Convergence is quick because the delta moves by
+    only O(Δavg/10) per step.
+
+    Doubledown multipliers are NOT invertible on this path (they were not
+    persisted for legacy matches): a doubled and an undoubled result can
+    produce the same post-MMR. Callers must only use it when no player
+    doubled down.
+    """
+    if not players:
+        return None
+
+    winners = [p["discord_id"] for p in players if p["won"] and not p["was_new"]]
+    losers = [p["discord_id"] for p in players if not p["won"] and not p["was_new"]]
+    new_ids = [p["discord_id"] for p in players if p["was_new"]]
+    cur = {p["discord_id"]: int(p["current_mmr"]) for p in players}
+    vlr_of = {
+        p["discord_id"]: (
+            float(p["vlr"]) if isinstance(p.get("vlr"), (int, float)) else 1.0
+        )
+        for p in players
+    }
+    seed_of = {d: max(0, round(100.0 * vlr_of[d])) for d in new_ids}
+
+    def _avg(mmr_by_did: dict[str, float], dids: list[str]) -> float:
+        return sum(mmr_by_did[d] for d in dids) / len(dids) if dids else 0.0
+
+    # Team averages as report.py computed them: effective MMR (seed for
+    # first-match players, otherwise pre-match MMR) averaged per side.
+    eff = {d: float(cur[d]) for d in cur}
+    eff.update(seed_of)
+    w_avg = _avg(eff, winners)
+    l_avg = _avg(eff, losers)
+
+    pre: dict[str, int] = {}
+    for _ in range(50):
+        for did in winners:
+            d = delta_mmr(
+                our_rounds=rounds_won,
+                opp_rounds=rounds_lost,
+                our_mmr=w_avg,
+                opp_mmr=l_avg,
+                vlr=vlr_of[did],
+            )
+            pre[did] = max(0, cur[did] - round(d))
+        for did in losers:
+            d = delta_mmr(
+                our_rounds=rounds_lost,
+                opp_rounds=rounds_won,
+                our_mmr=l_avg,
+                opp_mmr=w_avg,
+                vlr=vlr_of[did],
+            )
+            pre[did] = max(0, cur[did] - round(d))
+        new_eff = {d: float(m) for d, m in pre.items()}
+        new_eff.update(seed_of)
+        new_w = _avg(new_eff, winners)
+        new_l = _avg(new_eff, losers)
+        if abs(new_w - w_avg) < 0.25 and abs(new_l - l_avg) < 0.25:
+            w_avg, l_avg = new_w, new_l
+            break
+        w_avg, l_avg = new_w, new_l
+
+    # First-match players revert to unplayed: pre-MMR is DEFAULT_MMR (0) and
+    # their stats doc goes back to zeroed totals handled by the caller.
+    for did in new_ids:
+        pre[did] = 0
+    for did, c in cur.items():
+        pre.setdefault(did, c)
+    return pre, w_avg, l_avg
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +303,51 @@ def _dejsonify(obj):
     if isinstance(obj, list):
         return [_dejsonify(v) for v in obj]
     return obj
+
+
+# ---------------------------------------------------------------------------
+# Cross-check the persisted mmr_context against the live formula
+# ---------------------------------------------------------------------------
+
+
+def replay_mmr_context(
+    delta_mmr,
+    player_ctx: dict,
+    team_ctx: dict,
+    *,
+    rating: float | None,
+) -> int:
+    """Replay one player's stored post-MMR from the persisted mmr_context.
+
+    Mirrors update_stats exactly: first-match players seed at 100×vlr then
+    apply the delta (multiplier applies to the delta only); veterans apply
+    the delta to their persisted pre-MMR. The 0 floor is applied as
+    update_stats does. Used as a sanity check on the persisted inputs.
+
+    `player_ctx` is the player's entry in mmr_context["players"];
+    `team_ctx` is the match-level mmr_context (team averages and rounds).
+    """
+    side = player_ctx.get("side", "team1")
+    t_avg = float(team_ctx.get("team1_avg") or 0)
+    o_avg = float(team_ctx.get("team2_avg") or 0)
+    r_won = int(team_ctx.get("team1_rounds") or 0)
+    r_lost = int(team_ctx.get("team2_rounds") or 0)
+    if side == "team2":
+        t_avg, o_avg = o_avg, t_avg
+        r_won, r_lost = r_lost, r_won
+    vlr = float(rating) if isinstance(rating, (int, float)) else 1.0
+    if player_ctx.get("was_new"):
+        base = max(0, round(100.0 * float(rating))) if rating is not None else 0
+    else:
+        base = int(player_ctx.get("pre_mmr", 0))
+    d = delta_mmr(
+        our_rounds=r_won,
+        opp_rounds=r_lost,
+        our_mmr=t_avg,
+        opp_mmr=o_avg,
+        vlr=vlr,
+    )
+    return max(0, round(base + d * int(player_ctx.get("multiplier", 1))))
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +468,6 @@ def revert(client, *, dry_run: bool) -> None:
         sys.exit("[revert] Match has no player data; aborting.")
 
     total_rounds = get_total_rounds(match)
-    round_diff = compute_round_diff(match)
     winning_tid = winning_team_id(match)
     if winning_tid not in ("Blue", "Red"):
         sys.exit(f"[revert] Couldn't determine winner for {mid}; aborting.")
@@ -526,9 +529,11 @@ def revert(client, *, dry_run: bool) -> None:
             )
 
     # --- Recover pre-match MMRs ----------------------------------------------
-    winners: list[tuple[str, int, float]] = []
-    losers: list[tuple[str, int, float]] = []
+    delta_mmr = _load_delta_mmr()
+    mmr_context = match.get("mmr_context") or {}
 
+    # Per-player info for the recovery and the update step below.
+    info: list[dict] = []
     for p in players:
         name = (p.get("name") or "").strip().lower()
         tag = (p.get("tag") or "").strip().lower()
@@ -537,61 +542,169 @@ def revert(client, *, dry_run: bool) -> None:
             continue
         doc = mmr_by_discord[did]
         stats = p.get("stats", {}) or {}
-        score = float(stats.get("score", 0))
-        acs = (score / total_rounds) if total_rounds > 0 else 0.0
-        cur_mmr = int(doc.get("mmr", 1000))
         tid = (p.get("team_id") or "").strip().title()
-        if tid == winning_tid:
-            winners.append((did, cur_mmr, acs))
-        else:
-            losers.append((did, cur_mmr, acs))
+        info.append(
+            {
+                "did": did,
+                "name": f"{name}#{tag}",
+                "cur_mmr": int(doc.get("mmr", 1000)),
+                "kills": int(stats.get("kills", 0)),
+                "deaths": int(stats.get("deaths", 0)),
+                "score": int(stats.get("score", 0)),
+                "won": tid == winning_tid,
+                # First match this season: the doc went 0 → 1 this match.
+                "was_new": int(doc.get("matches_played", 0)) == 1,
+            }
+        )
 
-    if not winners or not losers:
+    if not info:
         sys.exit(
             "[revert] Could not split players into winning/losing teams from the users/MMR data."
         )
 
-    solved = solve_pre_match_mmr(winners, losers, round_diff)
-    if not solved:
-        print("[revert] ERROR: Could not recover exact pre-match MMR values.")
+    if not any(i["won"] for i in info) or all(i["won"] for i in info):
+        sys.exit("[revert] Match has no winning/losing split; aborting.")
+
+    # Per-team rounds from the match doc (winners share one count, losers the
+    # other; they sum to total_rounds).
+    rounds_by_tid: dict[str, int] = {}
+    for team in match.get("teams", []):
+        tid = (team.get("team_id") or "").strip().title()
+        r = team.get("rounds")
+        if isinstance(r, dict):
+            rounds_by_tid[tid] = int(r.get("won", 0))
+        elif isinstance(r, (int, float)):
+            rounds_by_tid[tid] = int(r)
+    winner_rounds = rounds_by_tid.get(winning_tid, 0)
+    loser_rounds = max(0, total_rounds - winner_rounds)
+
+    # Per-player VLR rating: from mmr_context when present, else estimated
+    # from the match payload exactly like report.py did.
+    rating_by_did = {
+        did: float(c["rating"])
+        for did, c in (mmr_context.get("players") or {}).items()
+        if isinstance(c.get("rating"), (int, float))
+    }
+    if not rating_by_did:
+        try:
+            from services.vlr_rating import estimate_ratings_v4
+
+            match_ratings = estimate_ratings_v4(match) or {}
+            for i in info:
+                u = users.find_one({"discord_id": i["did"]})
+                puuid = (u.get("puuid") or "").strip().lower() if u else ""
+                r = (match_ratings.get(puuid) or {}).get("rating")
+                if isinstance(r, (int, float)):
+                    rating_by_did[i["did"]] = float(r)
+        except Exception as e:
+            print(
+                f"[revert] WARNING: could not estimate VLR ratings ({e}); "
+                "rating totals will not be reverted."
+            )
+
+    if mmr_context.get("players"):
+        # --- Path A: exact pre-MMRs from the persisted context --------------
+        pre_mmr_by_did: dict[str, int] = {}
+        mismatched = []
+        for i in info:
+            c = (mmr_context.get("players") or {}).get(i["did"])
+            if c is None:
+                sys.exit(
+                    f"[revert] Match has mmr_context but {i['name']} is missing "
+                    "from it; refusing to guess — investigate manually."
+                )
+            pre_mmr_by_did[i["did"]] = int(c["pre_mmr"])
+            # Cross-check: replay the stored post-MMR through the live
+            # formula. A mismatch means the formula changed since the match
+            # was reported; the persisted pre-MMR is still the exact truth.
+            expect = replay_mmr_context(
+                delta_mmr,
+                c,
+                mmr_context,
+                rating=rating_by_did.get(i["did"]),
+            )
+            if expect != i["cur_mmr"]:
+                mismatched.append(i["name"])
+        if mismatched:
+            print(
+                "[revert] NOTE: replaying the persisted inputs through the live "
+                "delta_mmr does not reproduce the stored post-MMRs for: "
+                f"{', '.join(mismatched)}. The formula likely changed since this "
+                "match was reported — the persisted pre-match values are still "
+                "exact and will be restored."
+            )
+        w_sum = sum(pre_mmr_by_did[i["did"]] for i in info if i["won"])
+        l_sum = sum(pre_mmr_by_did[i["did"]] for i in info if not i["won"])
         print(
-            "[revert] This can happen if the MMR formula has changed since this match was reported,"
+            f"[revert] Pre-match MMRs restored from the match's persisted mmr_context "
+            f"(winners sum={w_sum}, losers sum={l_sum})"
         )
-        print("[revert] or if the stored match data is inconsistent.")
-        sys.exit(
-            "No changes were made — investigate manually and re-run when resolved."
+    else:
+        # --- Path B: numeric inversion of the live formula (legacy match) ---
+        # Doubledown multipliers were not persisted for legacy matches, so
+        # this path is only safe when nobody doubled down. That cannot be
+        # proven after the fact; refuse when duck coins are enabled now,
+        # which is when doubledowns could have been bought.
+        try:
+            from game.duck_coins import duck_coins_enabled
+
+            if duck_coins_enabled():
+                sys.exit(
+                    "[revert] This match predates persisted MMR contexts and Duck Coins are "
+                    "currently enabled — a doubledown multiplier cannot be reconstructed, "
+                    "so exact MMR recovery is impossible. Restore a backup instead "
+                    "(python tools/ops/revert_last_match.py --restore <file>)."
+                )
+        except SystemExit:
+            raise
+        except Exception:
+            pass  # duck_coins config unreadable; assume disabled and warn
+        print(
+            "[revert] WARNING: legacy match (no persisted mmr_context); inverting "
+            "the live delta_mmr assuming no doubledowns. Verify the plan below."
         )
 
-    pre_mmr_by_did, s_win, s_los = solved
-    print(
-        f"[revert] Recovered pre-match team MMR sums: winners={s_win:.2f}, losers={s_los:.2f}"
-    )
+        legacy_players = [
+            {
+                "discord_id": i["did"],
+                "current_mmr": i["cur_mmr"],
+                "vlr": rating_by_did.get(i["did"]),
+                "was_new": i["was_new"],
+                "won": i["won"],
+            }
+            for i in info
+        ]
+        solved = solve_pre_match_mmr_legacy(
+            delta_mmr, legacy_players, winner_rounds, loser_rounds
+        )
+        if not solved:
+            print("[revert] ERROR: Could not recover exact pre-match MMR values.")
+            print(
+                "[revert] This can happen if the MMR formula has changed since this match was reported,"
+            )
+            print("[revert] or if the stored match data is inconsistent.")
+            sys.exit(
+                "No changes were made — investigate manually and re-run when resolved."
+            )
+        pre_mmr_by_did, w_sum, l_sum = solved
+        print(
+            f"[revert] Recovered pre-match team MMR sums: winners={w_sum:.2f}, losers={l_sum:.2f}"
+        )
 
     # --- Build per-player updates -------------------------------------------
     player_updates: list[tuple[dict, dict]] = []  # (filter, $set payload)
     print("\n[revert] Planned changes:")
-    for p in players:
-        name = (p.get("name") or "").strip().lower()
-        tag = (p.get("tag") or "").strip().lower()
-        did = match_key_to_discord.get((name, tag))
-        if not did or did not in mmr_by_discord:
-            continue
+    for i in info:
+        did = i["did"]
         doc = mmr_by_discord[did]
-        stats = p.get("stats", {}) or {}
-        kills = int(stats.get("kills", 0))
-        deaths = int(stats.get("deaths", 0))
-        score = int(stats.get("score", 0))
-        tid = (p.get("team_id") or "").strip().title()
-        won = tid == winning_tid
-
         new_matches = doc.get("matches_played", 0) - 1
-        new_tcs = doc.get("total_combat_score", 0) - score
-        new_kills = doc.get("total_kills", 0) - kills
-        new_deaths = doc.get("total_deaths", 0) - deaths
+        new_tcs = doc.get("total_combat_score", 0) - i["score"]
+        new_kills = doc.get("total_kills", 0) - i["kills"]
+        new_deaths = doc.get("total_deaths", 0) - i["deaths"]
         new_trp = doc.get("total_rounds_played", 0) - total_rounds
-        new_wins = doc.get("wins", 0) - (1 if won else 0)
-        new_losses = doc.get("losses", 0) - (0 if won else 1)
-        new_mmr = pre_mmr_by_did.get(did, int(doc.get("mmr", 1000)))
+        new_wins = doc.get("wins", 0) - (1 if i["won"] else 0)
+        new_losses = doc.get("losses", 0) - (0 if i["won"] else 1)
+        new_mmr = pre_mmr_by_did.get(did, i["cur_mmr"])
 
         new_matches = max(new_matches, 0)
         new_tcs = max(new_tcs, 0)
@@ -600,6 +713,18 @@ def revert(client, *, dry_run: bool) -> None:
         new_trp = max(new_trp, 0)
         new_wins = max(new_wins, 0)
         new_losses = max(new_losses, 0)
+
+        # VLR rating totals: subtract this match's rating×rounds contribution
+        # (mirrors stats_helper._apply_rating; no-op when no rating exists).
+        new_points = doc.get("total_rating_points", 0.0)
+        new_rounds_rated = doc.get("total_rating_rounds", 0)
+        vlr = rating_by_did.get(did)
+        if isinstance(vlr, (int, float)):
+            new_points = max(0.0, new_points - float(vlr) * total_rounds)
+            new_rounds_rated = max(0, new_rounds_rated - total_rounds)
+        new_avg_rating = (
+            (new_points / new_rounds_rated) if new_rounds_rated > 0 else None
+        )
 
         new_acs = (new_tcs / new_trp) if new_trp > 0 else 0
         new_kdr = (new_kills / new_deaths) if new_deaths > 0 else new_kills
@@ -615,9 +740,12 @@ def revert(client, *, dry_run: bool) -> None:
             "total_rounds_played": new_trp,
             "average_combat_score": new_acs,
             "kill_death_ratio": new_kdr,
+            "total_rating_points": new_points,
+            "total_rating_rounds": new_rounds_rated,
+            "avg_rating": new_avg_rating,
         }
 
-        display_name = f"{name}#{tag}"
+        display_name = i["name"]
         print(f"  {display_name}:")
         print(
             f"    mmr {doc.get('mmr')} -> {new_mmr}   W/L {doc.get('wins',0)}/{doc.get('losses',0)} -> {new_wins}/{new_losses}"
@@ -630,7 +758,8 @@ def revert(client, *, dry_run: bool) -> None:
         print(
             f"    K/D {doc.get('total_kills',0)}/{doc.get('total_deaths',0)} -> {new_kills}/{new_deaths}   "
             f"ACS {doc.get('average_combat_score',0):.2f} -> {new_acs:.2f}   "
-            f"KDR {doc.get('kill_death_ratio',0):.2f} -> {new_kdr:.2f}"
+            f"KDR {doc.get('kill_death_ratio',0):.2f} -> {new_kdr:.2f}   "
+            f"avgVLR {doc.get('avg_rating', '—')} -> {new_avg_rating}"
         )
         player_updates.append(({"player_id": did}, set_payload))
 

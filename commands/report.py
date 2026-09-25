@@ -630,6 +630,32 @@ class ReportCommand(BotCommands):
         team1_rounds = int(api_rounds.get(team1_api_color, 0))
         team2_rounds = int(api_rounds.get(team2_api_color, 0))
 
+        # Persist the exact MMR inputs this match's deltas were computed from
+        # (rollback tooling). update_stats applies placement seeds for
+        # first-match players and doubledown multipliers, which are not
+        # recoverable from post-match data alone — the revert tool needs the
+        # pre-match state to restore everyone's exact prior MMR.
+        mmr_context = {
+            "team1_avg": team1_avg,
+            "team2_avg": team2_avg,
+            "team1_rounds": team1_rounds,
+            "team2_rounds": team2_rounds,
+            "players": {
+                str(pid): {
+                    "pre_mmr": _mmr_of(pid),
+                    "was_new": _is_new(pid),
+                    "rating": _rating_of(pid),
+                    "side": discord_to_teamlabel.get(str(pid), "team1"),
+                    "multiplier": (
+                        double_down_multipliers.get(str(pid), 1)
+                        if duck_coins_enabled()
+                        else 1
+                    ),
+                }
+                for pid in team1_ids + team2_ids
+            },
+        }
+
         # All validation is done; every path below writes to the database.
         # Consume the claim now: a failure from here on must NOT release it,
         # because a retry would re-apply MMR/coins on top of the partial write.
@@ -921,6 +947,7 @@ class ReportCommand(BotCommands):
                     log.warning("Rank sync failed for %s: %s", pid, e)
 
         # Record every match played in a new collection
+        match["mmr_context"] = mmr_context
         all_matches.insert_one(match)
 
         # Increment Current Season Match Count
