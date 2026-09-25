@@ -1227,7 +1227,9 @@ class MaintenanceCommands(BotCommands):
         confirm="Pass 'confirm' to actually overwrite",
         file="The .json/.json.gz snapshot file",
     )
-    async def recoverseason(self, ctx, confirm: str, file: discord.Attachment = None):
+    async def recoverseason(
+        self, ctx, confirm: str, file: discord.Attachment | None = None
+    ):
         """
         Overwrite the current season's data from a /snapshotseason .json file.
         Requires `confirm` (two-step, no accidental overwrites). The

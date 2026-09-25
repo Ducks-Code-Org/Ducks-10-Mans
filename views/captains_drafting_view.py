@@ -459,11 +459,22 @@ class CaptainsDraftingView(discord.ui.View):
             [p.get("name") for p in self.bot.team2],
         )
 
+        # Re-check right before the flag writes: the message deletions above
+        # are awaits, so a !cancel (or a second /signup) may have superseded
+        # this cycle since the first check. Without this the cancelled cycle
+        # resurrects match_not_reported/match_ongoing over the new state and
+        # deadlocks /signup and /report (issue #218) — the same re-check
+        # finalize_match_setup does on the Balanced path.
+        if self.is_setup_cancelled():
+            log.info(
+                "Draft finalized after the setup was superseded; skipping flag writes."
+            )
+            return
+
         # Flip the match flags BEFORE announcing teams (issue #235): the
         # powerup notice opens its countdown right away, and the slow voice
         # moves below must not leave /doubledown answering "no match is
-        # running" while that notice is already live. The cancellation check
-        # above guarantees a superseded cycle never reaches these writes.
+        # running" while that notice is already live.
         self.bot.match_ongoing = True
         self.bot.match_not_reported = True
 

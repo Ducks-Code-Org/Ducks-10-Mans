@@ -184,6 +184,34 @@ async def demo():
         ongoing and reported for ongoing, reported in flags_during_announce
     ), f"match flags must be live by the time the teams embed is sent: {flags_during_announce}"
 
+    # --- Issue #218 on the captains path: a !cancel racing the finalize ----
+    # finalize_draft re-checks is_setup_cancelled at entry, but the message
+    # deletions below are awaits: a cancel landing during them must not let
+    # the superseded cycle resurrect match_not_reported/match_ongoing (which
+    # would deadlock /signup and /report). The Balanced path
+    # (finalize_match_setup) re-checks right before the flag writes; the
+    # captains path must too.
+    bot = FakeBot()
+    ctx, view = make_draft_view(bot, single_pick=True)
+    view.remaining_players.clear()
+
+    class CancelOnDeleteMessage:
+        async def delete(self):
+            bot.setup_generation += 1  # what !cancel does
+            await asyncio.sleep(0)
+
+        async def edit(self, **kwargs):
+            await asyncio.sleep(0)
+
+    view.remaining_players_message = CancelOnDeleteMessage()
+    view.drafting_message = CancelOnDeleteMessage()
+    view.captain_pick_message = CancelOnDeleteMessage()
+    await view.finalize_draft()
+    assert not (bot.match_ongoing or bot.match_not_reported), (
+        "cancelled draft finalize resurrected the match flags "
+        f"(ongoing={bot.match_ongoing}, reported={bot.match_not_reported})"
+    )
+
     # --- Issue #212: draft surfaces show rank mentions, never raw MMR -----
     bot = FakeBot()
     ctx, view = make_draft_view(bot, single_pick=True)
