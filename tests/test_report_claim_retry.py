@@ -911,7 +911,7 @@ def demo():
         bot.double_downs = set(dd_ids)
         # Veterans (matches_played > 0, wins+losses > 0) so MMR deltas come
         # purely from this match's rounds — deterministic: 13-4 win, equal
-        # team MMR, vlr 1.0 → Δ = 10 + 60/7 ≈ +18.57 → +19 plain, +37 doubled.
+        # team MMR, vlr 1.0 → Δ = 12 + 60/7 ≈ +20.57 → +21 plain, +41 doubled.
         bot.player_mmr = {
             "1": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
             "2": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
@@ -954,15 +954,15 @@ def demo():
         assert len(summary.fields) == 3, summary.fields
         attackers, defenders = summary.fields[0], summary.fields[1]
         assert (
-            "**+37** ×2" in attackers["value"]
+            "**+41** ×2" in attackers["value"]
         ), f"doubled player's delta must be bolded and tagged ×2: {attackers}"
         assert (
-            "-10" in defenders["value"] and "**" not in defenders["value"]
+            "-12" in defenders["value"] and "**" not in defenders["value"]
         ), f"plain delta must not be bolded or tagged: {defenders}"
         assert "×2" not in defenders["value"], defenders
         assert summary.footer and "doubledown" in summary.footer.lower(), summary.footer
         assert "×2" in summary.footer, summary.footer
-        # Issue #204: the -10 delta drops player 2 from Stone (100) to Wood
+        # Issue #204: the -12 delta drops player 2 from Stone (100) to Wood
         # (<100), so the optional rank-changes section appears.
         rank_field = summary.fields[2]
         assert rank_field["name"] == "🏅 Rank Changes", rank_field
@@ -973,7 +973,7 @@ def demo():
         assert "Rank**" not in rank_field["value"], rank_field
 
         # Same match, but both players start at MMR 150 (Stone, stay Stone):
-        # +37 keeps player 1 in Stone, -10 keeps player 2 in Stone → no
+        # +41 keeps player 1 in Stone, -12 keeps player 2 in Stone → no
         # rank-changes field at all.
         async def _run_no_tier_change():
             bot = FakeBot()
