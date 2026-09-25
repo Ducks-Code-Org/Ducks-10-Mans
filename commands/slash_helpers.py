@@ -90,6 +90,22 @@ async def _dev_mode_gate(ctx) -> bool:
     return ctx.permissions.administrator
 
 
+async def _legacy_prefix_gate(ctx) -> bool:
+    """Reject legacy `!` invocations when bot.ini disables them (issue #241).
+
+    Slash invocations (ctx.interaction set) always pass; only the prefix
+    fallback is gated. Raises with a message so the error handler can tell
+    the invoker where the commands moved.
+    """
+    from globals import legacy_prefix_commands_enabled
+
+    if is_interaction(ctx) or legacy_prefix_commands_enabled():
+        return True
+    raise commands.CheckFailure(
+        "Legacy `!` commands are disabled. Use the /slash commands instead."
+    )
+
+
 async def _on_command_error_reply(ctx, error: Exception) -> None:
     """User-facing error replies, hidden (ephemeral) everywhere (issue #210)."""
     bot = ctx.bot
@@ -122,7 +138,13 @@ async def _on_command_error_reply(ctx, error: Exception) -> None:
         await reply_hidden(ctx, "This command can only be used in a server.")
         return
     if isinstance(error, (app_commands.CheckFailure, commands.CheckFailure)):
-        await reply_hidden(ctx, "You can't use that command right now.")
+        # A gate may attach its own user-facing reason (e.g. the legacy
+        # prefix gate, issue #241); bare CheckFailures get the generic line.
+        message = str(error).strip()
+        if message:
+            await reply_hidden(ctx, message)
+        else:
+            await reply_hidden(ctx, "You can't use that command right now.")
         return
     if isinstance(error, commands.MissingRequiredArgument):
         await reply_hidden(ctx, f"Missing argument: `{error.param.name}`.")
@@ -150,6 +172,10 @@ def register_error_handlers(bot) -> None:
     @bot.check
     async def dev_mode_gate(ctx) -> bool:
         return await _dev_mode_gate(ctx)
+
+    @bot.check
+    async def legacy_prefix_gate(ctx) -> bool:
+        return await _legacy_prefix_gate(ctx)
 
     # Extend (do not replace) the bot's existing on_command_error.
     original = bot.on_command_error
