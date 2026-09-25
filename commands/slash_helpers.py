@@ -90,6 +90,15 @@ async def _dev_mode_gate(ctx) -> bool:
     return ctx.permissions.administrator
 
 
+class LegacyPrefixDisabled(commands.CheckFailure):
+    """The legacy `!` gate rejected an invocation (issue #241).
+
+    A dedicated subclass lets the error handler surface this message while
+    keeping discord.py's own CheckFailures (e.g. a failed global check in
+    prepare()) on the generic user-facing line — their text is internal.
+    """
+
+
 async def _legacy_prefix_gate(ctx) -> bool:
     """Reject legacy `!` invocations when bot.ini disables them (issue #241).
 
@@ -101,7 +110,7 @@ async def _legacy_prefix_gate(ctx) -> bool:
 
     if is_interaction(ctx) or legacy_prefix_commands_enabled():
         return True
-    raise commands.CheckFailure(
+    raise LegacyPrefixDisabled(
         "Legacy `!` commands are disabled. Use the /slash commands instead."
     )
 
@@ -138,11 +147,12 @@ async def _on_command_error_reply(ctx, error: Exception) -> None:
         await reply_hidden(ctx, "This command can only be used in a server.")
         return
     if isinstance(error, (app_commands.CheckFailure, commands.CheckFailure)):
-        # A gate may attach its own user-facing reason (e.g. the legacy
-        # prefix gate, issue #241); bare CheckFailures get the generic line.
-        message = str(error).strip()
-        if message:
-            await reply_hidden(ctx, message)
+        # Only the legacy-prefix gate attaches a user-facing reason (issue
+        # #241); discord.py's own CheckFailures carry internal text (e.g.
+        # "The global check functions for command help failed."), so they
+        # keep the generic line.
+        if isinstance(error, LegacyPrefixDisabled):
+            await reply_hidden(ctx, str(error))
         else:
             await reply_hidden(ctx, "You can't use that command right now.")
         return
