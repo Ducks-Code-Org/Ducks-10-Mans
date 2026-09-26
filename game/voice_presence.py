@@ -88,8 +88,8 @@ def _voice_channel_of(guild, player_id: int):
         return _UNKNOWN
 
 
-def _plain_name(guild, player_id) -> str:
-    """Plain-text @name for a notice: display name, or raw id if gone.
+def _display_name(guild, player_id) -> str:
+    """Plain-text display name for a notice, or the raw id if unavailable.
 
     Deliberately not a mention — the notice must never ping anyone; the
     final warning is the only nudge (issue #247).
@@ -97,9 +97,22 @@ def _plain_name(guild, player_id) -> str:
     try:
         member = guild.get_member(int(player_id))
         name = getattr(member, "display_name", None)
-    except Exception:
-        name = None
-    return f"@{name}" if isinstance(name, str) and name else f"@{player_id}"
+    except Exception as e:  # fail open: an unreadable member is not fatal
+        log.warning("Could not read display name for %s: %r", player_id, e)
+        return str(player_id)
+    return name if isinstance(name, str) and name else str(player_id)
+
+
+def _deadline_text(seconds: float) -> str:
+    """Notice deadline text for the wait window actually in use.
+
+    Whole minutes read as words ("10 minutes"); anything else uses the
+    m:ss clock so an overridden window never overstates itself.
+    """
+    minutes = int(seconds // 60)
+    if minutes and seconds % 60 == 0:
+        return f"{minutes} minute" + ("s" if minutes > 1 else "")
+    return f"{minutes}:{int(seconds % 60):02d}"
 
 
 def missing_lobby_players(guild, queue) -> list[str]:
@@ -168,71 +181,94 @@ async def wait_for_lobby(
         len(missing),
     )
     lobby = _find_channel(channels, LOBBY_CHANNEL_NAME)
-    room = f"<#{lobby.id}>" if lobby is not None else "a **voice channel**"
+    room = (
+        f"the **lobby voice channel** <#{lobby.id}>"
+        if lobby is not None
+        else "a **voice channel**"
+    )
     # List who is missing without pinging them (issue #233); the pinged
-    # nudge only comes with the final warning near the timeout.
-    who = ", ".join(_plain_name(guild, pid) for pid in missing)
-    minutes = LOBBY_WAIT_SECONDS // 60
+    # nudge only comes with the final warning near the timeout. The
+    # deadline is derived from the wait window so the wording cannot lie.
+    who = ", ".join(_display_name(guild, pid) for pid in missing)
+    deadline_text = _deadline_text(timeout_seconds)
     try:
         await send(
-            f"Waiting for these players to join the **lobby voice channel** {room}: "
+            f"Waiting for these players to join {room}: "
             + who
-            + f" — you have {minutes} minutes to join or the match will be cancelled."
+            + f" — you have {deadline_text} to join or the match will be cancelled."
         )
-    except discord.HTTPException:
-        pass
+    except discord.HTTPException as e:
+        log.error("Could not send the lobby-wait notice: %s", e, exc_info=e)
 
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout_seconds
     next_poll = loop.time() + poll_seconds
-    # The countdown only starts ticking once the warning message exists;
-    # before that the sleep target must not collapse to 0.
+    # The countdown only ticks once its message exists; until then the
+    # sleep target must not collapse to 0 or the wait busy-spins.
     next_tick = None
-    countdown = None
+    warning_message = None
+    warning_sent = False
     while True:
-        wake = min(next_poll, deadline)
+        now = loop.time()
+        wake = next_poll
         if next_tick is not None:
             wake = min(wake, next_tick)
-        await asyncio.sleep(max(wake - loop.time(), 0))
+        # Once the deadline has passed, wait for the next presence poll
+        # instead of spinning on a wake target that is already in the past.
+        if deadline > now:
+            wake = min(wake, deadline)
+        await asyncio.sleep(max(wake - now, 0))
         now = loop.time()
         if is_cancelled():
-            await _final_edit(countdown, "Match cancelled.")
+            await _edit_countdown(warning_message, "Match cancelled.")
             return False
         if now >= next_poll:
             next_poll = now + poll_seconds
             if not missing_lobby_players(guild, queue):
                 log.info("Everyone joined the lobby; starting match setup")
-                await _final_edit(countdown, "Everyone joined — starting match setup.")
+                await _edit_countdown(
+                    warning_message, "Everyone joined — starting match setup."
+                )
                 try:
                     await send("Everyone is in the lobby! Starting match setup...")
-                except discord.HTTPException:
-                    pass
+                except discord.HTTPException as e:
+                    log.error(
+                        "Could not announce the lobby wait outcome: %s", e, exc_info=e
+                    )
                 return True
             if now >= deadline:
                 # Presence was just re-checked above: a join in the final
                 # window wins, a no-show cancels (issue #233).
                 log.warning("Lobby wait timed out with players still missing")
-                await _final_edit(countdown, "Match cancelled.")
+                await _edit_countdown(warning_message, "Match cancelled.")
                 return False
-        if countdown is None and next_tick is None and deadline - now <= warning_seconds:
-            # Final warning: one message that pings the missing players and
-            # carries the live countdown from now until the deadline. A send
-            # failure must never retry or double-send (issue #248): the tick
-            # schedule is parked past the deadline.
-            try:
-                countdown = await send(_countdown_text(now, deadline, queue, guild))
-                next_tick = now + tick_seconds
-            except discord.HTTPException:
-                next_tick = deadline + 1  # never again this wait
-        elif countdown is not None and next_tick is not None and now >= next_tick:
+            if not warning_sent and deadline - now <= warning_seconds:
+                # Final warning, sent once at the first poll inside the
+                # warning window (issue #248): one message that pings the
+                # missing players and carries the live countdown from now
+                # until the deadline. A send failure must never retry or
+                # double-send; a sent-but-untrackable message is still one
+                # send, so the flag is set either way.
+                warning_sent = True
+                try:
+                    warning_message = await send(
+                        _countdown_text(now, deadline, queue, guild)
+                    )
+                    if warning_message is not None:
+                        next_tick = now + tick_seconds
+                except discord.HTTPException as e:
+                    log.error(
+                        "Could not send the final lobby warning: %s", e, exc_info=e
+                    )
+        if warning_message is not None and now >= next_tick:
             next_tick = now + tick_seconds
             # Live countdown (issue #248): m:ss remaining plus the
-            # still-missing players, re-rendered from the live queue
-            # each tick so substitutions are reflected; edits never
-            # re-ping. An edit failure must not kill the wait.
-            await _final_edit(
-                countdown, _countdown_text(now, deadline, queue, guild)
-            )
+            # still-missing players, re-rendered from the live queue each
+            # tick so substitutions are reflected; edits never re-ping.
+            if not await _edit_countdown(
+                warning_message, _countdown_text(now, deadline, queue, guild)
+            ):
+                warning_message = None  # gone/unwritable; stop retrying
 
 
 def _countdown_text(now, deadline, queue, guild) -> str:
@@ -252,15 +288,21 @@ def _countdown_text(now, deadline, queue, guild) -> str:
     )
 
 
-async def _final_edit(message, text) -> None:
-    """Edit a countdown message; errors are never fatal (deleted message,
-    HTTP errors). Also used for the per-tick countdown re-render."""
-    if message is None:
-        return
+async def _edit_countdown(message, text) -> bool:
+    """Edit the countdown message; an edit failure is never fatal.
+
+    A deleted message or HTTP error must not kill the wait or change the
+    cancellation outcome (issue #248), so it is logged and swallowed.
+    Returns whether the message is still editable.
+    """
+    if message is None:  # no countdown was ever sent; nothing to edit
+        return False
     try:
         await message.edit(content=text)
-    except (discord.HTTPException, AttributeError):
-        pass
+        return True
+    except discord.HTTPException as e:
+        log.error("Could not update the lobby countdown: %s", e, exc_info=e)
+        return False
 
 
 async def move_teams_to_voice(guild, team1, team2) -> None:
