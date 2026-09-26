@@ -13,7 +13,13 @@ log = logging.getLogger(__name__)
 # stronger skill spread); the old "carry" corner-bonus term was removed.
 # Also 2026-09-24: the h-curve's no-bonus floor moved from vlr 0.5 to 0.4
 # (ratings 0.4–0.7 now climb to (0.7, 1) at slope 10/3).
+# 2026-09-26: result-conditional minimum swing (see docs/adr/0001):
+# every win pays at least MIN_GAIN, every loss costs at least MIN_LOSS.
 A, B, C = 12.0, 60 / 7, 3.0
+
+# Minimum swing per result, applied to the raw delta before any multiplier
+# (doubledown doubles the clamped delta). Draws are not possible.
+MIN_GAIN, MIN_LOSS = 5.0, -5.0
 
 # ponytail: DEFAULT_MMR 0 is the new-player display fallback; first report
 # seeds real MMR from 100*VLR rating.
@@ -80,20 +86,23 @@ def _h(v: float) -> float:
 def delta_mmr(
     our_rounds: float, opp_rounds: float, our_mmr: float, opp_mmr: float, vlr: float
 ) -> float:
-    """ΔMMR = A·r + B_result + C·(h(vlr) − 4).
+    """ΔMMR = A·r + B_result + C·(h(vlr) − 4), min ±5 by result.
 
     r = round differential / 4.3, clamped to ±1
     B_result = B·(2−m) on a win (our_rounds > opp_rounds), B·(1−m) on a
-        loss/draw (the recentred branch)
+        loss (the recentred branch)
     m = team-MMR expectation: sqrt(ratio) if underdog, ratio^0.75 if
         favorite, clamped [0.33, 5]
     h = piecewise VLR curve (0.4,0)(0.7,1)(1.0,4)(1.3,5), uncapped above 1.3
+    The raw delta is then clamped to the result-conditional minimum swing:
+    a win never pays less than MIN_GAIN, a loss never more than MIN_LOSS.
     """
     r = _clamp((our_rounds - opp_rounds) / 4.3, -1.0, 1.0)
     ratio = _clamp(our_mmr / max(opp_mmr, 1e-9), 0.33, 5.0)
     m = ratio**0.5 if ratio < 1.0 else ratio**0.75
     expectation = B * (2.0 - m) if our_rounds > opp_rounds else B * (1.0 - m)
-    return A * r + expectation + C * (_h(vlr) - 4.0)
+    delta = A * r + expectation + C * (_h(vlr) - 4.0)
+    return max(delta, MIN_GAIN) if our_rounds > opp_rounds else min(delta, MIN_LOSS)
 
 
 def _seed_mmr(rating) -> float:

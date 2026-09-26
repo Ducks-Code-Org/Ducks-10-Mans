@@ -543,6 +543,41 @@ def demo():
         abs((doubled - seed) - 2 * (plain - seed)) <= 1
     ), f"doubledown must double the delta only: plain={plain} doubled={doubled}"
 
+    # Issue #253: the multiplier applies to the clamped delta, so a win that
+    # would be floored to +5 doubles to at least +10 (favorite stomp).
+    store3 = {}
+    _sh.update_stats(
+        {"stats": {"score": 900, "kills": 8, "deaths": 4}},
+        20,
+        store3,
+        {},
+        discord_id="10",
+        team_avg_mmr=2500,
+        opp_avg_mmr=500,
+        our_rounds=13,
+        opp_rounds=0,
+        rating=1.4,
+        mmr_multiplier=1,
+    )
+    plain_floored = store3["10"]["mmr"]
+    store4 = {}
+    _sh.update_stats(
+        {"stats": {"score": 900, "kills": 8, "deaths": 4}},
+        20,
+        store4,
+        {},
+        discord_id="11",
+        team_avg_mmr=2500,
+        opp_avg_mmr=500,
+        our_rounds=13,
+        opp_rounds=0,
+        rating=1.4,
+        mmr_multiplier=2,
+    )
+    doubled_floored = store4["11"]["mmr"]
+    assert plain_floored == seed + 5, plain_floored
+    assert doubled_floored == seed + 10, doubled_floored
+
     # The !setmap call site must pass requires_running_match=False, otherwise
     # the gate and the override window stay mutually exclusive.
     command_src = open(
