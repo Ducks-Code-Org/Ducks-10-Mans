@@ -515,12 +515,18 @@ class MaintenanceCommands(BotCommands):
     )
     async def substitute(self, ctx, out_player: str, in_player: str):
         """
-        Replace a player in the current match (teams must already be decided).
+        Replace a player in the current match or signup (admin only).
+        Works from the moment the queue is full (lobby wait onwards);
         (Riot IDs containing spaces must use the @mention form.)
         """
-        if not self.bot.match_ongoing:
+        finalized = (
+            not self.bot.signup_active
+            and self.bot.setup_generation == self.bot.match_setup_generation
+        )
+        if not (self.bot.match_ongoing or finalized):
             await ctx.send(
-                "Substitutions only work on a match whose teams are already decided.",
+                "Substitutions work once the signup queue is full (lobby wait onwards) "
+                "or on a match whose teams are already decided.",
                 ephemeral=True,
             )
             return
@@ -540,14 +546,18 @@ class MaintenanceCommands(BotCommands):
             await ctx.send("That player is already in this match.", ephemeral=True)
             return
 
+        # Pre-team: the outgoing player must be in the signup queue; once
+        # teams exist, they must be on one of them.
         team = None
         for t in (self.bot.team1, self.bot.team2):
             if any(str(p["id"]) == out_pid for p in t):
                 team = t
                 break
-        if team is None:
+        if team is None and out_pid not in {
+            str(p["id"]) for p in self.bot.queue
+        }:
             await ctx.send(
-                f"<@{out_pid}> is not on either team in the current match.",
+                f"<@{out_pid}> is not in the current signup queue or on either team.",
                 ephemeral=True,
             )
             return
@@ -584,15 +594,22 @@ class MaintenanceCommands(BotCommands):
                 if str(p["id"]) == out_pid:
                     self.bot.queue[i] = in_player
                     break
-            for i, p in enumerate(team):
-                if str(p["id"]) == out_pid:
-                    team[i] = in_player
-                    break
+            if team is not None:
+                for i, p in enumerate(team):
+                    if str(p["id"]) == out_pid:
+                        team[i] = in_player
+                        break
         self.bot.ensure_player_mmr(in_pid, self.bot.player_names)
         self.bot.player_names[in_pid] = in_name
 
         # The outgoing player's doubledown no longer applies; refund it.
-        if duck_coins_enabled() and out_pid in self.bot.double_downs:
+        # Pre-team there is nothing to refund: doubledowns require an
+        # ongoing match, so this branch can only run post-team.
+        if (
+            self.bot.match_ongoing
+            and duck_coins_enabled()
+            and out_pid in self.bot.double_downs
+        ):
             self.bot.double_downs.discard(out_pid)
             add_coins(out_pid, DOUBLEDOWN_COST)
             # Keep the crash-recovery journal in sync: a stale journal would
@@ -603,11 +620,11 @@ class MaintenanceCommands(BotCommands):
 
         # Swap match roles and move the incoming player to their team voice
         # channel (best effort; issue #234).
-        from views.signup_view import add_match_role, remove_match_role
+        from views.signup_view import add_match_role, remove_match_role  # noqa: PLC0415
 
         await add_match_role(self.bot, ctx.guild, in_pid)
         await remove_match_role(self.bot, ctx.guild, out_pid)
-        if voice_presence_enabled() and ctx.guild:
+        if voice_presence_enabled() and ctx.guild and self.bot.match_ongoing:
             try:
                 await move_teams_to_voice(ctx.guild, self.bot.team1, self.bot.team2)
             except Exception as e:
@@ -622,8 +639,15 @@ class MaintenanceCommands(BotCommands):
             side,
         )
         await ctx.send(
-            f"Substituted <@{in_pid}> in for <@{out_pid}> ({side}). "
-            "Report with `/report` as usual once the game is done."
+            f"Substituted <@{in_pid}> in for <@{out_pid}>"
+            + (
+                f" ({side}). Report with `/report` as usual once the game is done."
+                if self.bot.match_ongoing
+                else (
+                    ". The lobby wait now tracks the new player; "
+                    "the match setup continues once everyone has joined."
+                )
+            )
         )
 
     @commands.hybrid_command(
