@@ -27,8 +27,9 @@ ATTACKERS_CHANNEL_NAME = "Attackers"
 DEFENDERS_CHANNEL_NAME = "Defenders"
 LOBBY_WAIT_SECONDS = 600  # 10 minutes to join the lobby
 POLL_SECONDS = 15
-# When this much of the lobby window is left, everyone still missing gets
-# pinged with a countdown synced to the auto-cancel deadline (issue #233).
+# When this much of the lobby window is left, the final warning message
+# goes out: real pings plus a live m:ss countdown until the deadline
+# (issue #248).
 LOBBY_PING_SECONDS = 120
 
 # Sentinel: voice state could not be inspected, so presence is unknown.
@@ -134,17 +135,23 @@ async def wait_for_lobby(
     is_cancelled,
     timeout_seconds: int = LOBBY_WAIT_SECONDS,
     poll_seconds: float = POLL_SECONDS,
+    tick_seconds: float = 1,
+    warning_seconds: int = LOBBY_PING_SECONDS,
 ) -> bool:
     """Wait until every queued player has joined the lobby voice channel.
 
     Returns True once everyone is connected, or when presence cannot be
     checked at all. Returns False if the wait timed out or setup was
-    cancelled (e.g. !cancel). Progress messages go through `send`.
+    cancelled (e.g. !cancel). Progress messages go through `send`; `send`
+    must return a message-like object with an async edit() for the
+    countdown.
 
     Messaging is staged (issue #233): the first message only lists who is
     missing and tells them to join — nobody gets pinged right away. When
-    the auto-cancel window is down to LOBBY_PING_SECONDS, everyone still
-    outside the lobby gets pinged with a countdown synced to the timeout.
+    the auto-cancel window is down to LOBBY_PING_SECONDS, a single final
+    warning pings everyone still outside the lobby and then live-edits the
+    m:ss countdown every tick (issue #248); each edit re-renders the
+    player list from the live queue, so substitutes appear automatically.
     """
     channels = _guild_voice_channels(guild)
     if not channels:
@@ -175,37 +182,81 @@ async def wait_for_lobby(
     except discord.HTTPException:
         pass
 
-    deadline = asyncio.get_event_loop().time() + timeout_seconds
-    pinged = False
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout_seconds
+    next_poll = loop.time() + poll_seconds
+    next_tick = loop.time() + tick_seconds
+    countdown = None
     while True:
-        await asyncio.sleep(poll_seconds)
+        await asyncio.sleep(
+            max(min(next_poll, next_tick, deadline) - loop.time(), 0)
+        )
+        now = loop.time()
         if is_cancelled():
+            await _final_edit(countdown, "Match cancelled.")
             return False
-        missing = missing_lobby_players(guild, queue)
-        if not missing:
-            log.info("Everyone joined the lobby; starting match setup")
+        if now >= next_poll:
+            next_poll = now + poll_seconds
+            if not missing_lobby_players(guild, queue):
+                log.info("Everyone joined the lobby; starting match setup")
+                await _final_edit(countdown, "Everyone joined — starting match setup.")
+                try:
+                    await send("Everyone is in the lobby! Starting match setup...")
+                except discord.HTTPException:
+                    pass
+                return True
+            if now >= deadline:
+                # Presence was just re-checked above: a join in the final
+                # window wins, a no-show cancels (issue #233).
+                log.warning("Lobby wait timed out with players still missing")
+                await _final_edit(countdown, "Match cancelled.")
+                return False
+        if countdown is not None:
+            if now >= next_tick:
+                next_tick = now + tick_seconds
+                # Live countdown (issue #248): m:ss remaining plus the
+                # still-missing players, re-rendered from the live queue
+                # each tick so substitutions are reflected; edits never
+                # re-ping.
+                await countdown.edit(
+                    content=_countdown_text(now, deadline, queue, guild)
+                )
+        elif deadline - now <= warning_seconds:
+            # Final warning: one message that pings the missing players and
+            # carries the live countdown from now until the deadline.
             try:
-                await send("Everyone is in the lobby! Starting match setup...")
-            except discord.HTTPException:
-                pass
-            return True
-        if asyncio.get_event_loop().time() >= deadline:
-            log.warning("Lobby wait timed out with players still missing")
-            return False
-        remaining = int(deadline - asyncio.get_event_loop().time())
-        if not pinged and remaining <= LOBBY_PING_SECONDS:
-            # Final warning: ping everyone still outside the lobby with a
-            # countdown matching the auto-cancel window.
-            pinged = True
-            minutes = max(remaining // 60, 1)
-            try:
-                await send(
-                    "⚠️ Still waiting in the lobby for match setup: "
-                    + " ".join(f"<@{pid}>" for pid in missing)
-                    + f" — the match is auto-cancelled in about {minutes} minute(s)!"
+                countdown = await send(
+                    _countdown_text(now, deadline, queue, guild)
                 )
             except discord.HTTPException:
-                pass
+                countdown = "failed"  # sent but untrackable: never send twice
+
+
+def _countdown_text(now, deadline, queue, guild) -> str:
+    """Final-warning text: real pings + live m:ss deadline countdown."""
+    missing = missing_lobby_players(guild, queue)
+    remaining = max(int(deadline - now), 0)
+    who = (
+        " ".join(f"<@{pid}>" for pid in missing)
+        if missing
+        else "whoever is still outside"
+    )
+    return (
+        "Still waiting for these players to join the **lobby voice channel**: "
+        + who
+        + f". The match will be cancelled in {remaining // 60}:{remaining % 60:02d}"
+        + " unless everyone joins."
+    )
+
+
+async def _final_edit(message, text) -> None:
+    """Stop the countdown with its outcome; errors are never fatal."""
+    if message is None:
+        return
+    try:
+        await message.edit(content=text)
+    except (discord.HTTPException, AttributeError):
+        pass
 
 
 async def move_teams_to_voice(guild, team1, team2) -> None:

@@ -184,6 +184,8 @@ def demo():
                 lambda: False,
                 timeout_seconds=0.05,
                 poll_seconds=0.01,
+                tick_seconds=0.001,
+                warning_seconds=0.03,
             )
         )
         assert any(
@@ -200,6 +202,7 @@ def demo():
                     lambda: False,
                     timeout_seconds=5,
                     poll_seconds=0.01,
+                    warning_seconds=1,
                 )
             )
             await asyncio.sleep(0.03)
@@ -267,6 +270,8 @@ def demo():
             join_in_final_window,
             timeout_seconds=0.05,
             poll_seconds=0.01,
+            tick_seconds=0.001,
+            warning_seconds=0.03,
         )
         assert result is True, "a join inside the last poll window must be detected"
 
@@ -282,6 +287,8 @@ def demo():
                 lambda: False,
                 timeout_seconds=0.05,
                 poll_seconds=0.01,
+                tick_seconds=0.001,
+                warning_seconds=0.03,
             )
         )
         first = sent[0]
@@ -292,8 +299,47 @@ def demo():
             "<@1>" not in first and "<@2>" not in first
         ), "initial notice must not ping missing players"
         assert any(
-            "auto-cancelled in about" in m and "<@1>" in m for m in sent[1:]
-        ), "final warning must ping missing players with a synced countdown"
+            "will be cancelled in" in m and "<@1>" in m for m in sent[1:]
+        ), "final warning must ping missing players with a countdown (issue #248)"
+
+        # Final warning (issue #248): one message, real pings, no emojis,
+        # live m:ss countdown edited every tick from the live queue.
+        warning_guild = FakeGuild([], [lobby])
+        warning_queue = [{"id": "1"}, {"id": "2"}]
+        warning_sender = RecordingSender()
+        assert not asyncio.run(
+            wait_for_lobby(
+                warning_guild,
+                warning_queue,
+                warning_sender,
+                lambda: False,
+                timeout_seconds=0.05,
+                poll_seconds=0.01,
+                tick_seconds=0.001,
+                warning_seconds=0.03,
+            )
+        )
+        warning = warning_sender.messages[1]
+        assert warning is warning_sender.messages[-2] or len(
+            warning_sender.messages
+        ) >= 2, "warning must be a single message, edited in place"
+        warn_text = warning.content
+        assert "⚠" not in warn_text and "⏰" not in warn_text, warn_text
+        assert "<@1>" in warn_text and "<@2>" in warn_text, warn_text
+        assert "will be cancelled in" in warn_text, warn_text
+        assert "0:0" in warn_text, "countdown must show m:ss (issue #248)"
+        assert len(warning.edits) >= 1, "countdown must live-edit (issue #248)"
+        assert all(
+            "will be cancelled in" in e["content"] or "Match cancelled." == e["content"]
+            for e in warning.edits
+        ), "edits must keep the countdown format, ending in the outcome"
+        last_content_edit = next(
+            e["content"]
+            for e in reversed(warning.edits)
+            if e["content"] != "Match cancelled."
+        )
+        assert "<@1>" in last_content_edit and "<@2>" in last_content_edit
+        assert "0:0" in last_content_edit, "final countdown keeps m:ss"
 
         # Notice names (issue #247): display names as plain text, lobby as
         # a real channel mention, raw-id fallback for departed members.
@@ -343,6 +389,68 @@ def demo():
             )
         )
         assert "a **voice channel**" in nolobby_sender.messages[0].content
+
+        # Substitution reflected in the countdown (issue #248/#249): the
+        # warning text is re-rendered from the live queue each edit, so an
+        # admin swapping a player during the final two minutes moves the
+        # ping from the old player to the new one without extra machinery.
+        sub_guild = FakeGuild([], [lobby])
+
+        async def sub_during_warning(task):
+            await asyncio.sleep(0.04)
+            sub_guild._members[9] = FakeMember(9)
+            return "subbed"
+
+        warning_sender = RecordingSender()
+        result, _ = wait_for_lobby_with_joiner(
+            sub_guild,
+            [{"id": "1"}, {"id": "9"}],
+            warning_sender,
+            sub_during_warning,
+            timeout_seconds=0.05,
+            poll_seconds=0.01,
+            tick_seconds=0.001,
+            warning_seconds=0.03,
+        )
+        assert result is False, "wait must still time out after the sub"
+        warning = warning_sender.messages[1]
+        assert "<@1>" in warning.content, warning.content
+        first_edits = [
+            e["content"] for e in warning.edits if "<@9>" in e["content"]
+        ]
+        assert first_edits, "the subbed-in player must appear in the countdown"
+        assert not [
+            e["content"] for e in warning.edits if "<@2>" in e["content"]
+        ], "the subbed-out player must never be pinged by the countdown"
+
+        # Early join before the warning threshold: no countdown message at
+        # all, and the success flow keeps its own announcement.
+        early_guild = FakeGuild([], [lobby])
+
+        async def join_early(task):
+            await asyncio.sleep(0.01)
+            early_guild._members[1] = FakeMember(1, lobby)
+            return "joined"
+
+        early_sender = RecordingSender()
+        result, _ = wait_for_lobby_with_joiner(
+            early_guild,
+            [{"id": "1"}],
+            early_sender,
+            join_early,
+            timeout_seconds=0.05,
+            poll_seconds=0.01,
+            tick_seconds=0.001,
+            warning_seconds=0.03,
+        )
+        assert result is True
+        assert (
+            len(early_sender.messages) == 2
+        ), "no countdown may be sent when everyone joins early"
+        assert "Everyone is in the lobby" in early_sender.messages[1].content
+        assert all(
+            m.edits == [] for m in early_sender.messages
+        ), "no countdown edits may happen without a countdown message"
 
         # Case/whitespace-insensitive detection for all three channels.
         weird_lobby = FakeChannel(20, "  LOBBY ")
