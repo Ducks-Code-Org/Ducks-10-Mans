@@ -260,9 +260,10 @@ def main():
         (1.3, 165 / 7),
     ]:
         assert abs(d(17.3, 13, 500, 500, v) - want) < 0.01
-    # No loser can gain at equal MMR: loss branch is B·(1−m) ≤ 0, r ≤ 0, skill may add
-    # but only exceeds it above VLR ≈ 1.56 (accepted remainder); at 1.3 exactly:
-    assert d(11, 13, 500, 500, 1.3) < 0
+    # No loser can gain at equal MMR: loss branch is B·(1−m) ≤ 0, r ≤ 0, and
+    # since #253 the loss clamp caps every loss at −5 whatever the skill
+    # term adds; at 1.3 exactly (raw ≈ −2.58):
+    assert d(11, 13, 500, 500, 1.3) == -5.0
     # h curve points: flat 0 up to vlr 0.4, then a gentler climb to (0.7, 1)
     h = stats_helper._h
     assert h(0.4) == 0.0 and h(0.7) == 1.0 and h(1.0) == 4.0 and h(1.3) == 5.0
@@ -284,11 +285,10 @@ def main():
     no_lead = d(10, 13, 500, 500, 1.3) - d(10, 13, 500, 500, 1.0)
     assert abs(lead - no_lead) < 1e-9, (lead, no_lead)
     # --- 2026-09-26 minimum-swing checks (issue #253): every win pays at
-    # least +5, every loss at most −5, whatever the raw formula says.
-    # Favorite's blowout lands exactly on the win floor; a high-skill
+    # least +5, every loss at most −5, whatever the raw formula says. The
+    # win floor is pinned with the favorite-stomp check above; a high-skill
     # player's narrow loss (the skill term nearly cancels the loss) lands
     # exactly on the loss floor.
-    assert d(13, 0, 2500, 500, 1.0) == 5.0
     assert d(12, 13, 500, 500, 1.3) == -5.0
     # Unclamped results still exceed the floors (raw equal-MMR win ≈ +20.6,
     # raw equal-MMR loss ≈ −12): the clamp only binds when it must.

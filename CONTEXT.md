@@ -19,7 +19,7 @@ Queued players who are not currently in the lobby voice channel during the lobby
 _Avoid_: absent users, no-shows
 
 **Final warning**:
-The message sent two minutes before the lobby wait expires: it pings the missing players and carries the live countdown. Its player list is re-rendered from the current queue each tick so substitutions stay reflected.
+The message sent two minutes before the lobby wait expires; it pings the missing players and carries the live countdown.
 _Avoid_: timeout ping, 2-minute ping
 
 **Live countdown**:
@@ -42,9 +42,9 @@ The per-player rating a match report moves; it exists only as a whole number at 
 _Avoid_: elo (except for the legacy offline tool)
 
 **Minimum gain**:
-The smallest amount of MMR any win can pay; applied to the rating change before any doubling.
+The smallest amount of MMR any win can pay.
 _Avoid_: win floor, gain boost
 
 **Minimum loss**:
-The largest amount of MMR any loss can cost; applied to the rating change before any doubling.
+The smallest amount of MMR any loss can cost.
 _Avoid_: loss floor, loss cap
