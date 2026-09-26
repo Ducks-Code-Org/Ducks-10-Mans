@@ -499,15 +499,21 @@ class SignupView(discord.ui.View):
         )
 
         # Wait for everyone to join the lobby voice channel before setup
-        # (feature-flagged in bot.ini).
+        # (feature-flagged in bot.ini). /substitute is allowed from this
+        # window onwards, so mark it explicitly (issue #249).
         if voice_presence_enabled():
-            ready = await wait_for_lobby(
-                self.ctx.guild,
-                self.bot.queue,
-                send=channel.send,
-                is_cancelled=lambda: self.bot is None
-                or self.bot.setup_generation != self.setup_generation,
-            )
+            self.bot.lobby_wait_active = True
+            try:
+                ready = await wait_for_lobby(
+                    self.ctx.guild,
+                    self.bot.queue,
+                    send=channel.send,
+                    is_cancelled=lambda: self.bot is None
+                    or self.bot.setup_generation != self.setup_generation,
+                )
+            finally:
+                if self.bot is not None:
+                    self.bot.lobby_wait_active = False
             if not ready:
                 if (
                     self.bot is not None
