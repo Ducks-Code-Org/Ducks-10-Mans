@@ -260,29 +260,40 @@ def main():
         (1.3, 165 / 7),
     ]:
         assert abs(d(17.3, 13, 500, 500, v) - want) < 0.01
-    # No loser can gain at equal MMR: loss branch is B·(1−m) ≤ 0, r ≤ 0, skill may add
-    # but only exceeds it above VLR ≈ 1.56 (accepted remainder); at 1.3 exactly:
-    assert d(11, 13, 500, 500, 1.3) < 0
+    # No loser can gain at equal MMR: loss branch is B·(1−m) ≤ 0, r ≤ 0, and
+    # since #253 the loss clamp caps every loss at −5 whatever the skill
+    # term adds; at 1.3 exactly (raw ≈ −2.58):
+    assert d(11, 13, 500, 500, 1.3) == -5.0
     # h curve points: flat 0 up to vlr 0.4, then a gentler climb to (0.7, 1)
     h = stats_helper._h
     assert h(0.4) == 0.0 and h(0.7) == 1.0 and h(1.0) == 4.0 and h(1.3) == 5.0
     assert abs(h(0.5) - 1.0 / 3.0) < 1e-9 and 0.0 < h(0.6) < h(0.7)
     # r saturation at ±4.3
     assert abs(d(20, 5, 500, 500, 1.0) - d(17.3, 13, 500, 500, 1.0)) < 1e-9
-    # Favorite (5x) stomping 13-0 at 1.0 nets ~MMR-neutral (+0.48: the bigger
-    # A barely outweighs B·(5^0.75−2) ≈ −11.5), and still less than an
-    # equal-MMR win.
-    assert 0 < d(13, 0, 2500, 500, 1.0) < d(17.3, 13, 500, 500, 1.0)
+    # Favorite (5x) stomping 13-0 at 1.0: the raw formula nets ~MMR-neutral
+    # (+0.48), but the minimum-swing floor (issue #253) lifts every win to
+    # at least +5 — a favorite can no longer lose MMR on a win. An equal-MMR
+    # win still pays more than the floored stomp.
+    assert d(13, 0, 2500, 500, 1.0) == 5.0
+    assert 5.0 < d(17.3, 13, 500, 500, 1.0)
     # Underdog (1/5) winning 13-0: ≈ +24.2 on A + expectation
     assert d(13, 0, 500, 2500, 1.0) > 60 / 7 + 12
     # --- 2026-09-24 retune checks: the carry term is gone (rating moves
-    # wins and losses identically) and a 5x favourite's maximal blowout is
-    # ~MMR-neutral (+0.48), not a farmable payout.
+    # wins and losses identically; #253's minimum swing is result-
+    # conditional, so it moves them identically too).
     lead = d(13, 10, 500, 500, 1.3) - d(13, 10, 500, 500, 1.0)
     no_lead = d(10, 13, 500, 500, 1.3) - d(10, 13, 500, 500, 1.0)
     assert abs(lead - no_lead) < 1e-9, (lead, no_lead)
-    stomp = d(13, 0, 2500, 500, 1.0)
-    assert -1.0 < stomp < 1.0, stomp  # 12 − B·(5^0.75−2) ≈ +0.48
+    # --- 2026-09-26 minimum-swing checks (issue #253): every win pays at
+    # least +5, every loss at most −5, whatever the raw formula says. The
+    # win floor is pinned with the favorite-stomp check above; a high-skill
+    # player's narrow loss (the skill term nearly cancels the loss) lands
+    # exactly on the loss floor.
+    assert d(12, 13, 500, 500, 1.3) == -5.0
+    # Unclamped results still exceed the floors (raw equal-MMR win ≈ +20.6,
+    # raw equal-MMR loss ≈ −12): the clamp only binds when it must.
+    assert d(13, 0, 500, 500, 1.0) > 5.0
+    assert d(8.7, 13, 500, 500, 1.0) < -5.0
     # Sign guarantee: every win > every loss at equal MMR/VLR
     assert d(13, 0, 500, 500, 0.5) > d(0, 13, 500, 500, 1.3)
 
