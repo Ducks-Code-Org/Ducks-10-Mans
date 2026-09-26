@@ -353,8 +353,6 @@ def demo():
 
     original_users = mc.users
     original_verify = mc.verify_riot_account_async
-    original_add = None
-    original_remove = None
     import views.signup_view as _sv
 
     original_add, original_remove = _sv.add_match_role, _sv.remove_match_role
@@ -409,7 +407,22 @@ def demo():
             def get_member(self, uid):
                 return None
 
-        # Pre-team swap: queue entry replaced, no teams touched, roles swapped.
+        # Pre-team swap while the lobby wait is running: signup_active stays
+        # True until finalize_signup returns, so the gate must accept a full
+        # live queue — this is the real lobby-wait state (issue #249).
+        bot.signup_active = True
+        bot.queue = [
+            {"id": str(i), "name": f"p{i}"} for i in range(1, 11)
+        ]
+        ctx = _SubCtx()
+        asyncio.run(cog.substitute(ctx, "<@3>", "<@11>"))
+        assert [p["id"] for p in bot.queue[:3]] == ["1", "2", "11"], bot.queue[:3]
+        assert len(bot.queue) == 10 and bot.team1 == [] and bot.team2 == []
+        assert "lobby wait now tracks the new player" in ctx.sent[0], ctx.sent[0]
+        bot.signup_active = False
+
+        # Pre-team swap with a finalized signup (post-wait setup stage).
+        bot.queue = [{"id": "1", "name": "out"}, {"id": "2", "name": "keep"}]
         ctx = _SubCtx()
         asyncio.run(cog.substitute(ctx, "<@1>", "<@9>"))
         assert [p["id"] for p in bot.queue] == ["9", "2"], bot.queue
@@ -426,8 +439,9 @@ def demo():
         asyncio.run(cog.substitute(ctx, "<@5>", "<@9>"))
         assert "not in the current signup queue" in ctx.sent[0], ctx.sent[0]
 
-        # Filling phase (signup still active): refused.
+        # Filling phase (signup active, queue not full): refused.
         bot.signup_active = True
+        bot.queue = [{"id": "2", "name": "keep"}]
         ctx = _SubCtx()
         asyncio.run(cog.substitute(ctx, "<@2>", "<@9>"))
         assert "queue is full" in ctx.sent[0], ctx.sent[0]
@@ -446,6 +460,7 @@ def demo():
         bot.team1 = [{"id": "2", "name": "keep"}]
         bot.team2 = []
         bot.double_downs = {"2"}
+        bot.queue = [{"id": "1", "name": "out"}, {"id": "2", "name": "keep"}]
         ctx = _SubCtx()
         asyncio.run(cog.substitute(ctx, "<@2>", "<@9>"))
         assert bot.team1 == [{"id": "9", "name": "Sub"}], bot.team1

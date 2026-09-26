@@ -519,9 +519,15 @@ class MaintenanceCommands(BotCommands):
         Works from the moment the queue is full (lobby wait onwards);
         (Riot IDs containing spaces must use the @mention form.)
         """
-        finalized = (
-            not self.bot.signup_active
-            and self.bot.setup_generation == self.bot.match_setup_generation
+        # "Queue full onwards": either the pre-team setup (finalized signup:
+        # signup_active already flipped or the live cycle is in match setup)
+        # or an ongoing match. An active signup whose queue is not yet full
+        # (or a cancelled signup) never passes: signup_active stays True
+        # through the lobby wait, so a full live queue is what marks the
+        # wait window itself (issue #249).
+        in_setup = self.bot.setup_generation == self.bot.match_setup_generation
+        finalized = in_setup and (
+            not self.bot.signup_active or len(self.bot.queue) >= 10
         )
         if not (self.bot.match_ongoing or finalized):
             await ctx.send(
@@ -631,24 +637,30 @@ class MaintenanceCommands(BotCommands):
                 log.warning("Voice move failed: %s", e)
 
         side = "Attackers" if team is self.bot.team1 else "Defenders"
-        log.info(
-            "Substitute by %s: %s in for %s (%s)",
-            ctx.author,
-            in_pid,
-            out_pid,
-            side,
-        )
-        await ctx.send(
-            f"Substituted <@{in_pid}> in for <@{out_pid}>"
-            + (
-                f" ({side}). Report with `/report` as usual once the game is done."
-                if self.bot.match_ongoing
-                else (
-                    ". The lobby wait now tracks the new player; "
-                    "the match setup continues once everyone has joined."
-                )
+        if self.bot.match_ongoing:
+            log.info(
+                "Substitute by %s: %s in for %s (%s)",
+                ctx.author,
+                in_pid,
+                out_pid,
+                side,
             )
-        )
+            await ctx.send(
+                f"Substituted <@{in_pid}> in for <@{out_pid}> ({side}). "
+                "Report with `/report` as usual once the game is done."
+            )
+        else:
+            log.info(
+                "Pre-team substitute by %s: %s in for %s",
+                ctx.author,
+                in_pid,
+                out_pid,
+            )
+            await ctx.send(
+                f"Substituted <@{in_pid}> in for <@{out_pid}>. "
+                "The lobby wait now tracks the new player; "
+                "the match setup continues once everyone has joined."
+            )
 
     @commands.hybrid_command(
         name="fixmap",

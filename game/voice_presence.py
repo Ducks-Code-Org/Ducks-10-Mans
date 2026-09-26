@@ -185,12 +185,15 @@ async def wait_for_lobby(
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout_seconds
     next_poll = loop.time() + poll_seconds
-    next_tick = loop.time() + tick_seconds
+    # The countdown only starts ticking once the warning message exists;
+    # before that the sleep target must not collapse to 0.
+    next_tick = None
     countdown = None
     while True:
-        await asyncio.sleep(
-            max(min(next_poll, next_tick, deadline) - loop.time(), 0)
-        )
+        wake = min(next_poll, deadline)
+        if next_tick is not None:
+            wake = min(wake, next_tick)
+        await asyncio.sleep(max(wake - loop.time(), 0))
         now = loop.time()
         if is_cancelled():
             await _final_edit(countdown, "Match cancelled.")
@@ -211,25 +214,25 @@ async def wait_for_lobby(
                 log.warning("Lobby wait timed out with players still missing")
                 await _final_edit(countdown, "Match cancelled.")
                 return False
-        if countdown is not None:
-            if now >= next_tick:
-                next_tick = now + tick_seconds
-                # Live countdown (issue #248): m:ss remaining plus the
-                # still-missing players, re-rendered from the live queue
-                # each tick so substitutions are reflected; edits never
-                # re-ping.
-                await countdown.edit(
-                    content=_countdown_text(now, deadline, queue, guild)
-                )
-        elif deadline - now <= warning_seconds:
+        if countdown is None and next_tick is None and deadline - now <= warning_seconds:
             # Final warning: one message that pings the missing players and
-            # carries the live countdown from now until the deadline.
+            # carries the live countdown from now until the deadline. A send
+            # failure must never retry or double-send (issue #248): the tick
+            # schedule is parked past the deadline.
             try:
-                countdown = await send(
-                    _countdown_text(now, deadline, queue, guild)
-                )
+                countdown = await send(_countdown_text(now, deadline, queue, guild))
+                next_tick = now + tick_seconds
             except discord.HTTPException:
-                countdown = "failed"  # sent but untrackable: never send twice
+                next_tick = deadline + 1  # never again this wait
+        elif countdown is not None and next_tick is not None and now >= next_tick:
+            next_tick = now + tick_seconds
+            # Live countdown (issue #248): m:ss remaining plus the
+            # still-missing players, re-rendered from the live queue
+            # each tick so substitutions are reflected; edits never
+            # re-ping. An edit failure must not kill the wait.
+            await _final_edit(
+                countdown, _countdown_text(now, deadline, queue, guild)
+            )
 
 
 def _countdown_text(now, deadline, queue, guild) -> str:
@@ -250,7 +253,8 @@ def _countdown_text(now, deadline, queue, guild) -> str:
 
 
 async def _final_edit(message, text) -> None:
-    """Stop the countdown with its outcome; errors are never fatal."""
+    """Edit a countdown message; errors are never fatal (deleted message,
+    HTTP errors). Also used for the per-tick countdown re-render."""
     if message is None:
         return
     try:

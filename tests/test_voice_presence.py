@@ -71,7 +71,7 @@ class FakeGuild:
 
 
 class FakeNamedMember(FakeMember):
-    pass
+    """Explicit display-name member for the notice tests."""
 
 
 class FakeMessage:
@@ -320,9 +320,9 @@ def demo():
             )
         )
         warning = warning_sender.messages[1]
-        assert warning is warning_sender.messages[-2] or len(
-            warning_sender.messages
-        ) >= 2, "warning must be a single message, edited in place"
+        assert warning is not warning_sender.messages[0], (
+            "warning must be a distinct message, edited in place"
+        )
         warn_text = warning.content
         assert "⚠" not in warn_text and "⏰" not in warn_text, warn_text
         assert "<@1>" in warn_text and "<@2>" in warn_text, warn_text
@@ -451,6 +451,43 @@ def demo():
         assert all(
             m.edits == [] for m in early_sender.messages
         ), "no countdown edits may happen without a countdown message"
+
+        # Edit-failure resilience (issue #248): a countdown message whose
+        # edits fail (deleted message, HTTP errors) must not crash the wait
+        # or change the cancellation outcome.
+        boom_guild = FakeGuild([], [lobby])
+        boom_calls = []
+
+        async def boom_send(msg):
+            boom_calls.append(msg)
+            return FakeMessage(None, msg)
+
+        original_edit = FakeMessage.edit
+
+        async def boom_edit(self, **kwargs):
+            raise discord.HTTPException(
+                types.SimpleNamespace(status=404, reason="Not Found"),
+                "Unknown Message",
+            )
+
+        FakeMessage.edit = boom_edit
+        try:
+            assert not asyncio.run(
+                wait_for_lobby(
+                    boom_guild,
+                    [{"id": "1"}],
+                    boom_send,
+                    lambda: False,
+                    timeout_seconds=0.05,
+                    poll_seconds=0.01,
+                    tick_seconds=0.001,
+                    warning_seconds=0.03,
+                )
+            ), "the wait must still time out (cancel outcome intact)"
+        finally:
+            FakeMessage.edit = original_edit
+        assert len(boom_calls) == 2, boom_calls
+        assert "Still waiting" in boom_calls[1], "the warning itself sent once"
 
         # Case/whitespace-insensitive detection for all three channels.
         weird_lobby = FakeChannel(20, "  LOBBY ")
