@@ -88,6 +88,7 @@ async def cleanup_match_resources(bot, cancelled: bool = False):
 
         bot.match_not_reported = False
         bot.match_ongoing = False
+        bot.lobby_wait_active = False
         bot.queue.clear()
 
         # The channel/role these stamps belong to are gone; a later !signup

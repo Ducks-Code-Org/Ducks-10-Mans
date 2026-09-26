@@ -519,17 +519,15 @@ class MaintenanceCommands(BotCommands):
         Works from the moment the queue is full (lobby wait onwards);
         (Riot IDs containing spaces must use the @mention form.)
         """
-        # "Queue full onwards": either the pre-team setup (finalized signup:
-        # signup_active already flipped or the live cycle is in match setup)
-        # or an ongoing match. An active signup whose queue is not yet full
-        # (or a cancelled signup) never passes: signup_active stays True
-        # through the lobby wait, so a full live queue is what marks the
-        # wait window itself (issue #249).
-        in_setup = self.bot.setup_generation == self.bot.match_setup_generation
-        finalized = in_setup and (
-            not self.bot.signup_active or len(self.bot.queue) >= 10
+        # "Queue full onwards" (issue #249): the lobby wait, any later
+        # pre-team setup stage (voting/draft), or an ongoing match. The
+        # live-cycle check keeps a cancelled or superseded signup from
+        # passing even if its queue still looks full.
+        in_live_cycle = self.bot.setup_generation == self.bot.match_setup_generation
+        pre_team = in_live_cycle and (
+            self.bot.lobby_wait_active or not self.bot.signup_active
         )
-        if not (self.bot.match_ongoing or finalized):
+        if not (self.bot.match_ongoing or pre_team):
             await ctx.send(
                 "Substitutions work once the signup queue is full (lobby wait onwards) "
                 "or on a match whose teams are already decided.",
@@ -559,9 +557,7 @@ class MaintenanceCommands(BotCommands):
             if any(str(p["id"]) == out_pid for p in t):
                 team = t
                 break
-        if team is None and out_pid not in {
-            str(p["id"]) for p in self.bot.queue
-        }:
+        if team is None and out_pid not in {str(p["id"]) for p in self.bot.queue}:
             await ctx.send(
                 f"<@{out_pid}> is not in the current signup queue or on either team.",
                 ephemeral=True,
@@ -630,14 +626,17 @@ class MaintenanceCommands(BotCommands):
 
         await add_match_role(self.bot, ctx.guild, in_pid)
         await remove_match_role(self.bot, ctx.guild, out_pid)
+        # The team voice move only applies once teams exist. This matches
+        # the old gate (which refused non-ongoing matches outright), so the
+        # move is never skipped in a state that used to run it.
         if voice_presence_enabled() and ctx.guild and self.bot.match_ongoing:
             try:
                 await move_teams_to_voice(ctx.guild, self.bot.team1, self.bot.team2)
             except Exception as e:
-                log.warning("Voice move failed: %s", e)
+                log.error("Voice move after substitute failed: %s", e, exc_info=e)
 
-        side = "Attackers" if team is self.bot.team1 else "Defenders"
         if self.bot.match_ongoing:
+            side = "Attackers" if team is self.bot.team1 else "Defenders"
             log.info(
                 "Substitute by %s: %s in for %s (%s)",
                 ctx.author,
@@ -656,11 +655,15 @@ class MaintenanceCommands(BotCommands):
                 in_pid,
                 out_pid,
             )
-            await ctx.send(
-                f"Substituted <@{in_pid}> in for <@{out_pid}>. "
+            # Only claim the wait tracks the new player while it actually
+            # does; after the wait (voting/draft) the queue swap is enough.
+            note = (
                 "The lobby wait now tracks the new player; "
                 "the match setup continues once everyone has joined."
+                if self.bot.lobby_wait_active
+                else "The signup queue now includes the new player."
             )
+            await ctx.send(f"Substituted <@{in_pid}> in for <@{out_pid}>. " + note)
 
     @commands.hybrid_command(
         name="fixmap",

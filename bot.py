@@ -27,6 +27,9 @@ class CustomBot(commands.Bot):
         self.team1: list[dict] = []
         self.team2: list[dict] = []
         self.signup_active = False
+        # True while finalize_signup waits for everyone to join the lobby
+        # voice channel (issue #249: /substitute is allowed from here on).
+        self.lobby_wait_active = False
         self.current_signup_message = None
         self.current_teams_message = None
         self.queue: list[dict] = []
