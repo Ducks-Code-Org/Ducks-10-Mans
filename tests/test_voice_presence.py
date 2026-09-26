@@ -42,9 +42,10 @@ class FakeVoice:
 
 
 class FakeMember:
-    def __init__(self, uid, channel=None):
+    def __init__(self, uid, channel=None, display_name=None):
         self.id = uid
         self.voice = FakeVoice(channel) if channel else None
+        self.display_name = display_name or f"user{uid}"
 
 
 class FakeChannel:
@@ -69,6 +70,20 @@ class FakeGuild:
         return channel
 
 
+class FakeNamedMember(FakeMember):
+    pass
+
+
+class FakeMessage:
+    def __init__(self, send, content):
+        self.content = content
+        self.edits = []
+        self._send = send
+
+    async def edit(self, **kwargs):
+        self.edits.append(kwargs)
+
+
 def wait_for_lobby_with_joiner(guild, queue, send, joiner, **kwargs):
     """Run wait_for_lobby while `joiner` runs alongside it.
 
@@ -84,6 +99,26 @@ def wait_for_lobby_with_joiner(guild, queue, send, joiner, **kwargs):
         return await task, joiner_result
 
     return asyncio.run(run())
+
+
+class RecordingSender:
+    """Send seam that records messages; each send returns a FakeMessage.
+
+    The message-like return lets the countdown edit loop be observed
+    through this same seam (issue #248).
+    """
+
+    def __init__(self):
+        self.messages = []
+
+    async def __call__(self, content):
+        msg = FakeMessage(self, content)
+        self.messages.append(msg)
+        return msg
+
+    @property
+    def texts(self):
+        return [m.content for m in self.messages]
 
 
 class FakeMemberMovable(FakeMember):
@@ -151,7 +186,9 @@ def demo():
                 poll_seconds=0.01,
             )
         )
-        assert any("Waiting for everyone" in m for m in sent)
+        assert any(
+            "lobby voice channel" in m and "@2" in m for m in sent
+        )
 
         # Someone joins after a poll -> True.
         async def join_then_wait():
@@ -248,13 +285,64 @@ def demo():
             )
         )
         first = sent[0]
-        assert "please join" in first, "initial notice must instruct players to join"
+        assert (
+            "10 minutes to join or the match will be cancelled" in first
+        ), "initial notice must state the deadline (issue #247)"
         assert (
             "<@1>" not in first and "<@2>" not in first
         ), "initial notice must not ping missing players"
         assert any(
             "auto-cancelled in about" in m and "<@1>" in m for m in sent[1:]
         ), "final warning must ping missing players with a synced countdown"
+
+        # Notice names (issue #247): display names as plain text, lobby as
+        # a real channel mention, raw-id fallback for departed members.
+        named_guild = FakeGuild(
+            [FakeNamedMember(1, display_name="Ducky"), FakeNamedMember(2)],
+            [lobby],
+        )
+        notice_sender = RecordingSender()
+        assert not asyncio.run(
+            wait_for_lobby(
+                named_guild,
+                [{"id": "1"}, {"id": "2"}],
+                notice_sender,
+                lambda: False,
+                timeout_seconds=0.05,
+                poll_seconds=0.01,
+            )
+        )
+        notice = notice_sender.messages[0].content
+        assert "@Ducky" in notice and "@user2" in notice, notice
+        assert "<#1>" in notice, "lobby must be referenced as a channel mention"
+        assert "<@" not in notice.replace("<#1>", ""), notice
+        gone_guild = FakeGuild([], [lobby])
+        gone_sender = RecordingSender()
+        assert not asyncio.run(
+            wait_for_lobby(
+                gone_guild,
+                [{"id": "1"}],
+                gone_sender,
+                lambda: False,
+                timeout_seconds=0.05,
+                poll_seconds=0.01,
+            )
+        )
+        assert "@1" in gone_sender.messages[0].content, "raw-id fallback failed"
+        # No lobby channel -> generic "a voice channel" wording.
+        nolobby_guild = FakeGuild([], [other])
+        nolobby_sender = RecordingSender()
+        assert not asyncio.run(
+            wait_for_lobby(
+                nolobby_guild,
+                [{"id": "1"}],
+                nolobby_sender,
+                lambda: False,
+                timeout_seconds=0.05,
+                poll_seconds=0.01,
+            )
+        )
+        assert "a **voice channel**" in nolobby_sender.messages[0].content
 
         # Case/whitespace-insensitive detection for all three channels.
         weird_lobby = FakeChannel(20, "  LOBBY ")

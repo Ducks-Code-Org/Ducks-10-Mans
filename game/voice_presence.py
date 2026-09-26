@@ -87,6 +87,20 @@ def _voice_channel_of(guild, player_id: int):
         return _UNKNOWN
 
 
+def _plain_name(guild, player_id) -> str:
+    """Plain-text @name for a notice: display name, or raw id if gone.
+
+    Deliberately not a mention — the notice must never ping anyone; the
+    final warning is the only nudge (issue #247).
+    """
+    try:
+        member = guild.get_member(int(player_id))
+        name = getattr(member, "display_name", None)
+    except Exception:
+        name = None
+    return f"@{name}" if isinstance(name, str) and name else f"@{player_id}"
+
+
 def missing_lobby_players(guild, queue) -> list[str]:
     """Queued player ids not connected to the lobby voice channel.
 
@@ -146,19 +160,17 @@ async def wait_for_lobby(
         timeout_seconds,
         len(missing),
     )
-    room = (
-        "**#lobby**"
-        if _find_channel(channels, LOBBY_CHANNEL_NAME) is not None
-        else "a **voice channel**"
-    )
+    lobby = _find_channel(channels, LOBBY_CHANNEL_NAME)
+    room = f"<#{lobby.id}>" if lobby is not None else "a **voice channel**"
     # List who is missing without pinging them (issue #233); the pinged
     # nudge only comes with the final warning near the timeout.
-    who = ", ".join(f"<@{pid}>" for pid in missing).replace("<@", "<@\u200b")
+    who = ", ".join(_plain_name(guild, pid) for pid in missing)
+    minutes = LOBBY_WAIT_SECONDS // 60
     try:
         await send(
-            f"Waiting for everyone to join {room} before match setup: "
+            f"Waiting for these players to join the **lobby voice channel** {room}: "
             + who
-            + " — please join! The match is cancelled if not everyone joins."
+            + f" — you have {minutes} minutes to join or the match will be cancelled."
         )
     except discord.HTTPException:
         pass
