@@ -7,6 +7,7 @@ import discord
 from discord.ui import Select
 
 from database import users
+from game.ranks import display_rank_for
 from game.stats_helper import DEFAULT_MMR
 from tracker_links import display_line_for, display_name_for
 from game.voice_presence import move_teams_to_voice, voice_presence_enabled
@@ -434,22 +435,16 @@ class CaptainsDraftingView(discord.ui.View):
         attackers = []
         for p in self.bot.team1:
             ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = (
-                getattr(self.bot, "player_mmr", {})
-                .get(str(p["id"]), {})
-                .get("mmr", DEFAULT_MMR)
+            attackers.append(
+                f"{display_line_for(ud, guild=self.ctx.guild, discord_id=str(p['id']))} ({self._player_rank(p)})"
             )
-            attackers.append(f"{display_line_for(ud)} (MMR:{mmr})")
 
         defenders = []
         for p in self.bot.team2:
             ud = users.find_one({"discord_id": str(p["id"])})
-            mmr = (
-                getattr(self.bot, "player_mmr", {})
-                .get(str(p["id"]), {})
-                .get("mmr", DEFAULT_MMR)
+            defenders.append(
+                f"{display_line_for(ud, guild=self.ctx.guild, discord_id=str(p['id']))} ({self._player_rank(p)})"
             )
-            defenders.append(f"{display_line_for(ud)} (MMR:{mmr})")
 
         teams_embed.add_field(
             name="**Attackers:**", value="\n".join(attackers) or "—", inline=False
@@ -463,8 +458,28 @@ class CaptainsDraftingView(discord.ui.View):
             [p.get("name") for p in self.bot.team1],
             [p.get("name") for p in self.bot.team2],
         )
+
+        # Re-check right before the flag writes: the message deletions above
+        # are awaits, so a !cancel (or a second /signup) may have superseded
+        # this cycle since the first check. Without this the cancelled cycle
+        # resurrects match_not_reported/match_ongoing over the new state and
+        # deadlocks /signup and /report (issue #218) — the same re-check
+        # finalize_match_setup does on the Balanced path.
+        if self.is_setup_cancelled():
+            log.info(
+                "Draft finalized after the setup was superseded; skipping flag writes."
+            )
+            return
+
+        # Flip the match flags BEFORE announcing teams (issue #235): the
+        # powerup notice opens its countdown right away, and the slow voice
+        # moves below must not leave /doubledown answering "no match is
+        # running" while that notice is already live.
+        self.bot.match_ongoing = True
+        self.bot.match_not_reported = True
+
         self.bot.current_teams_message = await self.ctx.send(embed=teams_embed)
-        await self.ctx.send("Start match and use `!report` to finalize results.")
+        await self.ctx.send("Start match and use `/report` to finalize results.")
 
         from game.duck_coins import on_teams_announced, open_map_override_grace
 
@@ -476,8 +491,6 @@ class CaptainsDraftingView(discord.ui.View):
         if voice_presence_enabled() and self.ctx.guild:
             await move_teams_to_voice(self.ctx.guild, self.bot.team1, self.bot.team2)
 
-        self.bot.match_ongoing = True
-        self.bot.match_not_reported = True
         if self.bot.match_channel:
             try:
                 await self.bot.match_channel.edit(
@@ -720,8 +733,18 @@ class CaptainsDraftingView(discord.ui.View):
         """Whether this setup cycle was cancelled (e.g. by !cancel)."""
         return self.bot.setup_generation != self.setup_generation
 
-    def _player_mmr(self, player) -> int:
-        return self.bot.player_mmr.get(str(player["id"]), {}).get("mmr", DEFAULT_MMR)
+    def _player_rank(self, player, *, mention: bool = True) -> str:
+        """Rank-role mention for display, or plaintext 'Unranked' (issue #212)."""
+        stats = self.bot.player_mmr.get(str(player["id"]), {})
+        matches = stats.get("matches_played", 0)
+        if not matches:
+            matches = stats.get("wins", 0) + stats.get("losses", 0)
+        return display_rank_for(
+            self.ctx.guild,
+            stats.get("mmr", DEFAULT_MMR),
+            matches_played=matches,
+            mention=mention,
+        )
 
     async def send_current_draft_view(self):
         if self.draft_finished:
@@ -757,7 +780,8 @@ class CaptainsDraftingView(discord.ui.View):
                 label = display_name_for(
                     user_data, guild=self.ctx.guild, discord_id=str(player["id"])
                 )
-            label = f"{label} (MMR: {self._player_mmr(player)})"
+            # Select labels are plain text: a mention would show as <@&id>.
+            label = f"{label} ({self._player_rank(player, mention=False)})"
             options.append(discord.SelectOption(label=label, value=str(player["id"])))
         self.player_select.options = options
 
@@ -766,9 +790,8 @@ class CaptainsDraftingView(discord.ui.View):
         remaining_players_lines = []
         for player in self.remaining_players:
             user_data = users.find_one({"discord_id": str(player["id"])})
-            mmr = self._player_mmr(player)
             remaining_players_lines.append(
-                f"{display_line_for(user_data, guild=self.ctx.guild, discord_id=str(player['id']))} (MMR: {mmr})"
+                f"{display_line_for(user_data, guild=self.ctx.guild, discord_id=str(player['id']))} ({self._player_rank(player)})"
             )
 
         if remaining_players_lines:
@@ -787,9 +810,8 @@ class CaptainsDraftingView(discord.ui.View):
             out = []
             for p in team:
                 ud = users.find_one({"discord_id": str(p["id"])})
-                mmr = self._player_mmr(p)
                 out.append(
-                    f"{display_line_for(ud, guild=self.ctx.guild, discord_id=str(p['id']))} (MMR: {mmr})"
+                    f"{display_line_for(ud, guild=self.ctx.guild, discord_id=str(p['id']))} ({self._player_rank(p)})"
                 )
             return "\n".join(out) if out else "No players yet"
 

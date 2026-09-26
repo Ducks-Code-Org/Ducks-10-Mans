@@ -21,6 +21,9 @@ SETMAP_BASE_COST = 3
 # After teams finalize (match_ongoing flips True), !setmap stays usable this
 # long — a grace window for last-second map swaps in both modes.
 SETMAP_GRACE_SECONDS = 120
+# Each successful !setmap override extends the powerup window by this much so
+# bidding wars get time to play out (issue #202).
+SETMAP_OVERRIDE_EXTENSION_SECONDS = 30
 # The match-channel powerup notice counts this window down live.
 POWERUP_TICK_SECONDS = 15
 
@@ -41,8 +44,8 @@ _ESCROW_DOC_ID = "open_bets"
 
 
 def persist_escrow(bot) -> None:
-    """Mirror in-memory coin state (bet session, doubledowns, map-override
-    escalation chain) into Mongo.
+    """Mirror in-memory coin state (bet session, doubledowns, standing
+    map-override wager) into Mongo.
 
     Best-effort: persistence failures are logged and swallowed so a transient
     DB hiccup can never break an in-progress bet, doubledown, or override.
@@ -125,7 +128,8 @@ def recover_orphaned_escrow(bot) -> None:
     for pid in data.get("double_downs") or []:
         add_coins(pid, DOUBLEDOWN_COST)
         dd_refunded += DOUBLEDOWN_COST
-    # Refund the full map-override escalation chain to each payer (issue #195).
+    # Refund the journaled standing map-override wager to its payer (issue
+    # #195; with the live outbid refund from issue #205 it holds one wager).
     overrides_refunded = 0
     for entry in data.get("map_overrides") or []:
         try:
@@ -217,7 +221,7 @@ def clear_season_coin_state(bot) -> None:
     balances, because in-memory state would otherwise leak old-season coins
     into the new season: escrowed bet coins would pay out at the next
     !report, stale doubledowns would still apply, and the map-override
-    escalation would carry over. Open bets are dropped, not refunded, since
+    wager would carry over. Open bets are dropped, not refunded, since
     coins reset anyway; the escrow journal is wiped too so a subsequent
     restart never refunds coins that a reset already voided.
     """
@@ -275,6 +279,43 @@ def _in_grace_window(bot) -> bool:
     return deadline is not None and time.monotonic() <= deadline
 
 
+def _extend_grace_window(bot) -> None:
+    """Add the override extension to the powerup deadline (issue #202).
+
+    Only meaningful while the grace window is live (match ongoing with an
+    open deadline); the powerup countdown task re-reads the deadline every
+    tick, so the next tick shows the extended time.
+    """
+    deadline = getattr(bot, "map_override_deadline", None)
+    if bot.match_ongoing and deadline is not None:
+        bot.map_override_deadline = deadline + SETMAP_OVERRIDE_EXTENSION_SECONDS
+        log.info(
+            "!setmap override extended the powerup window by %ss",
+            SETMAP_OVERRIDE_EXTENSION_SECONDS,
+        )
+
+
+async def _refresh_powerup_notice(bot) -> None:
+    """Immediately re-render the match-channel powerup countdown, if posted."""
+    session = getattr(bot, "bet_session", None)
+    message = session.get("powerup_message") if session else None
+    if message is None:
+        return
+    deadline = getattr(bot, "map_override_deadline", None)
+    if deadline is None:
+        return
+    remaining = max(0, int(deadline - time.monotonic()))
+    try:
+        await message.edit(content=_powerups_announcement(bot, remaining))
+    except (discord.NotFound, discord.HTTPException, AttributeError):
+        pass
+
+
+def _powerup_countdown_ticks() -> int:
+    """Base tick budget for the powerup countdown loop."""
+    return SETMAP_GRACE_SECONDS // POWERUP_TICK_SECONDS
+
+
 async def _refresh_teams_embed(bot, new_map: str) -> None:
     """Retitle the posted teams embed after a grace-window map override."""
     message = getattr(bot, "current_teams_message", None)
@@ -330,25 +371,32 @@ def _powerups_announcement(bot, remaining: int) -> str:
         header = f"⚔️ **Powerups enabled for {_fmt_clock(remaining)}**"
     else:
         header = (
-            "⌛ **Powerup window closed** — `!doubledown` and `!setmap` are locked."
+            "⌛ **Powerup window closed** — `/doubledown` and `/setmap` are locked."
         )
     return (
         f"{header}\n"
-        f"`!doubledown` costs {DOUBLEDOWN_COST} {e} to double your MMR change for this match.\n"
-        f"Override the chosen map with `!setmap <map> [amount]` — wager {SETMAP_BASE_COST}+ {e} "
+        f"`/doubledown` costs {DOUBLEDOWN_COST} {e} to double your MMR change for this match.\n"
+        f"Override the chosen map with `/setmap <map> [amount]` — wager {SETMAP_BASE_COST}+ {e} "
         f"(outbid the last override) to swap the map."
     )
 
 
 def _team_lines(bot, team) -> list[str]:
-    """One display line per player: tracker link + MMR."""
+    """One display line per player: tracker link + rank mention (issue #212)."""
+    from game.ranks import display_rank_for
+
     lines = []
     for p in team:
         ud = users.find_one({"discord_id": str(p["id"])})
-        mmr = (
-            getattr(bot, "player_mmr", {}).get(str(p["id"]), {}).get("mmr", DEFAULT_MMR)
+        stats = getattr(bot, "player_mmr", {}).get(str(p["id"]), {})
+        matches = stats.get("matches_played", 0)
+        if not matches:
+            matches = stats.get("wins", 0) + stats.get("losses", 0)
+        guild = getattr(getattr(bot, "match_channel", None), "guild", None)
+        rank = display_rank_for(
+            guild, stats.get("mmr", DEFAULT_MMR), matches_played=matches
         )
-        lines.append(f"{display_line_for(ud)} (MMR:{mmr})")
+        lines.append(f"{display_line_for(ud)} ({rank})")
     return lines
 
 
@@ -361,8 +409,8 @@ def _betting_embed(bot, session, remaining: int) -> discord.Embed:
 
     if remaining:
         opener = (
-            f"{e} **Betting is open for the match below!** Bet with `!bet attackers <amount>` "
-            f"or `!bet defenders <amount>` (min 1). Players in this match cannot bet."
+            f"{e} **Betting is open for the match below!** Bet with `/bet attackers <amount>` "
+            f"or `/bet defenders <amount>` (min 1). Players in this match cannot bet."
         )
     else:
         opener = f"{e} **Betting is closed.**"
@@ -523,7 +571,17 @@ async def _powerup_countdown(bot, session) -> None:
     if message is None:
         return
     try:
-        for tick in range(1, SETMAP_GRACE_SECONDS // POWERUP_TICK_SECONDS + 1):
+        # Fixed iteration budget: base window plus headroom for the extra
+        # 30-second extensions successful !setmap overrides grant (issue
+        # #202). Remaining time always comes from the live deadline, so the
+        # display follows extensions; the budget only bounds the loop.
+        # ponytail: 20 overrides within one window is generous; bump the
+        # headroom if bidding wars ever need more.
+        max_ticks = (
+            _powerup_countdown_ticks()
+            + (SETMAP_OVERRIDE_EXTENSION_SECONDS // POWERUP_TICK_SECONDS) * 20
+        )
+        for tick in range(1, max_ticks + 1):
             await asyncio.sleep(POWERUP_TICK_SECONDS)
             if bot.bet_session is not session:
                 return
@@ -556,7 +614,7 @@ def place_bet(bot, user_id: str, side: str, amount: int) -> str:
         return "No betting window is open right now."
     side = (side or "").lower()
     if side not in session["bets"]:
-        return "Pick a side: `!bet attackers <amount>` or `!bet defenders <amount>`."
+        return "Pick a side: `/bet attackers <amount>` or `/bet defenders <amount>`."
     if str(user_id) in _match_players(bot):
         return "You can't bet on a match you're playing in."
     if amount < 1:
@@ -605,11 +663,11 @@ def refund_open_bets(bot) -> None:
 def refund_match_coins(bot) -> int:
     """Refund EVERY coin spent on the current match, in-memory only.
 
-    Covers all three sinks: escrowed bets, doubledown purchases, and map
-    override wagers. Called when a match is cancelled — since the match
-    never happens, none of that coin should be lost. Doubledown refunds are
-    what the player paid (DOUBLEDOWN_COST); map overrides refund the full
-    escalation chain so the coins trace back to who paid what.
+    Covers all three sinks: escrowed bets, doubledown purchases, and the
+    standing map-override wager. Called when a match is cancelled — since
+    the match never happens, none of that coin should be lost. Doubledown
+    refunds are what the player paid (DOUBLEDOWN_COST); with the live outbid
+    refund (issue #205), the override chain holds only the current wager.
 
     Returns the total number of coins refunded (0 when nothing to refund).
     """
@@ -631,9 +689,9 @@ def refund_match_coins(bot) -> int:
         total += DOUBLEDOWN_COST
     bot.double_downs = set()
 
-    # 3) Map override wagers: refund every step of the escalation chain to
-    # the player who paid it. Losing an outbid wager is NOT refunded here
-    # (that's the point of an outbid); only a cancelled match returns coins.
+    # 3) The standing map-override wager (issue #205): since outbid wagers
+    # are refunded live at override time, the chain holds at most one entry —
+    # the current holder's wager — which a cancelled match must return.
     for entry in getattr(bot, "map_override_chain", []):
         pid = entry.get("payer")
         amount = int(entry.get("amount", 0))
@@ -855,18 +913,41 @@ async def setmap_override(bot, user_id: str, map_name: str, amount: int = None) 
     if balance < cost:
         return insufficient(bot, balance, cost)
     add_coins(user_id, -cost)
+    # Issue #205: the player whose wager we just beat gets their coins back —
+    # being outbid should never cost a player their wager. The previous
+    # standing wager is the chain's last entry (the repeat-override gate
+    # guarantees it belongs to someone else).
+    outbid_entry = bot.map_override_chain[-1] if bot.map_override_chain else None
     bot.selected_map = canonical
     bot.map_override_last = cost
     bot.map_override_last_by = str(user_id)
-    # Journal each step of the escalation chain so a cancel or crash can
-    # refund every payer (issue #195). Outbid wagers stay journaled too:
-    # they are only refunded on a cancelled match, never when simply outbid.
-    bot.map_override_chain.append({"payer": str(user_id), "amount": cost})
+    # Journal the CURRENT standing wager only (issue #205): the outbid wager
+    # is refunded immediately, so a later cancel/crash must not refund it
+    # again. The chain always holds exactly one live wager.
+    bot.map_override_chain = [{"payer": str(user_id), "amount": cost}]
+    if outbid_entry:
+        outbid_pid = str(outbid_entry.get("payer"))
+        outbid_amount = int(outbid_entry.get("amount", 0))
+        if outbid_pid and outbid_amount:
+            add_coins(outbid_pid, outbid_amount)
+            log.info("Refunded %s coins to outbid player %s", outbid_amount, outbid_pid)
     persist_escrow(bot)
     e = duck_emote(bot)
     log.info("%s paid %s coins to override the map to %s", user_id, cost, canonical)
+    refund_part = (
+        f" {outbid_amount} {e} refunded to <@{outbid_pid}>."
+        if outbid_entry and outbid_amount
+        else ""
+    )
     if _in_grace_window(bot):
+        # Issue #202: each override buys the bidding war more time — extend
+        # the powerup deadline and re-render the countdown right away.
+        _extend_grace_window(bot)
         # The teams/match summary embed is already posted; retitle it so it
         # reflects the overridden map (issue #195).
         await _refresh_teams_embed(bot, canonical)
-    return f"<@{user_id}> paid {cost} {e} — the map is now **{canonical}**!"
+        await _refresh_powerup_notice(bot)
+    return (
+        f"<@{user_id}> paid {cost} {e} — the map is now **{canonical}**!"
+        f"{refund_part}"
+    )

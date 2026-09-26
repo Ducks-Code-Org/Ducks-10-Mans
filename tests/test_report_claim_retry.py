@@ -35,6 +35,7 @@ sys.modules["database"] = _database_stub
 
 _maps_stub = types.ModuleType("services.maps_service")
 _maps_stub.get_standard_maps = lambda: ["Ascent", "Bind"]
+_maps_stub.get_competitive_maps = lambda: ["Ascent", "Bind"]
 sys.modules["services.maps_service"] = _maps_stub
 
 
@@ -53,23 +54,59 @@ class _FakeEmbed:
 
 _discord_stub = types.ModuleType("discord")
 _discord_stub.Embed = _FakeEmbed
-_discord_stub.Color = types.SimpleNamespace(green=lambda: None, gold=lambda: None)
-_discord_stub.utils = types.SimpleNamespace(get=lambda *a, **k: None)
-_discord_stub.NotFound = type("NotFound", (Exception,), {})
+_discord_stub.Color = types.SimpleNamespace(
+    green=lambda: None, gold=lambda: None, yellow=lambda: None
+)
+_discord_stub.Colour = types.SimpleNamespace(from_str=lambda css: css)
+
+
+def _fake_utils_get(iterable=None, **kw):
+    wanted = kw.get("name")
+    if iterable is None or wanted is None:
+        return None
+    for item in iterable:
+        if getattr(item, "name", None) == wanted:
+            return item
+    return None
+
+
+_discord_stub.utils = types.SimpleNamespace(get=_fake_utils_get)
+# Mirror discord.py: NotFound/Forbidden subclass HTTPException, so callers
+# that catch HTTPException also catch them.
 _discord_stub.HTTPException = type("HTTPException", (Exception,), {})
-_discord_stub.Forbidden = type("Forbidden", (Exception,), {})
+_discord_stub.NotFound = type("NotFound", (_discord_stub.HTTPException,), {})
+_discord_stub.Forbidden = type("Forbidden", (_discord_stub.HTTPException,), {})
 _discord_stub.Guild = type("Guild", (), {})
 _discord_stub.Role = type("Role", (), {})
 _discord_stub.Member = type("Member", (), {})
+_discord_stub.Interaction = type("Interaction", (), {})
+_discord_stub.ui = types.SimpleNamespace(
+    View=type("View", (), {"__init__": lambda self, **kw: None}),
+    Button=type("Button", (), {}),
+    Select=type("Select", (), {}),
+)
+_discord_stub.PermissionOverwrite = type(
+    "PermissionOverwrite",
+    (),
+    {"__init__": lambda self, **kw: None},
+)
+sys.modules["discord.ui"] = _discord_stub.ui
 _discord_stub.ext = types.SimpleNamespace()
 _discord_stub.ext.commands = types.SimpleNamespace(
     command=lambda *a, **k: (lambda f: f),
+    hybrid_command=lambda *a, **k: (lambda f: f),
     has_permissions=lambda **k: (lambda f: f),
     Cog=type("Cog", (), {"__init_subclass__": classmethod(lambda cls, **kw: None)}),
 )
 sys.modules["discord"] = _discord_stub
 sys.modules["discord.ext"] = _discord_stub.ext
 sys.modules["discord.ext.commands"] = _discord_stub.ext.commands
+_app_stub = types.SimpleNamespace(
+    describe=lambda **k: (lambda f: f),
+    Attachment=object,
+)
+_discord_stub.app_commands = _app_stub
+sys.modules["discord.app_commands"] = _app_stub
 
 import commands.report as report_mod  # noqa: E402
 from commands.report import ReportCommand  # noqa: E402
@@ -110,6 +147,45 @@ class FakeCtx:
 
     async def send(self, content=None, **kw):
         self.sent.append(content)
+
+
+class FakeRole:
+    def __init__(self, name, rid):
+        self.name = name
+        self.id = rid
+        self.mention = f"<@&{rid}>"
+
+
+class FakeGuild:
+    """Guild with the rank roles the summary should mention by name."""
+
+    def __init__(self):
+        self.id = 4242
+        self.name = "test-guild"
+        self.text_channels = []
+        self.roles = [
+            FakeRole(name, 1000 + i)
+            for i, name in enumerate(
+                ["Wood Rank", "Stone Rank", "Iron Rank", "Gold Rank", "Season-1"]
+            )
+        ]
+
+    def get_member(self, uid):
+        return None
+
+    async def fetch_member(self, uid):
+        # Mirror production: a member not in the guild raises NotFound, which
+        # grant_season_roles catches and skips — irrelevant to the summary
+        # embed under test.
+        raise _discord_stub.NotFound()
+
+    def get_channel(self, cid):
+        return None
+
+    async def create_role(self, name, **kwargs):
+        role = FakeRole(name, 9000 + len(self.roles))
+        self.roles.append(role)
+        return role
 
 
 def make_reporter(bot, *, fetch_result="raise", data_result=None):
@@ -402,6 +478,397 @@ def demo():
 
     asyncio.run(_run_signup_cleanup())
 
+    # --- Stale cleanup must also drop the stale signup message and view ----
+    # A prior signup's message/view outlive their deleted match channel:
+    # buttons that still answer clicks there produce 10003 Unknown Channel
+    # followups, and the notification failure then aborted match setup
+    # (issue #216). Cleanup must delete the stale message and stop the view.
+    class _DeletedMessage:
+        def __init__(self):
+            self.deleted = False
+
+        async def delete(self):
+            self.deleted = True
+
+    class _FakeStaleView:
+        def __init__(self):
+            self.cleaned = False
+
+        def cleanup(self):
+            self.cleaned = True
+
+    async def _run_stale_signup_message_cleanup():
+        bot3 = _FakeSignupBot()
+        old_message = _DeletedMessage()
+        old_view = _FakeStaleView()
+        bot3.match_channel = _DeletedChannel("match-0001")
+        bot3.match_role = _DeletedRole("match-0001")
+        bot3.current_signup_message = old_message
+        bot3.signup_view = old_view
+
+        await _report_mod.cleanup_match_resources(bot3, cancelled=True)
+
+        assert old_message.deleted, (
+            "the stale signup message must be deleted with the stale match "
+            "channel, or its live buttons keep answering clicks against a "
+            "deleted channel (10003 Unknown Channel)"
+        )
+        assert bot3.current_signup_message is None
+        assert old_view.cleaned, "the stale signup view's tasks must be stopped"
+        assert bot3.signup_view is None
+
+    asyncio.run(_run_stale_signup_message_cleanup())
+
+    # --- A failed signup notification must never strand a full queue -------
+    # Issue #216: the "added to the queue" followup raised (10003 Unknown
+    # Channel) and aborted finalize, so a 10/10 queue never reached match
+    # setup. The notification is best-effort; the signup pipeline continues.
+    class _NotifyFailBot:
+        def __init__(self):
+            self.setup_generation = 1
+            self.queue = [{"id": str(i), "name": f"p{i}"} for i in range(9)]
+            self.player_mmr = {}
+            self.player_names = {}
+            self.match_name = "match-0001"
+            self.current_signup_message = types.SimpleNamespace(
+                edit=lambda **kw: asyncio.sleep(0)
+            )
+            self.team1 = []
+            self.team2 = []
+            self.match_channel = types.SimpleNamespace(
+                send=lambda *a, **kw: asyncio.sleep(0)
+            )
+            self.match_ongoing = False
+
+        def ensure_player_mmr(self, *a, **k):
+            pass
+
+    class _RaisingNotify:
+        def __init__(self):
+            self.failed = 0
+
+        async def __call__(self, msg):
+            self.failed += 1
+            raise _discord_stub.HTTPException(
+                "400 Bad Request (10003): Unknown Channel"
+            )
+
+    async def _run_notify_failure_finalize():
+        from views.signup_view import SignupView
+
+        bot4 = _NotifyFailBot()
+        ctx = types.SimpleNamespace(
+            guild=None,
+            channel=types.SimpleNamespace(send=lambda *a, **kw: asyncio.sleep(0)),
+        )
+        view = SignupView.__new__(SignupView)
+        view.ctx = ctx
+        view.bot = bot4
+        view.setup_generation = bot4.setup_generation
+        view.last_activity_time = 0
+        view.sign_up_button = types.SimpleNamespace(label="")
+        view.children = []
+        # finalize_signup is the observable "match setup started" marker.
+        finalized = []
+
+        async def _fake_finalize(channel):
+            finalized.append(channel)
+
+        view.finalize_signup = _fake_finalize
+
+        notify = _RaisingNotify()
+        result = await view.signup_player(
+            "9",
+            "p9",
+            notify=notify,
+            channel=ctx.channel,
+            verified_user={"discord_id": "9", "name": "p9", "tag": "t"},
+        )
+
+        assert result is True, "the signup must still succeed"
+        assert len(bot4.queue) == 10, "the player must still be queued"
+        assert notify.failed == 1, "the failed notification must have run"
+        assert finalized, "a failed notification must not abort the queue-full handoff"
+
+    asyncio.run(_run_notify_failure_finalize())
+
+    # --- A cancel during Riot verification must not confirm the signup ----
+    # Issue #236: signup_player checked the cancellation gate only BEFORE
+    # the (multi-second) Riot verification await, so a !cancel landing
+    # during it still appended the player to the cleared queue and replied
+    # "added to the queue!" for a dead signup. The gate must run again
+    # after the await; the confirmation only fires for a live signup.
+    async def _run_cancel_during_verification():
+        from views.signup_view import SignupView
+
+        class _CancelDuringVerifyBot:
+            def __init__(self):
+                self.setup_generation = 1
+                self.queue = []
+                self.player_mmr = {}
+                self.player_names = {}
+                self.match_name = "match-0001"
+                self.current_signup_message = types.SimpleNamespace(
+                    edit=lambda **kw: asyncio.sleep(0)
+                )
+                self.team1 = []
+                self.team2 = []
+                self.match_channel = types.SimpleNamespace(
+                    send=lambda *a, **kw: asyncio.sleep(0)
+                )
+
+        bot5 = _CancelDuringVerifyBot()
+        ctx = types.SimpleNamespace(guild=None)
+        view = SignupView.__new__(SignupView)
+        view.ctx = ctx
+        view.bot = bot5
+        view.setup_generation = 1
+        view.last_activity_time = 0
+        view.sign_up_button = types.SimpleNamespace(label="")
+        view.children = []
+
+        sent = []
+
+        async def notify(msg):
+            sent.append(msg)
+
+        async def slow_verify(session, name, tag):
+            # The !cancel lands while the Riot check is in flight.
+            bot5.setup_generation = 2
+            return (True, "")
+
+        import views.signup_view as sv_mod
+
+        orig_verify = sv_mod.verify_riot_account_async
+        orig_users = sv_mod.users
+        sv_mod.verify_riot_account_async = slow_verify
+        sv_mod.users = types.SimpleNamespace(
+            find_one=lambda *a, **k: {
+                "discord_id": "7",
+                "name": "p7",
+                "tag": "t",
+            }
+        )
+        try:
+            result = await view.signup_player(
+                "7",
+                "p7",
+                notify=notify,
+                verified_user=None,
+                channel=None,
+            )
+        finally:
+            sv_mod.verify_riot_account_async = orig_verify
+            sv_mod.users = orig_users
+
+        assert result is False, "a cancelled signup must not report success"
+        assert bot5.queue == [], "a cancelled signup must not append to the queue"
+        assert any("cancelled" in m for m in sent), sent
+
+    asyncio.run(_run_cancel_during_verification())
+
+    # --- A cancel during the post-append awaits must not confirm ----------
+    # Issue #236 (residual window): the queue append itself is not the last
+    # await. A !cancel landing during the match-role grant clears the queue
+    # and nulls the view's bot (cancel_signup.cleanup()); the embed refresh
+    # is awaited too. Each await after the append must re-check and never
+    # confirm an add that did not survive.
+    async def _run_cancel_after_append():
+        from views.signup_view import SignupView
+
+        class _PostAppendBot:
+            def __init__(self, edit=None):
+                self.setup_generation = 1
+                self.queue = []
+                self.player_mmr = {}
+                self.player_names = {}
+                self.match_name = "match-0001"
+                self.team1 = []
+                self.team2 = []
+                self.match_role = object()
+                self.current_signup_message = types.SimpleNamespace(
+                    edit=edit or (lambda **kw: asyncio.sleep(0))
+                )
+                self.match_channel = types.SimpleNamespace(
+                    send=lambda *a, **kw: asyncio.sleep(0)
+                )
+
+        def _make_view(bot):
+            view = SignupView.__new__(SignupView)
+            # A guild whose get_member resolves, so get_signup_embed can list
+            # the queued player without falling into the NotFound fallback.
+            view.ctx = types.SimpleNamespace(
+                guild=types.SimpleNamespace(
+                    get_member=lambda _mid: types.SimpleNamespace(display_name="p")
+                )
+            )
+            view.bot = bot
+            view.setup_generation = 1
+            view.last_activity_time = 0
+            view.sign_up_button = types.SimpleNamespace(label="")
+            view.children = []
+            return view
+
+        async def notify(msg):
+            sent.append(msg)
+
+        # (a) cancel during the match-role grant: the real cancel calls
+        # cleanup(), which nulls view.bot and bumps the generation. The grant
+        # resolves the member through the guild now (issue #234), so the
+        # cancel fires from the resolved member's add_roles.
+        def _make_cancel_guild(view, bot):
+            class _CancelDuringRoleGrantMember:
+                roles = []
+
+                async def add_roles(self, role):
+                    bot.setup_generation += 1
+                    bot.queue = []
+                    view.bot = None  # cleanup() nulls it
+
+            class _Guild:
+                def get_member(self, _uid):
+                    return _CancelDuringRoleGrantMember()
+
+            return _Guild()
+
+        bot6 = _PostAppendBot()
+        view = _make_view(bot6)
+        sent = []
+        result = await view.signup_player(
+            "8",
+            "p8",
+            guild=_make_cancel_guild(view, bot6),
+            notify=notify,
+            verified_user={"discord_id": "8", "name": "p8", "tag": "t"},
+        )
+        assert result is False, "an add that did not survive must report failure"
+        assert bot6.queue == [], "a cancelled signup must not keep the player queued"
+        assert not any("added to the queue" in m for m in sent), sent
+        assert any("cancelled" in m for m in sent), sent
+
+        # (b) cancel during the signup embed refresh (the last await before
+        # the confirmation): no member, so the first post-append await is the
+        # edit itself.
+        class _CancelOnEditBot(_PostAppendBot):
+            def __init__(self):
+                super().__init__(edit=self._cancel_on_edit)
+
+            async def _cancel_on_edit(self, **kw):
+                self.setup_generation += 1
+                self.queue = []
+
+        bot7 = _CancelOnEditBot()
+        view = _make_view(bot7)
+        sent = []
+        result = await view.signup_player(
+            "9",
+            "p9",
+            notify=notify,
+            verified_user={"discord_id": "9", "name": "p9", "tag": "t"},
+        )
+        assert result is False, "a cancelled embed refresh must report failure"
+        assert bot7.queue == [], "a cancelled signup must not keep the player queued"
+        assert not any("added to the queue" in m for m in sent), sent
+        assert any("cancelled" in m for m in sent), sent
+
+    asyncio.run(_run_cancel_after_append())
+
+    # --- /signup must not confirm when the add was cancelled ---------------
+    # The /signup runner ignored signup_player's result and unconditionally
+    # sent "You have been automatically added to the queue!" even when a
+    # !cancel during the add returned False (issue #236).
+    async def _run_slash_signup_confirmation():
+        import commands.signup as signup_mod
+        from commands.signup import SignupCommand
+
+        bot = types.SimpleNamespace()
+        bot.signup_lock = asyncio.Lock()
+        bot.signup_active = False
+        bot.match_not_reported = False
+        bot.setup_generation = 1
+        bot.match_setup_generation = None
+        bot.match_channel = None
+        bot.match_role = None
+        bot.current_teams_message = None
+        bot.current_signup_message = None
+        bot.queue = []
+        bot.load_mmr_data = lambda: None
+
+        class _CancelledView:
+            def __init__(self, ctx_, bot_):
+                self.bot = bot_
+
+            def get_signup_embed(self):
+                return None
+
+            async def signup_player(self, *a, **k):
+                return False  # cancelled during the add
+
+        class _CreatedChannel:
+            id = 3
+
+            async def send(self, *a, **k):
+                return None
+
+            async def delete(self):
+                pass
+
+        class _CreatedRole:
+            id = 2
+
+            async def delete(self):
+                pass
+
+        async def _created(kind):
+            if kind == "channel":
+                return _CreatedChannel()
+            return _CreatedRole()
+
+        async def _noop(**kw):
+            return None
+
+        ctx = FakeCtx(user_id="1")
+        ctx.channel = types.SimpleNamespace(category=None)
+        ctx.guild = types.SimpleNamespace(
+            default_role=object(),
+            me=types.SimpleNamespace(
+                guild_permissions=types.SimpleNamespace(
+                    manage_roles=True, manage_channels=True
+                )
+            ),
+            create_role=lambda **kw: _created("role"),
+            edit_role_positions=lambda **kw: _noop(),
+            create_text_channel=lambda **kw: _created("channel"),
+        )
+
+        cog = SignupCommand.__new__(SignupCommand)
+        cog.bot = bot
+
+        async def _ok_perms(_ctx):
+            return True
+
+        async def _ok_identity(_discord_id):
+            return (True, "", {"discord_id": "1"})
+
+        orig_perms = signup_mod.ensure_perms
+        orig_identity = signup_mod.ensure_current_riot_identity
+        orig_view = signup_mod.SignupView
+        signup_mod.ensure_perms = _ok_perms
+        signup_mod.ensure_current_riot_identity = _ok_identity
+        signup_mod.SignupView = _CancelledView
+        try:
+            await cog.signup(ctx)
+        finally:
+            signup_mod.ensure_perms = orig_perms
+            signup_mod.ensure_current_riot_identity = orig_identity
+            signup_mod.SignupView = orig_view
+
+        assert not any(
+            "automatically added" in (m or "") for m in ctx.sent
+        ), f"/signup confirmed a cancelled add: {ctx.sent}"
+
+    asyncio.run(_run_slash_signup_confirmation())
+
     # --- Doubledown players are tagged in the match summary embed ----------
     # The summary must show which players' MMR gain/loss was doubled:
     # their delta is bolded and tagged "×2", with a footer explaining the
@@ -430,6 +897,8 @@ def demo():
         def __init__(self):
             super().__init__()
             self.embeds = []
+            # A guild with the rank roles, so the summary can mention them.
+            self.guild = FakeGuild()
 
         async def send(self, content=None, **kw):
             await FakeCtx.send(self, content, **kw)
@@ -442,7 +911,7 @@ def demo():
         bot.double_downs = set(dd_ids)
         # Veterans (matches_played > 0, wins+losses > 0) so MMR deltas come
         # purely from this match's rounds — deterministic: 13-4 win, equal
-        # team MMR, vlr 1.0 → Δ = 10 + 60/7 ≈ +18.57 → +19 plain, +37 doubled.
+        # team MMR, vlr 1.0 → Δ = 12 + 60/7 ≈ +20.57 → +21 plain, +41 doubled.
         bot.player_mmr = {
             "1": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
             "2": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
@@ -467,7 +936,11 @@ def demo():
         _rm.all_matches = types.SimpleNamespace(
             find_one=lambda *a, **k: None, insert_one=lambda *a, **k: None
         )
-        _rm.seasons = types.SimpleNamespace(update_one=lambda *a, **k: None)
+        # find_one feeds grant_season_roles; the FakeGuild ctx now reaches it.
+        _rm.seasons = types.SimpleNamespace(
+            update_one=lambda *a, **k: None,
+            find_one=lambda *a, **k: {"season_number": 1},
+        )
 
         bot, ctx = asyncio.run(_run_summary({"1"}))
         assert (
@@ -478,21 +951,90 @@ def demo():
         ), f"expected exactly the match summary embed, got {ctx.embeds}"
         summary = ctx.embeds[0]
         assert summary.title == "Match Summary | 10-Mans", summary.title
-        assert len(summary.fields) == 2, summary.fields
+        assert len(summary.fields) == 3, summary.fields
         attackers, defenders = summary.fields[0], summary.fields[1]
         assert (
-            "**+37** ×2" in attackers["value"]
+            "**+41** ×2" in attackers["value"]
         ), f"doubled player's delta must be bolded and tagged ×2: {attackers}"
         assert (
-            "-10" in defenders["value"] and "**" not in defenders["value"]
+            "-12" in defenders["value"] and "**" not in defenders["value"]
         ), f"plain delta must not be bolded or tagged: {defenders}"
         assert "×2" not in defenders["value"], defenders
         assert summary.footer and "doubledown" in summary.footer.lower(), summary.footer
         assert "×2" in summary.footer, summary.footer
+        # Issue #204: the -12 delta drops player 2 from Stone (100) to Wood
+        # (<100), so the optional rank-changes section appears.
+        rank_field = summary.fields[2]
+        assert rank_field["name"] == "🏅 Rank Changes", rank_field
+        assert "⬇️" in rank_field["value"] and "<@2>" in rank_field["value"], rank_field
+        # Ranks render as live role mentions (<@&id>), not plain text.
+        assert "<@&1000>" in rank_field["value"], rank_field  # Wood Rank
+        assert "<@&1001>" in rank_field["value"], rank_field  # Stone Rank
+        assert "Rank**" not in rank_field["value"], rank_field
+
+        # Same match, but both players start at MMR 150 (Stone, stay Stone):
+        # +41 keeps player 1 in Stone, -12 keeps player 2 in Stone → no
+        # rank-changes field at all.
+        async def _run_no_tier_change():
+            bot = FakeBot()
+            bot.selected_map = "Ascent"
+            bot.double_downs = set()
+            bot.player_mmr = {
+                "1": {"mmr": 150, "wins": 2, "losses": 1, "matches_played": 3},
+                "2": {"mmr": 150, "wins": 2, "losses": 1, "matches_played": 3},
+            }
+            bot.save_mmr_data = lambda: None
+            cog = make_reporter(bot, fetch_result="ok", data_result=_match_payload())
+            ctx = EmbedCtx()
+            await cog.report(ctx)
+            return ctx
+
+        ctx = asyncio.run(_run_no_tier_change())
+        summary = ctx.embeds[0]
+        assert all(
+            f["name"] != "🏅 Rank Changes" for f in summary.fields
+        ), f"no rank field when nobody changed tier: {summary.fields}"
+
+        # Issue #204: an unranked (0 matches) player's first match ranks
+        # them — the section shows the unranked → tier promotion.
+        async def _run_first_match_rankup():
+            bot = FakeBot()
+            bot.selected_map = "Ascent"
+            bot.double_downs = set()
+            bot.player_mmr = {
+                "1": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
+            }
+            bot.save_mmr_data = lambda: None
+            cog = make_reporter(bot, fetch_result="ok", data_result=_match_payload())
+            ctx = EmbedCtx()
+            await cog.report(ctx)
+            return ctx
+
+        ctx = asyncio.run(_run_first_match_rankup())
+        summary = ctx.embeds[0]
+        rank_field = next(
+            (f for f in summary.fields if f["name"] == "🏅 Rank Changes"), None
+        )
+        assert (
+            rank_field is not None
+        ), f"first-match player must show a rankup: {summary.fields}"
+        assert (
+            "now ranked" in rank_field["value"] and "<@2>" in rank_field["value"]
+        ), rank_field
+        assert "<@&1000>" in rank_field["value"], rank_field  # Wood Rank mention
+        # Issue #211: player 2 has zero games, so their summary line carries
+        # the placement tag and the footer explains it; veteran 1 does not.
+        defenders = next(f for f in summary.fields if f["name"].startswith("Defenders"))
+        attackers = next(f for f in summary.fields if f["name"].startswith("Attackers"))
+        assert "placement" in defenders["value"], defenders
+        assert "placement" not in attackers["value"], attackers
+        assert summary.footer and "placement" in summary.footer, summary.footer
 
         bot, ctx = asyncio.run(_run_summary(set()))
         summary = ctx.embeds[0]
         for field in summary.fields:
+            if field["name"] == "🏅 Rank Changes":
+                continue
             assert (
                 "**" not in field["value"]
             ), f"no delta may be bold without a doubledown: {field}"
@@ -502,6 +1044,85 @@ def demo():
         assert (
             not summary.footer
         ), f"footer must be omitted when nobody doubled down: {summary.footer}"
+
+        # --- Issue #213: /report moves team-channel players to the lobby ----
+        # End-to-end: the real report path must call move_players_to_lobby
+        # with BOTH teams while they are still populated (before the state
+        # reset clears them), and only when voice_presence is enabled.
+        class LobbyGuild(FakeGuild):
+            def __init__(self):
+                super().__init__()
+                self.lobby = types.SimpleNamespace(id=77, name="lobby")
+                self.attackers = types.SimpleNamespace(id=78, name="Attackers")
+                self.defenders = types.SimpleNamespace(id=79, name="Defenders")
+                self.voice_channels = [self.lobby, self.attackers, self.defenders]
+
+            def get_member(self, uid):
+                return self._members.get(str(uid))
+
+        class LobbyMember:
+            def __init__(self, channel):
+                self.voice = types.SimpleNamespace(channel=channel)
+                self.moves = []
+                # grant_season_roles runs just before the lobby move.
+                self.roles = []
+
+            async def move_to(self, channel):
+                self.moves.append(channel)
+                self.voice.channel = channel
+
+            async def add_roles(self, role):
+                self.roles.append(role)
+
+        async def _run_lobby_move(enabled):
+            bot = FakeBot()
+            bot.selected_map = "Ascent"
+            bot.double_downs = set()
+            bot.player_mmr = {
+                "1": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
+                "2": {"mmr": 100, "wins": 2, "losses": 1, "matches_played": 3},
+            }
+            bot.save_mmr_data = lambda: None
+            cog = make_reporter(bot, fetch_result="ok", data_result=_match_payload())
+            ctx = EmbedCtx()
+            guild = LobbyGuild()
+            guild._members = {
+                "1": LobbyMember(guild.attackers),
+                "2": LobbyMember(guild.defenders),
+            }
+            ctx.guild = guild
+            moved_calls = []
+
+            async def _spy_move(g, players):
+                moved_calls.append(g)
+                # The teams must still be populated at call time (this runs
+                # before the report's state reset, not after).
+                assert [str(p["id"]) for p in players] == ["1", "2"], players
+                await _orig_move(g, players)
+
+            _rm.move_players_to_lobby = _spy_move
+            _orig_voice_enabled = _rm.voice_presence_enabled
+            _rm.voice_presence_enabled = lambda: enabled
+            try:
+                await cog.report(ctx)
+            finally:
+                _rm.voice_presence_enabled = _orig_voice_enabled
+                _rm.move_players_to_lobby = _orig_move
+            return guild, moved_calls
+
+        _orig_move = _rm.move_players_to_lobby
+
+        guild, calls = asyncio.run(_run_lobby_move(enabled=True))
+        assert len(calls) == 1, "voice_presence must trigger exactly one lobby move"
+        assert guild._members["1"].moves, "attackers player must be moved to lobby"
+        assert guild._members["2"].moves, "defenders player must be moved to lobby"
+        assert guild._members["1"].voice.channel is guild.lobby
+        assert guild._members["2"].voice.channel is guild.lobby
+
+        # Feature off: no move at all (voice management stays opt-in).
+        guild, calls = asyncio.run(_run_lobby_move(enabled=False))
+        assert not calls, "lobby move must be skipped when voice_presence is off"
+        assert not guild._members["1"].moves
     finally:
         _rm.duck_coins_enabled = _orig_enabled
         _rm.asyncio.sleep = _orig_sleep

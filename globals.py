@@ -31,3 +31,12 @@ def feature_enabled(name: str, *, default: bool = True) -> bool:
     except (AttributeError, ValueError, configparser.Error):
         return default
     return default if value is None else value
+
+
+def legacy_prefix_commands_enabled() -> bool:
+    """Whether legacy `!` prefix commands are enabled (issue #241).
+
+    Slash commands always work; this only gates the `!` fallback. Defaults
+    to on so a missing flag keeps the historical behavior.
+    """
+    return feature_enabled("legacy_prefix_commands", default=True)

@@ -50,11 +50,14 @@ class FakeBot:
 class FakeCtx:
     def __init__(self):
         self.messages = []
+        self.embeds = []
         self.guild = None
         self.channel = self
 
     async def send(self, content=None, **kwargs):
         self.messages.append(content)
+        if kwargs.get("embed") is not None:
+            self.embeds.append(kwargs["embed"])
         return types.SimpleNamespace(
             edit=types.MethodType(
                 lambda self, **kw: asyncio.sleep(0), types.SimpleNamespace()
@@ -159,6 +162,70 @@ async def demo():
         {"Ascent": 3, "Bind": 3, "Haven": 4}, [p["id"] for p in FakeBot().queue]
     )
     assert ended and chosen in ("Ascent", "Bind", "Haven")
+
+    # Issue #212: the Balanced-mode match setup summary (finalize_match_setup)
+    # shows rank mentions, never raw MMR: played players get their rank
+    # fallback ("@Stone Rank" without a guild), unplayed players "Unranked".
+    async def _run_balanced_finalize():
+        ctx = FakeCtx()
+        bot = FakeBot()
+        bot.chosen_mode = "Balanced"
+        bot.selected_map = "Ascent"
+        bot.team1 = [{"id": str(i), "name": f"p{i}"} for i in range(5)]
+        bot.team2 = [{"id": str(i), "name": f"p{i}"} for i in range(5, 10)]
+        bot.player_mmr = {
+            pid: {"mmr": 150, "matches_played": 3, "wins": 2, "losses": 1}
+            for pid in ("0", "1", "2", "3", "4", "5", "6", "7", "8")
+        }
+        bot.player_mmr["9"] = {"mmr": 0, "matches_played": 0, "wins": 0, "losses": 0}
+        view = MapVoteView(ctx, bot, ["Ascent", "Bind", "Haven"])
+        await view.finalize_match_setup()
+        view.cancel_interaction_queue_task()
+        view.cancel_timeout_timer()
+        return ctx
+
+    ctx = await _run_balanced_finalize()
+    teams_embed = next(
+        (e for e in ctx.embeds if (e.title or "").startswith("Teams on ")), None
+    )
+    assert teams_embed is not None, [e.title for e in ctx.embeds]
+    all_values = "\n".join(f.value for f in teams_embed.fields)
+    assert "MMR" not in all_values, all_values
+    assert "@Stone Rank" in all_values, all_values
+    assert "Unranked" in all_values, all_values
+
+    # Issue #235: the match flags must flip BEFORE the teams embed is sent,
+    # so /doubledown (gated on match_ongoing) already works while the powerup
+    # notice counts down — the slow voice moves after the announcement must
+    # not leave the gate answering "no match is running". Asserting only
+    # after finalize returns would pass with the old ordering too (the flags
+    # end up set either way), so spy on the embed send itself.
+    async def _run_balanced_finalize_flags():
+        ctx = FakeCtx()
+        bot = FakeBot()
+        bot.chosen_mode = "Balanced"
+        bot.selected_map = "Ascent"
+        bot.team1 = [{"id": "0", "name": "p0"}]
+        bot.team2 = [{"id": "1", "name": "p1"}]
+        flags_at_embed = []
+        _real_send = ctx.send
+
+        async def flag_check_send(content=None, **kwargs):
+            if kwargs.get("embed") is not None:
+                flags_at_embed.append((bot.match_ongoing, bot.match_not_reported))
+            await _real_send(content, **kwargs)
+
+        ctx.send = flag_check_send
+        view = MapVoteView(ctx, bot, ["Ascent", "Bind", "Haven"])
+        await view.finalize_match_setup()
+        view.cancel_interaction_queue_task()
+        view.cancel_timeout_timer()
+        return bot, flags_at_embed
+
+    bot, flags_at_embed = await _run_balanced_finalize_flags()
+    assert flags_at_embed and all(
+        ongoing and reported for ongoing, reported in flags_at_embed
+    ), f"match flags must be live by the teams embed send: {flags_at_embed}"
 
     print("all vote skip-wait self-checks passed")
 

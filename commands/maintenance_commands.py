@@ -10,11 +10,13 @@ import json
 import logging
 import re
 from collections import defaultdict
+from typing import Literal
 from datetime import datetime, timezone
 from pathlib import Path
 
 import aiohttp
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 import globals as globals_mod
@@ -128,7 +130,7 @@ ADMIN_COMMAND_HELP: dict[str, tuple[str, str, str]] = {
     ),
     "setconfig": ("Config", "<key> <value>", "Update a bot.ini feature flag live"),
     "showconfig": ("Config", "", "Show current bot.ini feature flags"),
-    "toggledev": ("Config", "", "Toggle developer mode (switches the prefix)"),
+    "toggledev": ("Config", "", "Toggle developer mode (admin-only commands)"),
     "simulate_queue": ("Config", "", "Fill the queue with 10 fake players"),
     "initialize_rounds": ("Config", "", "Zero every player's total rounds played"),
 }
@@ -347,8 +349,11 @@ def resolve_match_players(players) -> tuple[dict[int, str], list[str]]:
 
 
 class MaintenanceCommands(BotCommands):
-    @commands.command(name="rollback")
-    @commands.has_permissions(administrator=True)
+    @commands.hybrid_command(
+        name="rollback",
+        description="Undo the most recent reported match (Owner only)",
+    )
+    @commands.has_role("Owner")
     async def rollback(self, ctx):
         """Revert the database to a snapshot from before the most recent match."""
         log.info("Rollback requested by %s", ctx.author)
@@ -378,7 +383,7 @@ class MaintenanceCommands(BotCommands):
             log.error("Rollback failed: %s", error)
             if out:
                 msg += f"\n```\n{out[-1500:]}\n```"
-            await ctx.send(msg)
+            await ctx.send(msg, ephemeral=True)
             return
         log.info("Rollback completed by %s", ctx.author)
         self.bot.load_mmr_data()
@@ -386,25 +391,36 @@ class MaintenanceCommands(BotCommands):
             f"{warning}Rolled back the most recent match and resynced stats.```\n{out[-1700:]}\n```"
         )
 
-    @commands.command(name="editplayer")
-    @commands.has_permissions(administrator=True)
-    async def editplayer(self, ctx, *, args: str = ""):
-        """
-        Edit a player's stats or linked Riot ID.
-        Usage: !editplayer <@user|Name#Tag> <mmr|wins|losses|riot> <value>
-        e.g. !editplayer @Pyr mmr 1500
-             !editplayer @Pyr riot New Name#TAG
-        """
-        user_arg, field, value = parse_edit_args(args)
-        if not field or not value:
+    @commands.hybrid_command(
+        name="editplayer",
+        description="Edit a player's stats or linked Riot ID (Owner only)",
+    )
+    @commands.has_role("Owner")
+    @app_commands.describe(
+        user="Player to edit (@mention or linked Name#Tag)",
+        field="Which field to edit",
+        value="New value (for riot: Name#Tag)",
+    )
+    async def editplayer(
+        self,
+        ctx,
+        user: str,
+        field: Literal["mmr", "wins", "losses", "riot"],
+        *,
+        value: str,
+    ):
+        """Edit a player's stats or linked Riot ID."""
+        if not value or not value.strip():
             await ctx.send(
-                "Usage: `!editplayer <@user|Name#Tag> <mmr|wins|losses|riot> <value>`"
+                "Usage: `/editplayer <@user|Name#Tag> <mmr|wins|losses|riot> <value>`",
+                ephemeral=True,
             )
             return
-        pid = resolve_user_arg(user_arg, ctx.guild)
+        pid = resolve_user_arg(user, ctx.guild)
         if not pid:
             await ctx.send(
-                f"Could not resolve player `{user_arg}` — use an @mention or a linked `Name#Tag`."
+                f"Could not resolve player `{user}` — use an @mention or a linked `Name#Tag`.",
+                ephemeral=True,
             )
             return
 
@@ -415,10 +431,10 @@ class MaintenanceCommands(BotCommands):
         try:
             amount = int(value)
         except ValueError:
-            await ctx.send(f"`{value}` must be a whole number.")
+            await ctx.send(f"`{value}` must be a whole number.", ephemeral=True)
             return
         if amount < 0:
-            await ctx.send("Value must be zero or positive.")
+            await ctx.send("Value must be zero or positive.", ephemeral=True)
             return
 
         if pid in self.bot.player_mmr:
@@ -435,11 +451,11 @@ class MaintenanceCommands(BotCommands):
         try:
             riot_name, riot_tag = value.rsplit("#", 1)
         except ValueError:
-            await ctx.send("Riot ID must be in `Name#Tag` format.")
+            await ctx.send("Riot ID must be in `Name#Tag` format.", ephemeral=True)
             return
         riot_name, riot_tag = riot_name.strip(), riot_tag.strip()
         if not riot_name or not riot_tag:
-            await ctx.send("Riot ID must be in `Name#Tag` format.")
+            await ctx.send("Riot ID must be in `Name#Tag` format.", ephemeral=True)
             return
 
         async with aiohttp.ClientSession() as session:
@@ -452,11 +468,14 @@ class MaintenanceCommands(BotCommands):
                 aiohttp.ClientError,
                 asyncio.TimeoutError,
             ) as e:
-                await ctx.send(f"Network error reaching HenrikDev API: {e}")
+                await ctx.send(
+                    f"Network error reaching HenrikDev API: {e}", ephemeral=True
+                )
                 return
         if payload is None or not payload.get("_raw"):
             await ctx.send(
-                f"Could not find Riot account `{riot_name}#{riot_tag}`; nothing was changed."
+                f"Could not find Riot account `{riot_name}#{riot_tag}`; nothing was changed.",
+                ephemeral=True,
             )
             return
 
@@ -485,63 +504,72 @@ class MaintenanceCommands(BotCommands):
         log.info("%s relinked %s to %s#%s", ctx.author, pid, riot_name, riot_tag)
         await ctx.send(f"Relinked <@{pid}> to `{riot_name}#{riot_tag}`.")
 
-    @commands.command(name="substitute")
+    @commands.hybrid_command(
+        name="substitute",
+        description="Swap a substitute into the current match (admin only)",
+    )
     @commands.has_permissions(administrator=True)
-    async def substitute(self, ctx, *, args: str = ""):
+    @app_commands.describe(
+        out_player="Player coming out (@mention or linked Name#Tag)",
+        in_player="Player coming in (@mention or linked Name#Tag)",
+    )
+    async def substitute(self, ctx, out_player: str, in_player: str):
         """
-        Replace a player in the current match (teams must already be decided).
-        Usage: !substitute <@OutPlayer|OutName#Tag> <@InPlayer|InName#Tag>
+        Replace a player in the current match or signup (admin only).
+        Works from the moment the queue is full (lobby wait onwards);
         (Riot IDs containing spaces must use the @mention form.)
         """
-        if not self.bot.match_ongoing:
+        # "Queue full onwards" (issue #249): the lobby wait, any later
+        # pre-team setup stage (voting/draft), or an ongoing match. The
+        # live-cycle check keeps a cancelled or superseded signup from
+        # passing even if its queue still looks full.
+        in_live_cycle = self.bot.setup_generation == self.bot.match_setup_generation
+        pre_team = in_live_cycle and (
+            self.bot.lobby_wait_active or not self.bot.signup_active
+        )
+        if not (self.bot.match_ongoing or pre_team):
             await ctx.send(
-                "Substitutions only work on a match whose teams are already decided."
+                "Substitutions work once the signup queue is full (lobby wait onwards) "
+                "or on a match whose teams are already decided.",
+                ephemeral=True,
             )
             return
-        parts = (args or "").split()
-        if len(parts) < 2:
-            await ctx.send(
-                "Usage: `!substitute <@OutPlayer|OutName#Tag> <@InPlayer|InName#Tag>`"
-            )
-            return
-
-        # Riot IDs and display names can contain spaces, so try every split
-        # point: everything left of it is the outgoing player, right is the
-        # incoming one. The first fully-resolved pair wins.
-        out_pid = in_pid = None
-        for i in range(1, len(parts)):
-            left = resolve_user_arg(" ".join(parts[:i]), ctx.guild)
-            right = resolve_user_arg(" ".join(parts[i:]), ctx.guild)
-            if left and right:
-                out_pid, in_pid = left, right
-                break
+        out_pid = resolve_user_arg(out_player, ctx.guild)
+        in_pid = resolve_user_arg(in_player, ctx.guild)
         if not out_pid or not in_pid:
             await ctx.send(
-                "Could not resolve one of the players — use @mentions or linked `Name#Tag`s."
+                "Could not resolve one of the players — use @mentions or linked `Name#Tag`s.",
+                ephemeral=True,
             )
             return
         out_pid, in_pid = str(out_pid), str(in_pid)
         if in_pid == out_pid:
-            await ctx.send("Outgoing and incoming player are the same.")
+            await ctx.send("Outgoing and incoming player are the same.", ephemeral=True)
             return
         if in_pid in {str(p["id"]) for p in self.bot.queue}:
-            await ctx.send("That player is already in this match.")
+            await ctx.send("That player is already in this match.", ephemeral=True)
             return
 
+        # Pre-team: the outgoing player must be in the signup queue; once
+        # teams exist, they must be on one of them.
         team = None
         for t in (self.bot.team1, self.bot.team2):
             if any(str(p["id"]) == out_pid for p in t):
                 team = t
                 break
-        if team is None:
-            await ctx.send(f"<@{out_pid}> is not on either team in the current match.")
+        if team is None and out_pid not in {str(p["id"]) for p in self.bot.queue}:
+            await ctx.send(
+                f"<@{out_pid}> is not in the current signup queue or on either team.",
+                ephemeral=True,
+            )
             return
 
         # The incoming player must have a valid linked Riot ID (issue requirement).
         u = users.find_one({"discord_id": in_pid})
         if not u or not u.get("name") or not u.get("tag"):
             await ctx.send(
-                f"<@{in_pid}> has no linked Riot ID; they must run `!linkriot Name#Tag` first."
+                f"<@{in_pid}> has no linked Riot ID; they must run `/linkriot Name#Tag` first.",
+                ephemeral=True,
             )
             return
         async with aiohttp.ClientSession() as session:
@@ -549,7 +577,8 @@ class MaintenanceCommands(BotCommands):
         if ok is False:
             await ctx.send(
                 f"<@{in_pid}>'s linked Riot ID `{u['name']}#{u['tag']}` "
-                f"could not be verified: {reason}"
+                f"could not be verified: {reason}",
+                ephemeral=True,
             )
             return
 
@@ -567,15 +596,22 @@ class MaintenanceCommands(BotCommands):
                 if str(p["id"]) == out_pid:
                     self.bot.queue[i] = in_player
                     break
-            for i, p in enumerate(team):
-                if str(p["id"]) == out_pid:
-                    team[i] = in_player
-                    break
+            if team is not None:
+                for i, p in enumerate(team):
+                    if str(p["id"]) == out_pid:
+                        team[i] = in_player
+                        break
         self.bot.ensure_player_mmr(in_pid, self.bot.player_names)
         self.bot.player_names[in_pid] = in_name
 
         # The outgoing player's doubledown no longer applies; refund it.
-        if duck_coins_enabled() and out_pid in self.bot.double_downs:
+        # Pre-team there is nothing to refund: doubledowns require an
+        # ongoing match, so this branch can only run post-team.
+        if (
+            self.bot.match_ongoing
+            and duck_coins_enabled()
+            and out_pid in self.bot.double_downs
+        ):
             self.bot.double_downs.discard(out_pid)
             add_coins(out_pid, DOUBLEDOWN_COST)
             # Keep the crash-recovery journal in sync: a stale journal would
@@ -585,57 +621,74 @@ class MaintenanceCommands(BotCommands):
             persist_escrow(self.bot)
 
         # Swap match roles and move the incoming player to their team voice
-        # channel (best effort).
-        if self.bot.match_role:
-            if member:
-                try:
-                    await member.add_roles(self.bot.match_role)
-                except discord.HTTPException:
-                    pass
-            out_member = ctx.guild.get_member(int(out_pid)) if ctx.guild else None
-            if out_member:
-                try:
-                    await out_member.remove_roles(self.bot.match_role)
-                except discord.HTTPException:
-                    pass
-        if voice_presence_enabled() and ctx.guild:
+        # channel (best effort; issue #234).
+        from views.signup_view import add_match_role, remove_match_role  # noqa: PLC0415
+
+        await add_match_role(self.bot, ctx.guild, in_pid)
+        await remove_match_role(self.bot, ctx.guild, out_pid)
+        # The team voice move only applies once teams exist. This matches
+        # the old gate (which refused non-ongoing matches outright), so the
+        # move is never skipped in a state that used to run it.
+        if voice_presence_enabled() and ctx.guild and self.bot.match_ongoing:
             try:
                 await move_teams_to_voice(ctx.guild, self.bot.team1, self.bot.team2)
             except Exception as e:
-                log.warning("Voice move failed: %s", e)
+                log.error("Voice move after substitute failed: %s", e, exc_info=e)
 
-        side = "Attackers" if team is self.bot.team1 else "Defenders"
-        log.info(
-            "Substitute by %s: %s in for %s (%s)",
-            ctx.author,
-            in_pid,
-            out_pid,
-            side,
-        )
-        await ctx.send(
-            f"Substituted <@{in_pid}> in for <@{out_pid}> ({side}). "
-            "Report with `!report` as usual once the game is done."
-        )
+        if self.bot.match_ongoing:
+            side = "Attackers" if team is self.bot.team1 else "Defenders"
+            log.info(
+                "Substitute by %s: %s in for %s (%s)",
+                ctx.author,
+                in_pid,
+                out_pid,
+                side,
+            )
+            await ctx.send(
+                f"Substituted <@{in_pid}> in for <@{out_pid}> ({side}). "
+                "Report with `/report` as usual once the game is done."
+            )
+        else:
+            log.info(
+                "Pre-team substitute by %s: %s in for %s",
+                ctx.author,
+                in_pid,
+                out_pid,
+            )
+            # Only claim the wait tracks the new player while it actually
+            # does; after the wait (voting/draft) the queue swap is enough.
+            note = (
+                "The lobby wait now tracks the new player; "
+                "the match setup continues once everyone has joined."
+                if self.bot.lobby_wait_active
+                else "The signup queue now includes the new player."
+            )
+            await ctx.send(f"Substituted <@{in_pid}> in for <@{out_pid}>. " + note)
 
-    @commands.command(name="fixmap")
-    @commands.has_permissions(administrator=True)
-    async def fixmap(self, ctx, *, map_name: str = ""):
+    @commands.hybrid_command(
+        name="fixmap",
+        description="Force-set the current match's map (Owner only)",
+    )
+    @commands.has_role("Owner")
+    @app_commands.describe(map_name="The standard map to force for this match")
+    async def fixmap(self, ctx, map_name: str):
         """Force-set the current match's map (fixes 'map doesn't match' report errors)."""
         if not (self.bot.match_ongoing or self.bot.selected_map):
-            await ctx.send("No active match to set a map for.")
+            await ctx.send("No active match to set a map for.", ephemeral=True)
             return
         from services.maps_service import get_standard_maps
 
         try:
             pool = get_standard_maps()
         except Exception as e:
-            await ctx.send(f"Could not fetch the map pool: {e}")
+            await ctx.send(f"Could not fetch the map pool: {e}", ephemeral=True)
             return
         wanted = map_name.strip().lower()
         canonical = next((m for m in pool if m.lower() == wanted), None)
         if not canonical:
             await ctx.send(
-                f"`{map_name}` isn't a standard map. Choose one of: {', '.join(pool)}."
+                f"`{map_name}` isn't a standard map. Choose one of: {', '.join(pool)}.",
+                ephemeral=True,
             )
             return
         old = self.bot.selected_map
@@ -643,12 +696,21 @@ class MaintenanceCommands(BotCommands):
         log.info("%s set the match map from %s to %s", ctx.author, old, canonical)
         await ctx.send(f"Map for the current match set to **{canonical}** (was {old}).")
 
-    @commands.command(name="setconfig")
+    @commands.hybrid_command(
+        name="setconfig",
+        description="Update a bot.ini feature flag live (admin only)",
+    )
     @commands.has_permissions(administrator=True)
+    @app_commands.describe(
+        key="Feature flag key in [features]",
+        value="true/false (also 1/0, yes/no, on/off)",
+    )
     async def setconfig(self, ctx, key: str, value: str):
         """Update a bot.ini feature flag; applies immediately without a restart."""
         if not re.fullmatch(r"[A-Za-z0-9_]+", key):
-            await ctx.send("Invalid key name (letters, digits, underscores only).")
+            await ctx.send(
+                "Invalid key name (letters, digits, underscores only).", ephemeral=True
+            )
             return
         # Only strict booleans are accepted: anything else can poison the ini
         # (e.g. a `%` value raises configparser.InterpolationSyntaxError on
@@ -657,7 +719,8 @@ class MaintenanceCommands(BotCommands):
         if normalized not in {"true", "false", "1", "0", "yes", "no", "on", "off"}:
             await ctx.send(
                 "Value must be a boolean: `true`/`false` (also accepts "
-                "`1`/`0`, `yes`/`no`, `on`/`off`)."
+                "`1`/`0`, `yes`/`no`, `on`/`off`).",
+                ephemeral=True,
             )
             return
         # Validate the whole file BEFORE writing: a malformed value can raise
@@ -672,7 +735,9 @@ class MaintenanceCommands(BotCommands):
         except Exception as e:
             BOT_INI_PATH.write_text(previous, encoding="utf-8")
             log.error("!setconfig rejected a value that breaks bot.ini: %s", e)
-            await ctx.send(f"Refusing `{key} = {value}` — it would break bot.ini.")
+            await ctx.send(
+                f"Refusing `{key} = {value}` — it would break bot.ini.", ephemeral=True
+            )
             return
         # Live reload: re-read the file, then rebind the features proxy so
         # feature_enabled() sees the new value even if [features] was missing.
@@ -684,7 +749,10 @@ class MaintenanceCommands(BotCommands):
             f"Set [features] `{key}` = `{normalized}` (applied immediately)."
         )
 
-    @commands.command(name="showconfig")
+    @commands.hybrid_command(
+        name="showconfig",
+        description="Show the current bot.ini feature flags (admin only)",
+    )
     @commands.has_permissions(administrator=True)
     async def showconfig(self, ctx):
         """Show the current bot.ini [features] settings."""
@@ -693,7 +761,10 @@ class MaintenanceCommands(BotCommands):
             f"**bot.ini [features]**\n```\n{chr(10).join(lines) or '(empty)'}\n```"
         )
 
-    @commands.command(name="adminhelp")
+    @commands.hybrid_command(
+        name="adminhelp",
+        description="List admin commands with usage (admin only, hidden)",
+    )
     @commands.has_permissions(administrator=True)
     async def adminhelp(self, ctx):
         """List admin commands with usage."""
@@ -715,7 +786,7 @@ class MaintenanceCommands(BotCommands):
             ):
                 continue
             usage_args = _usage_args_of(cmd)
-            usage = f"!{cmd.name} {usage_args}".strip()
+            usage = f"/{cmd.name} {usage_args}".strip()
             desc = _short_desc_of(cmd)
             section = ADMIN_COMMAND_HELP.get(cmd.name, ("Other",))[0]
             sections.setdefault(section, []).append(f"`{usage}` — {desc}")
@@ -732,9 +803,13 @@ class MaintenanceCommands(BotCommands):
             for i, chunk in enumerate(chunks, start=1):
                 name = section if len(chunks) == 1 else f"{section} ({i}/{len(chunks)})"
                 embed.add_field(name=name, value=chunk, inline=False)
-        await ctx.send(embed=embed)
+        await ctx.send(embed=embed, ephemeral=True)
 
-    @commands.command(name="matchinfo")
+    @commands.hybrid_command(
+        name="matchinfo",
+        description="Dump internal match and queue state (admin only, hidden)",
+    )
+    @commands.has_permissions(administrator=True)
     @commands.has_permissions(administrator=True)
     async def matchinfo(self, ctx):
         """Dump the bot's internal match/queue state for debugging."""
@@ -770,47 +845,51 @@ class MaintenanceCommands(BotCommands):
         )
         await ctx.send(f"```\n{info[:1900]}\n```")
 
-    @commands.command(name="addcoins")
-    @commands.has_permissions(administrator=True)
-    async def addcoins(self, ctx, *, args: str = ""):
+    @commands.hybrid_command(
+        name="addcoins",
+        description="Grant or remove a player's Duck Coins (Owner only)",
+    )
+    @commands.has_role("Owner")
+    @app_commands.describe(
+        user="Player whose balance to change (@mention or linked Name#Tag)",
+        amount="Amount to grant (use a negative number to remove)",
+    )
+    async def addcoins(self, ctx, user: str, amount: int):
         """Grant (or, with a negative amount, remove) Duck Coins for a player."""
         if not duck_coins_enabled():
-            await ctx.send("Duck Coins features are disabled.")
+            await ctx.send("Duck Coins features are disabled.", ephemeral=True)
             return
-        parts = (args or "").split()
-        if not parts:
-            await ctx.send("Usage: `!addcoins <@user|Name#Tag> <amount>`")
-            return
-        try:
-            amount = int(parts[-1])
-        except ValueError:
-            await ctx.send("Usage: `!addcoins <@user|Name#Tag> <amount>`")
-            return
-        user_arg = " ".join(parts[:-1])
-        pid = resolve_user_arg(user_arg, ctx.guild)
+        pid = resolve_user_arg(user, ctx.guild)
         if not pid:
-            await ctx.send(f"Could not resolve player `{user_arg}`.")
+            await ctx.send(
+                f"Could not resolve player `{user}` — use an @mention or a linked `Name#Tag`.",
+                ephemeral=True,
+            )
             return
         if amount < 0 and coins_of(pid) + amount < 0:
             await ctx.send(
-                f"<@{pid}> only has {coins_of(pid)} coins; can't remove {-amount}."
+                f"<@{pid}> only has {coins_of(pid)} coins; can't remove {-amount}.",
+                ephemeral=True,
             )
             return
         add_coins(pid, amount)
         log.info("%s adjusted %s's coins by %s", ctx.author, pid, amount)
         await ctx.send(f"<@{pid}> now has {coins_of(pid)} {duck_emote(self.bot)}.")
 
-    @commands.command(name="resetplayer")
-    @commands.has_permissions(administrator=True)
-    async def resetplayer(self, ctx, *, args: str = ""):
+    @commands.hybrid_command(
+        name="resetplayer",
+        description="Reset one player's season stats and MMR (Owner only)",
+    )
+    @commands.has_role("Owner")
+    @app_commands.describe(user="Player to reset (@mention or linked Name#Tag)")
+    async def resetplayer(self, ctx, user: str):
         """Reset one player's season stats and MMR (corrupt-data recovery)."""
-        user_arg = (args or "").strip()
-        if not user_arg:
-            await ctx.send("Usage: `!resetplayer <@user|Name#Tag>`")
-            return
-        pid = resolve_user_arg(user_arg, ctx.guild)
+        pid = resolve_user_arg(user, ctx.guild)
         if not pid:
-            await ctx.send(f"Could not resolve player `{user_arg}`.")
+            await ctx.send(
+                f"Could not resolve player `{user}` — use an @mention or a linked `Name#Tag`.",
+                ephemeral=True,
+            )
             return
         zeroed = SEASON_STAT_DEFAULTS
         mmr_collection.update_one({"player_id": pid}, {"$set": zeroed}, upsert=True)
@@ -836,13 +915,15 @@ class MaintenanceCommands(BotCommands):
         log.info("%s reset season stats for %s", ctx.author, pid)
         await ctx.send(f"Reset season stats and MMR for <@{pid}>.")
 
-    @commands.command(name="forcereport")
+    @commands.hybrid_command(
+        name="forcereport",
+        description="Report a specific match by id (admin only)",
+    )
     @commands.has_permissions(administrator=True)
-    async def forcereport(self, ctx, *, match_ref: str = ""):
+    @app_commands.describe(match_ref="Match id or tracker.gg match URL")
+    async def forcereport(self, ctx, match_ref: str):
         """
-        Report a specific match by id, even when a normal !report fails.
-        Usage: !forcereport <match-id-or-tracker.gg-url>
-        e.g. !forcereport https://tracker.gg/valorant/match/2233f144-...
+        Report a specific match by id, even when a normal /report fails.
         Every player must resolve to a linked Discord account, and the match
         must not already be reported.
         """
@@ -850,13 +931,14 @@ class MaintenanceCommands(BotCommands):
         if not match_id:
             await ctx.send(
                 "Pass a match id or tracker.gg URL: "
-                "`!forcereport https://tracker.gg/valorant/match/<id>`"
+                "`/forcereport https://tracker.gg/valorant/match/<id>`",
+                ephemeral=True,
             )
             return
         log.info("%s requested a force report of %s", ctx.author, match_id)
 
         if all_matches.find_one({"metadata.match_id": match_id}):
-            await ctx.send("That match has already been reported.")
+            await ctx.send("That match has already been reported.", ephemeral=True)
             return
 
         await ctx.send(f"Fetching match `{match_id}`...")
@@ -868,15 +950,23 @@ class MaintenanceCommands(BotCommands):
                 aiohttp.ClientError,
                 asyncio.TimeoutError,
             ) as e:
-                await ctx.send(f"Network error reaching HenrikDev API: {e}")
+                await ctx.send(
+                    f"Network error reaching HenrikDev API: {e}", ephemeral=True
+                )
                 return
         if match is None:
-            await ctx.send(f"Could not find match `{match_id}` on the HenrikDev API.")
+            await ctx.send(
+                f"Could not find match `{match_id}` on the HenrikDev API.",
+                ephemeral=True,
+            )
             return
 
         players = match.get("players") or []
         if len(players) != 10:
-            await ctx.send(f"Match has {len(players)} players (expected 10); aborting.")
+            await ctx.send(
+                f"Match has {len(players)} players (expected 10); aborting.",
+                ephemeral=True,
+            )
             return
 
         # Every player must map to a linked Discord account (puuid first,
@@ -885,7 +975,8 @@ class MaintenanceCommands(BotCommands):
         if unlinked:
             await ctx.send(
                 "These players have no linked Discord account; fix with "
-                f"`!editplayer <user> riot Name#Tag` first: {', '.join(unlinked)}"
+                f"`/editplayer <user> riot Name#Tag` first: {', '.join(unlinked)}",
+                ephemeral=True,
             )
             return
 
@@ -893,12 +984,12 @@ class MaintenanceCommands(BotCommands):
         async with self.bot.report_lock:
             # Re-check after acquiring: a concurrent report may have landed.
             if all_matches.find_one({"metadata.match_id": match_id}):
-                await ctx.send("That match has already been reported.")
+                await ctx.send("That match has already been reported.", ephemeral=True)
                 return
 
             total_rounds = len(match.get("rounds") or [])
             if total_rounds <= 0:
-                await ctx.send("Match has no round data; aborting.")
+                await ctx.send("Match has no round data; aborting.", ephemeral=True)
                 return
             try:
                 ratings = estimate_ratings_v4(match)
@@ -910,7 +1001,9 @@ class MaintenanceCommands(BotCommands):
                 None,
             )
             if wtid not in ("red", "blue"):
-                await ctx.send("Could not determine the winning team; aborting.")
+                await ctx.send(
+                    "Could not determine the winning team; aborting.", ephemeral=True
+                )
                 return
             lose_tid = "blue" if wtid == "red" else "red"
             rounds_by_side = {
@@ -1015,12 +1108,16 @@ class MaintenanceCommands(BotCommands):
                 },
             )
 
-    @commands.command(name="resetseason")
-    @commands.has_permissions(administrator=True)
-    async def resetseason(self, ctx, *, confirm: str = ""):
+    @commands.hybrid_command(
+        name="resetseason",
+        description="Wipe everyone's current-season stats (Owner only)",
+    )
+    @commands.has_role("Owner")
+    @app_commands.describe(confirm="Pass 'confirm' to actually wipe")
+    async def resetseason(self, ctx, confirm: str):
         """
         Wipe all stats for the current season, without ending it.
-        Requires `!resetseason confirm` (two-step, no accidental wipes).
+        Requires `confirm` (two-step, no accidental wipes).
         Reversible: snapshots every player doc and the season counter to a
         backup file in the same format tools.ops revert backups use
         ({"$oid": ...} ObjectIds), restorable via
@@ -1029,7 +1126,8 @@ class MaintenanceCommands(BotCommands):
         if confirm.strip().lower() != "confirm":
             await ctx.send(
                 "This wipes **everyone's** MMR and season stats. "
-                "If you're sure, run `!resetseason confirm`."
+                "If you're sure, run `/resetseason confirm`.",
+                ephemeral=True,
             )
             return
 
@@ -1072,18 +1170,24 @@ class MaintenanceCommands(BotCommands):
         )
         log.info("Season stats wiped; backup %s", backup_path.name)
 
-    @commands.command(name="snapshotseason")
+    @commands.hybrid_command(
+        name="snapshotseason",
+        description="Export season data as a .json.gz (admin only)",
+    )
     @commands.has_permissions(administrator=True)
-    async def snapshotseason(self, ctx, *, arg: str = ""):
+    @app_commands.describe(full="Pass 'full' to also include the users collection")
+    async def snapshotseason(self, ctx, full: str = ""):
         """
         Export the current season's match + player data to a .json file.
-        Read-only: the bot's data is not modified. Add `full` to include the
-        persistent users (Riot link) collection. Restore with !recoverseason.
+        Read-only: the bot's data is not modified. Pass 'full' to include the
+        persistent users (Riot link) collection. Restore with /recoverseason.
         """
-        include_users = arg.strip().lower() == "full"
+        include_users = (full or "").strip().lower() == "full"
         season_doc = seasons.find_one({"_id": "current"})
         if not season_doc:
-            await ctx.send("No current season found; nothing to snapshot.")
+            await ctx.send(
+                "No current season found; nothing to snapshot.", ephemeral=True
+            )
             return
         season_num = int(season_doc.get("season_number", 0))
 
@@ -1153,47 +1257,62 @@ class MaintenanceCommands(BotCommands):
             filename,
         )
 
-    @commands.command(name="recoverseason")
-    @commands.has_permissions(administrator=True)
-    async def recoverseason(self, ctx, *, arg: str = ""):
+    @commands.hybrid_command(
+        name="recoverseason",
+        description="Restore season data from an attached snapshot (Owner only)",
+    )
+    @commands.has_role("Owner")
+    @app_commands.describe(
+        confirm="Pass 'confirm' to actually overwrite",
+        file="The .json/.json.gz snapshot file",
+    )
+    async def recoverseason(
+        self, ctx, confirm: str, file: discord.Attachment | None = None
+    ):
         """
-        Overwrite the current season's data from a !snapshotseason .json file
-        attached to this message. Requires `!recoverseason confirm` (two-step,
-        no accidental overwrites). The attachment replaces all current-season
-        matches and player data; docs absent from the snapshot are deleted.
+        Overwrite the current season's data from a /snapshotseason .json file.
+        Requires `confirm` (two-step, no accidental overwrites). The
+        attachment replaces all current-season matches and player data; docs
+        absent from the snapshot are deleted.
         """
-        if arg.strip().lower() != "confirm":
+        if (confirm or "").strip().lower() != "confirm":
             await ctx.send(
                 "This **overwrites** the current season's matches and player "
                 "data with the attached snapshot. Attach the .json file and "
-                "run `!recoverseason confirm`."
+                "run `/recoverseason confirm`.",
+                ephemeral=True,
             )
             return
-        if not ctx.message.attachments:
-            await ctx.send("Attach the snapshot .json file to this message.")
+        if file is None:
+            await ctx.send(
+                "Attach the snapshot .json file to this command.", ephemeral=True
+            )
             return
 
         from tools.ops.revert_last_match import _dejsonify, _jsonify
 
-        attachment = ctx.message.attachments[0]
+        attachment = file
         if not attachment.filename.lower().endswith((".json", ".json.gz")):
-            await ctx.send("Snapshot must be a .json or .json.gz file.")
+            await ctx.send("Snapshot must be a .json or .json.gz file.", ephemeral=True)
             return
         try:
             raw = await attachment.read()
-            # !snapshotseason gzips its payload; sniff the magic bytes so
+            # /snapshotseason gzips its payload; sniff the magic bytes so
             # both plain and gzipped snapshots are accepted.
             if raw[:2] == b"\x1f\x8b":
                 raw = gzip.decompress(raw)
             backup = json.loads(raw)
         except Exception as e:
-            await ctx.send(f"Could not read the attachment as JSON: {e}")
+            await ctx.send(
+                f"Could not read the attachment as JSON: {e}", ephemeral=True
+            )
             return
         collections = backup.get("collections")
         if not isinstance(collections, dict) or "mmr_data" not in collections:
             await ctx.send(
-                "Invalid snapshot: expected a `!snapshotseason` file with a "
-                "`collections` section (mmr_data required)."
+                "Invalid snapshot: expected a `/snapshotseason` file with a "
+                "`collections` section (mmr_data required).",
+                ephemeral=True,
             )
             return
 
@@ -1287,7 +1406,8 @@ class MaintenanceCommands(BotCommands):
                     else ""
                 )
                 await ctx.send(
-                    f"Recovery failed and was rolled back ({e}).{safety_note}"
+                    f"Recovery failed and was rolled back ({e}).{safety_note}",
+                    ephemeral=True,
                 )
                 return
 
