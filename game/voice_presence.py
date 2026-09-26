@@ -87,8 +87,8 @@ def _voice_channel_of(guild, player_id: int):
         return _UNKNOWN
 
 
-def _plain_name(guild, player_id) -> str:
-    """Plain-text @name for a notice: display name, or raw id if gone.
+def _display_name(guild, player_id) -> str:
+    """Plain-text display name for a notice, or the raw id if unavailable.
 
     Deliberately not a mention — the notice must never ping anyone; the
     final warning is the only nudge (issue #247).
@@ -96,9 +96,22 @@ def _plain_name(guild, player_id) -> str:
     try:
         member = guild.get_member(int(player_id))
         name = getattr(member, "display_name", None)
-    except Exception:
-        name = None
-    return f"@{name}" if isinstance(name, str) and name else f"@{player_id}"
+    except Exception as e:  # fail open: an unreadable member is not fatal
+        log.warning("Could not read display name for %s: %r", player_id, e)
+        return str(player_id)
+    return name if isinstance(name, str) and name else str(player_id)
+
+
+def _deadline_text(seconds: float) -> str:
+    """Notice deadline text for the wait window actually in use.
+
+    Whole minutes read as words ("10 minutes"); anything else uses the
+    m:ss clock so an overridden window never overstates itself.
+    """
+    minutes = int(seconds // 60)
+    if minutes and seconds % 60 == 0:
+        return f"{minutes} minute" + ("s" if minutes > 1 else "")
+    return f"{minutes}:{int(seconds % 60):02d}"
 
 
 def missing_lobby_players(guild, queue) -> list[str]:
@@ -161,16 +174,21 @@ async def wait_for_lobby(
         len(missing),
     )
     lobby = _find_channel(channels, LOBBY_CHANNEL_NAME)
-    room = f"<#{lobby.id}>" if lobby is not None else "a **voice channel**"
+    room = (
+        f"the **lobby voice channel** <#{lobby.id}>"
+        if lobby is not None
+        else "a **voice channel**"
+    )
     # List who is missing without pinging them (issue #233); the pinged
-    # nudge only comes with the final warning near the timeout.
-    who = ", ".join(_plain_name(guild, pid) for pid in missing)
-    minutes = LOBBY_WAIT_SECONDS // 60
+    # nudge only comes with the final warning near the timeout. The
+    # deadline is derived from the wait window so the wording cannot lie.
+    who = ", ".join(_display_name(guild, pid) for pid in missing)
+    deadline_text = _deadline_text(timeout_seconds)
     try:
         await send(
-            f"Waiting for these players to join the **lobby voice channel** {room}: "
+            f"Waiting for these players to join {room}: "
             + who
-            + f" — you have {minutes} minutes to join or the match will be cancelled."
+            + f" — you have {deadline_text} to join or the match will be cancelled."
         )
     except discord.HTTPException:
         pass
