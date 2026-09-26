@@ -100,9 +100,10 @@ def delta_mmr(
     r = _clamp((our_rounds - opp_rounds) / 4.3, -1.0, 1.0)
     ratio = _clamp(our_mmr / max(opp_mmr, 1e-9), 0.33, 5.0)
     m = ratio**0.5 if ratio < 1.0 else ratio**0.75
-    expectation = B * (2.0 - m) if our_rounds > opp_rounds else B * (1.0 - m)
+    won = our_rounds > opp_rounds
+    expectation = B * (2.0 - m) if won else B * (1.0 - m)
     delta = A * r + expectation + C * (_h(vlr) - 4.0)
-    return max(delta, MIN_GAIN) if our_rounds > opp_rounds else min(delta, MIN_LOSS)
+    return max(delta, MIN_GAIN) if won else min(delta, MIN_LOSS)
 
 
 def _seed_mmr(rating) -> float:
