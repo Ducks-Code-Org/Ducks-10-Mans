@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 import aiohttp
+from discord import app_commands
 from discord.ext import commands
 
 from commands import BotCommands
@@ -25,13 +26,19 @@ async def setup(bot):
 
 
 class LinkRiotCommand(BotCommands):
-    @commands.command()
-    async def linkriot(self, ctx, *, riot_input):
+    @commands.hybrid_command(
+        name="linkriot",
+        description="Link your Riot account to your Discord account (hidden reply)",
+    )
+    @app_commands.describe(riot_input="Your Riot ID in Name#Tag format")
+    async def linkriot(self, ctx, *, riot_input: str):
         # Validate "Name#Tag"
         try:
             riot_name, riot_tag = riot_input.rsplit("#", 1)
         except ValueError:
-            await ctx.send("Please provide your Riot ID in the format: `Name#Tag`")
+            await ctx.send(
+                "Please provide your Riot ID in the format: `Name#Tag`", ephemeral=True
+            )
             return
 
         try:
@@ -41,7 +48,7 @@ class LinkRiotCommand(BotCommands):
                 )
         except (RiotApiInconclusive, aiohttp.ClientError, asyncio.TimeoutError) as e:
             log.error("Network error linking Riot ID: %s", e, exc_info=e)
-            await ctx.send(f"Network error reaching HenrikDev API: {e}")
+            await ctx.send(f"Network error reaching HenrikDev API: {e}", ephemeral=True)
             return
 
         # fully document API outcomes
@@ -50,7 +57,8 @@ class LinkRiotCommand(BotCommands):
                 "Link rejected: Riot account %s#%s not found", riot_name, riot_tag
             )
             await ctx.send(
-                "Could not find that Riot account. Double-check the name and tag."
+                "Could not find that Riot account. Double-check the name and tag.",
+                ephemeral=True,
             )
             return
 
@@ -79,7 +87,7 @@ class LinkRiotCommand(BotCommands):
                     riot_tag,
                     owner.get("discord_id"),
                 )
-                await ctx.send(_ALREADY_LINKED)
+                await ctx.send(_ALREADY_LINKED, ephemeral=True)
                 return
 
         set_fields = {
@@ -101,7 +109,8 @@ class LinkRiotCommand(BotCommands):
         )
 
         await ctx.send(
-            f"Successfully linked {tracker_link(riot_name, riot_tag)} to your Discord account."
+            f"Successfully linked {tracker_link(riot_name, riot_tag)} to your Discord account.",
+            ephemeral=True,
         )
         log.info(
             "Linked Riot ID %s#%s to discord id %s", riot_name, riot_tag, discord_id

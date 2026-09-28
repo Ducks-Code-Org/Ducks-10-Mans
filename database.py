@@ -31,6 +31,7 @@ seasons = db["seasons"]
 interests = db["interests"]
 recent_queue = db["recent_queue"]
 # Crash-safety journal for in-process Duck Coin state (bet escrow, doubledowns,
-# map-override escalation): one doc holding exactly what lives in bot.bet_session
-# / bot.double_downs, so a restart can refund what an open window was holding.
+# standing map-override wager): one doc holding exactly what lives in
+# bot.bet_session / bot.double_downs, so a restart can refund what an open
+# window was holding.
 coin_escrow = db["coin_escrow"]

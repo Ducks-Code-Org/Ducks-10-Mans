@@ -99,9 +99,16 @@ _discord_stub.HTTPException = type("HTTPException", (Exception,), {})
 _discord_stub.ext = types.SimpleNamespace()
 _discord_stub.ext.commands = types.SimpleNamespace(
     command=lambda *a, **k: (lambda f: f),
+    hybrid_command=lambda *a, **k: (lambda f: f),
     has_permissions=lambda **k: (lambda f: f),
+    has_role=lambda *a, **k: (lambda f: f),
     Cog=type("Cog", (), {"__init_subclass__": classmethod(lambda cls, **kw: None)}),
 )
+_app_stub = types.SimpleNamespace(
+    describe=lambda **k: (lambda f: f),
+    Attachment=object,
+)
+_discord_stub.app_commands = _app_stub
 sys.modules["discord"] = _discord_stub
 sys.modules["discord.ext"] = _discord_stub.ext
 sys.modules["discord.ext.commands"] = _discord_stub.ext.commands
@@ -251,7 +258,7 @@ def demo():
 
     # --- snapshotseason -----------------------------------------------------
     ctx = FakeCtx(FakeMessage([]))
-    asyncio.run(cog.snapshotseason(ctx, arg=""))
+    asyncio.run(cog.snapshotseason(ctx, ""))
     assert ctx.sent, "snapshotseason sent nothing"
     msg, kw = ctx.sent[0][0][0], ctx.sent[0][1]
     assert f"Season {season_num} snapshot: 2 match(es)" in msg, msg
@@ -277,7 +284,7 @@ def demo():
 
     # full snapshot includes users
     ctx2 = FakeCtx(FakeMessage([]))
-    asyncio.run(cog.snapshotseason(ctx2, arg="full"))
+    asyncio.run(cog.snapshotseason(ctx2, "full"))
     backup2 = json.loads(gzip.decompress(ctx2.sent[0][1]["file"].fp.getvalue()))
     assert len(backup2["collections"]["users"]) == 1
 
@@ -290,22 +297,32 @@ def demo():
 
     # --- recoverseason: guards ----------------------------------------------
     ctx3 = FakeCtx(FakeMessage([]))
-    asyncio.run(cog.recoverseason(ctx3, arg=""))
+    asyncio.run(cog.recoverseason(ctx3, "", file=None))
     assert "confirm" in ctx3.sent[0][0][0]
     assert len(mc.all_matches.docs) == 3, "guard must not touch data"
 
     ctx4 = FakeCtx(FakeMessage([FakeAttachment("notes.txt", b"{}")]))
-    asyncio.run(cog.recoverseason(ctx4, arg="confirm"))
+    asyncio.run(
+        cog.recoverseason(ctx4, "confirm", file=FakeAttachment("notes.txt", b"{}"))
+    )
     assert "json" in ctx4.sent[0][0][0].lower()
 
     ctx5 = FakeCtx(FakeMessage([FakeAttachment("x.json", b"not json")]))
-    asyncio.run(cog.recoverseason(ctx5, arg="confirm"))
+    asyncio.run(
+        cog.recoverseason(ctx5, "confirm", file=FakeAttachment("x.json", b"not json"))
+    )
     assert "json" in ctx5.sent[0][0][0].lower()
 
     ctx6 = FakeCtx(
         FakeMessage([FakeAttachment("x.json", json.dumps({"foo": 1}).encode())])
     )
-    asyncio.run(cog.recoverseason(ctx6, arg="confirm"))
+    asyncio.run(
+        cog.recoverseason(
+            ctx6,
+            "confirm",
+            file=FakeAttachment("x.json", json.dumps({"foo": 1}).encode()),
+        )
+    )
     assert "invalid" in ctx6.sent[0][0][0].lower()
 
     # --- recoverseason: full overwrite from snapshot ------------------------
@@ -322,7 +339,11 @@ def demo():
     # The snapshot is round-tripped gzipped, exactly as !snapshotseason sends it.
     gz_snapshot = gzip.compress(json.dumps(backup).encode("utf-8"))
     ctx7 = FakeCtx(FakeMessage([FakeAttachment("snap.json.gz", gz_snapshot)]))
-    asyncio.run(cog.recoverseason(ctx7, arg="confirm"))
+    asyncio.run(
+        cog.recoverseason(
+            ctx7, "confirm", file=FakeAttachment("snap.json.gz", gz_snapshot)
+        )
+    )
     # matches: snapshot's 2 restored; the drifted extra deleted; other season kept
     assert len(mc.all_matches.docs) == 3, mc.all_matches.docs
     assert {str(d["_id"]) for d in mc.all_matches.docs} == {oid_hex, "legacy", "other"}

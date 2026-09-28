@@ -3,6 +3,7 @@
 import logging
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from commands import BotCommands
@@ -49,15 +50,22 @@ def _resolve_player(bot, ctx, riot_input):
 
 
 class StatsCommand(BotCommands):
-    @commands.command()
-    async def stats(self, ctx, *, riot_input=None):
+    @commands.hybrid_command(
+        name="stats",
+        description="Check a player's MMR and match statistics (hidden reply)",
+    )
+    @app_commands.describe(
+        riot_input="Player to look up: @mention or Name#Tag (defaults to you)"
+    )
+    async def stats(self, ctx, *, riot_input: str = None):
         # Allows players to lookup the stats of other players by Riot ID or @mention
         player_id = _resolve_player(self.bot, ctx, riot_input)
         if player_id is None:
             await ctx.send(
                 "Could not find this player. Use a Riot ID (`Name#Tag`) or "
                 "@mention a player. Please check the name and tag and ensure "
-                "they have played at least one match."
+                "they have played at least one match.",
+                ephemeral=True,
             )
             return
 
@@ -68,12 +76,14 @@ class StatsCommand(BotCommands):
         ):
             if riot_input is None:
                 await ctx.send(
-                    "You do not have an MMR yet. Participate in matches to earn one!"
+                    "You do not have an MMR yet. Participate in matches to earn one!",
+                    ephemeral=True,
                 )
             else:
                 await ctx.send(
                     "This player does not have an MMR yet. Participate in "
-                    "matches to earn one!"
+                    "matches to earn one!",
+                    ephemeral=True,
                 )
             return
 
@@ -141,7 +151,7 @@ class StatsCommand(BotCommands):
         embed.add_field(name="Avg. Rating", value=avg_rating_display, inline=True)
         embed.add_field(name="Avg. ACS", value=f"{avg_cs:.2f}", inline=True)
         embed.add_field(name="K/D Ratio", value=f"{kd_ratio:.2f}", inline=True)
-        embed.set_footer(text="Use !stats @user or !stats Name#Tag")
+        embed.set_footer(text="Use /stats @user or /stats Name#Tag")
 
-        await ctx.send(embed=embed)
+        await ctx.send(embed=embed, ephemeral=True)
         log.info("Stats lookup: %s by %s", riot_display, ctx.author)

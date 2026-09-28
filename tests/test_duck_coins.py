@@ -367,7 +367,9 @@ def demo():
     bot.match_ongoing = False
     bot.map_override_last = 4
     bot.map_override_last_by = "other"
+    bot.map_override_chain = [{"payer": "other", "amount": 4}]
     DB["1"]["duck_coins"] = 100
+    DB["other"] = {"player_id": "other", "duck_coins": 0}
     reply = asyncio.run(setmap_override(bot, "1", "Haven", 2))
     assert "minimum override wager is 3" in reply, "below-min wager must be denied"
     assert coins_of("1") == 100, "denied wager must not charge"
@@ -376,6 +378,15 @@ def demo():
     reply = asyncio.run(setmap_override(bot, "1", "Haven", 5))
     assert "<@1> paid 5" in reply and bot.map_override_last == 5
     assert coins_of("1") == 95, "explicit wager must charge exactly that amount"
+    # Issue #205: the outbid player gets their wager refunded on override.
+    assert (
+        coins_of("other") == 4
+    ), f"outbid player must be refunded: {coins_of('other')}"
+    assert "refunded to <@other>" in reply, reply
+    # And the journal now holds only the standing wager.
+    assert bot.map_override_chain == [
+        {"payer": "1", "amount": 5}
+    ], bot.map_override_chain
 
     # Grace window after teams finalize: overrides still work for 2 minutes
     # and retitle the posted teams embed; they expire after the deadline.
@@ -386,8 +397,8 @@ def demo():
             self.embeds = [types.SimpleNamespace(title="Teams on Ascent")]
             self.edits = []
 
-        async def edit(self, embed=None):
-            self.edits.append(embed)
+        async def edit(self, embed=None, content=None):
+            self.edits.append(embed if embed is not None else content)
 
     async def _run_grace_checks():
         now = time.monotonic()
@@ -409,17 +420,36 @@ def demo():
         assert bots[0].current_teams_message.edits, "teams embed must be edited"
         assert bots[0].current_teams_message.embeds[0].title == "Teams on Bind"
         assert coins_of("1") == 97, "grace-window override must charge"
+        # Issue #202: a successful override extends the powerup deadline by
+        # 30s so bidding wars get more time.
+        assert (
+            bots[0].map_override_deadline == now + 150
+        ), f"override must extend the deadline by 30s: {bots[0].map_override_deadline - now}"
+        # The extension applies to BOTH powerups: !doubledown shares this
+        # deadline, so a player can still double down after the override.
+        bots[0].double_downs = set()
+        DB["2"]["duck_coins"] = 100
+        reply = doubledown(bots[0], "2")
+        assert (
+            "doubled" in reply
+        ), f"doubledown must survive the extended window: {reply}"
         # Past the deadline: rejected without charge, naming the timeout.
         bots[1].map_override_deadline = now - 1
         reply = await setmap_override(bots[1], "1", "Haven")
         assert "override window has timed out" in reply, "expired grace must deny"
         assert not bots[1].current_teams_message.edits
+        assert (
+            bots[1].map_override_deadline == now - 1
+        ), "a rejected override must not extend the deadline"
         # Before teams finalize there is no teams embed yet and no edit attempt.
         bots[2].match_ongoing = False
         bots[2].map_override_deadline = None
         reply = await setmap_override(bots[2], "1", "Haven")
         assert "now **Haven**" in reply
         assert not bots[2].current_teams_message.edits, "no embed edit before finalize"
+        assert (
+            bots[2].map_override_deadline is None
+        ), "no deadline before finalize: nothing to extend"
 
     asyncio.run(_run_grace_checks())
 
@@ -513,6 +543,28 @@ def demo():
         abs((doubled - seed) - 2 * (plain - seed)) <= 1
     ), f"doubledown must double the delta only: plain={plain} doubled={doubled}"
 
+    # Issue #253: the multiplier applies to the clamped delta, so a win that
+    # would be floored to +5 doubles to at least +10 (favorite stomp).
+    floored = {}
+    for mult, pid in ((1, "10"), (2, "11")):
+        _sh.update_stats(
+            {"stats": {"score": 900, "kills": 8, "deaths": 4}},
+            20,
+            floored,
+            {},
+            discord_id=pid,
+            team_avg_mmr=2500,
+            opp_avg_mmr=500,
+            our_rounds=13,
+            opp_rounds=0,
+            rating=1.4,
+            mmr_multiplier=mult,
+        )
+    plain_floored = floored["10"]["mmr"]
+    doubled_floored = floored["11"]["mmr"]
+    assert plain_floored == seed + 5, plain_floored
+    assert doubled_floored == seed + 10, doubled_floored
+
     # The !setmap call site must pass requires_running_match=False, otherwise
     # the gate and the override window stay mutually exclusive.
     command_src = open(
@@ -533,7 +585,7 @@ def demo():
     ), "!setmap must pass its channel so the match-channel gate applies"
     # !bet must NOT pass a channel: spectators bet from #10-mans.
     bet_body = command_src.split("async def bet_attackers")[1].split(
-        "@commands.command(name="
+        '@bet.command(name="defenders"'
     )[0]
     assert (
         "channel=ctx.channel" not in bet_body
@@ -610,7 +662,7 @@ def demo():
     recover_orphaned_escrow(bot)
     assert coins_of("9") == 10, "settled bets must never be re-refunded"
 
-    # --- Map-override chain journals and recovers on startup --------------
+    # --- Map-override journal and startup recovery (issue #205) -----------
     # (Reset the once-per-process gate so this simulates a fresh process.)
     duck_coins._escrow_recovered = False
     DB["2"] = {"player_id": "2", "duck_coins": 100}
@@ -629,21 +681,31 @@ def demo():
         {"id": "6", "name": "p6"},
     ]
     asyncio.run(setmap_override(bot, "2", "Bind"))
+    # Player 2 paid 3 (balance 97, chain holds their wager).
+    assert coins_of("2") == 97 and bot.map_override_last == 3
     asyncio.run(setmap_override(bot, "6", "Haven"))
+    # Issue #205: the outbid player 2 is refunded immediately (97 -> 100),
+    # and player 6 outbids by escalation: pays last+1 = 4 (100 -> 96).
+    assert coins_of("2") == 100, "outbid player must be refunded on override"
+    assert coins_of("6") == 96, "outbidder pays last+1"
+    assert bot.map_override_last == 4, "escalation follows the standing wager"
     asyncio.run(setmap_override(bot, "2", "Split"))
+    # Player 6 is outbid and refunded (96 -> 100); player 2 pays 5.
+    assert coins_of("2") == 95 and coins_of("6") == 100
+    assert bot.map_override_last == 5
     bot.queue = [{"id": "1", "name": "p1"}, {"id": "2", "name": "p2"}]
     journal = _ESCROW_DOCS["open_bets"]["data"]
     assert journal["map_overrides"] == [
-        {"payer": "2", "amount": 3},
-        {"payer": "6", "amount": 4},
         {"payer": "2", "amount": 5},
     ], journal
     # Simulated crash: journal survives, memory does not.
     bot.map_override_chain = []
     bot.bet_session = None
     recover_orphaned_escrow(bot)
-    assert coins_of("2") == 100, "every override step must be refunded on crash"
-    assert coins_of("6") == 100, "the outbid overrider is refunded on crash too"
+    assert (
+        coins_of("2") == 100
+    ), "the standing wager must be refunded on crash (and only it)"
+    assert coins_of("6") == 100, "the outbid wager was already refunded live"
 
     # A gateway reconnect must not refund a LIVE window (process-gated).
     DB["9"]["duck_coins"] = 10
@@ -662,12 +724,12 @@ def demo():
     # --- Post-setup announcements: powerup notice + betting embed ---------
     from game.duck_coins import _betting_embed, _powerups_announcement
 
-    # The match-channel powerup notice must mention !setmap and !doubledown.
+    # The match-channel powerup notice must mention /setmap and /doubledown.
     text = _powerups_announcement(bot, 120)
-    assert "!setmap" in text and "Override" in text, text
-    assert "!doubledown" in text, text
+    assert "/setmap" in text and "Override" in text, text
+    assert "/doubledown" in text, text
 
-    # The #10-mans betting embed must explain !bet and show both teams with
+    # The #10-mans betting embed must explain /bet and show both teams with
     # pools, expected payout multipliers, and the countdown.
     fake_session = {
         "open": True,
@@ -679,11 +741,24 @@ def demo():
         "ends_at": 0,
     }
     embed = _betting_embed(bot, fake_session, 300)
-    assert "!bet attackers" in embed.description, embed.description
+    assert "/bet attackers" in embed.description, embed.description
     assert "Attackers" in embed.fields[0]["name"], embed.fields
     assert "Defenders" in embed.fields[1]["name"], embed.fields
     assert any("pays" in f["value"] for f in embed.fields), embed.fields
     assert "4:60" not in embed.footer["text"] and "5:00" in embed.footer["text"]
+
+    # Issue #212: team lines show rank mentions, never raw MMR. Player 1 has
+    # played (rank fallback "@Stone Rank" with no guild), player 2 has not
+    # ("Unranked").
+    bot.player_mmr = {
+        "1": {"mmr": 150, "matches_played": 3},
+        "2": {"mmr": 0, "matches_played": 0},
+    }
+    embed = _betting_embed(bot, fake_session, 300)
+    assert "MMR" not in embed.fields[0]["value"], embed.fields[0]
+    assert "@Stone Rank" in embed.fields[0]["value"], embed.fields[0]
+    assert "Unranked" in embed.fields[1]["value"], embed.fields[1]
+    assert "MMR" not in embed.fields[1]["value"], embed.fields[1]
 
     class _FakeFeatureGlobals:
         pass
@@ -699,7 +774,7 @@ def demo():
         assert (
             len(match_ch.messages) == 1
         ), "powerup notice must post once to the match channel"
-        assert "!setmap" in match_ch.messages[0]
+        assert "/setmap" in match_ch.messages[0]
         assert (
             len(ctx.channel.messages) == 1
         ), "betting embed must fall back to ctx.channel without a guild"
@@ -713,9 +788,43 @@ def demo():
         assert (
             len(ctx2.channel.messages) == 2
         ), "fallback must post powerup notice + betting embed"
-        assert "!setmap" in ctx2.channel.messages[0]
+        assert "/setmap" in ctx2.channel.messages[0]
 
     asyncio.run(_run_announcement_routing())
+
+    # --- Issue #202: an override re-renders the powerup countdown ---------
+    # A live session with a posted powerup notice: the countdown message
+    # must be edited to show the extended remaining time immediately.
+    class _FakePowerupMessage:
+        def __init__(self):
+            self.contents = []
+
+        async def edit(self, content=None):
+            self.contents.append(content)
+
+    async def _run_countdown_refresh():
+        b = FakeBot()
+        b.match_ongoing = True
+        now = time.monotonic()
+        b.map_override_deadline = now + 120
+        open_window(b)
+        b.bet_session["powerup_message"] = _FakePowerupMessage()
+        b.queue = [{"id": "1", "name": "p1"}, {"id": "2", "name": "p2"}]
+        DB["1"]["duck_coins"] = 10
+        b.selected_map = "Ascent"
+        b.map_override_last = 0
+        b.map_override_last_by = None
+        reply = await setmap_override(b, "1", "Bind")
+        assert "now **Bind**" in reply
+        # Deadline extended (issue #202).
+        assert 148 < b.map_override_deadline - now <= 150
+        # The powerup notice was re-rendered right away, showing the
+        # extended countdown (~150s; sub-second scheduling may round to 2:29).
+        notice = b.bet_session["powerup_message"].contents
+        assert notice, "powerup countdown must be refreshed after an override"
+        assert "2:2" in notice[-1] or "2:30" in notice[-1], notice
+
+    asyncio.run(_run_countdown_refresh())
 
     # --- Cancel refunds EVERY coin spent on the match ----------------------
     from game.duck_coins import announce_cancellation_async, refund_match_coins
@@ -731,18 +840,13 @@ def demo():
     DB["5"]["duck_coins"] = 16  # as if player 5 paid 4 for the bet
     bot.double_downs = {"1"}
     DB["1"]["duck_coins"] = 15  # as if player 1 paid 5 for the doubledown
-    # Escalation chain: player 2 paid 3, player 6 paid 4 (outbid player 2),
-    # player 2 paid 5 to take it back. The whole chain is journaled, so a
-    # cancel refunds every payer — not just the last overrider.
+    # Standing override wager (issue #205): the chain holds only the current
+    # wager now — outbid wagers are refunded live at override time, so a
+    # cancel refunds exactly the standing wager.
     bot.map_override_last = 5
     bot.map_override_last_by = "2"
-    bot.map_override_chain = [
-        {"payer": "2", "amount": 3},
-        {"payer": "6", "amount": 4},
-        {"payer": "2", "amount": 5},
-    ]
-    DB["2"]["duck_coins"] = 12  # as if player 2 paid 3 + 5
-    DB["6"]["duck_coins"] = 16  # as if player 6 paid 4
+    bot.map_override_chain = [{"payer": "2", "amount": 5}]
+    DB["2"]["duck_coins"] = 15  # as if player 2 paid 5
 
     guild_captured = []
 
@@ -753,14 +857,11 @@ def demo():
     guild = types.SimpleNamespace(text_channels=[fake_10mans])
 
     total = refund_match_coins(bot)
-    # 4 bet + 5 doubledown + 3+4+5 override chain = 21
-    assert total == 21, f"total refund wrong: {total}"
+    # 4 bet + 5 doubledown + 5 standing override wager = 14
+    assert total == 14, f"total refund wrong: {total}"
     assert coins_of("5") == 20, f"bettor refund wrong: {coins_of('5')}"
     assert coins_of("1") == 20, f"doubledown refund wrong: {coins_of('1')}"
-    assert coins_of("2") == 20, f"first overrider refund wrong: {coins_of('2')}"
-    assert (
-        coins_of("6") == 20
-    ), f"outbid overrider must be refunded too: {coins_of('6')}"
+    assert coins_of("2") == 20, f"standing overrider refund wrong: {coins_of('2')}"
     assert bot.bet_session is None
     assert bot.double_downs == set()
     assert bot.map_override_last == 0 and bot.map_override_last_by is None

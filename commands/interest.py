@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 from pymongo import ReturnDocument
 
@@ -20,19 +21,26 @@ async def setup(bot):
 
 
 class InterestCommand(BotCommands):
-    @commands.command(name="interest")
+    @commands.hybrid_command(
+        name="interest",
+        description="Plan a time to play 10 mans (or list upcoming slots)",
+    )
+    @app_commands.describe(
+        time="When to play: e.g. '9pm', 'tomorrow 7', '8/22 9:30pm', 'in 2h', or 'list'"
+    )
     async def interest(self, ctx, *, time: str | None = None):
         """
         Usage:
-          !interest 9pm
-          !interest tomorrow 7
-          !interest 8/22 9:30pm
-          !interest in 2h
-          !interest list
+          /interest 9pm
+          /interest tomorrow 7
+          /interest 8/22 9:30pm
+          /interest in 2h
+          /interest list
         """
         if time is None:
             await ctx.send(
-                "Usage: `!interest <time>` (e.g., `!interest 9pm`) or `!interest list`."
+                "Usage: `/interest <time>` (e.g., `/interest 9pm`) or `/interest list`.",
+                ephemeral=True,
             )
             return
 
@@ -45,7 +53,8 @@ class InterestCommand(BotCommands):
             )
             if not upcoming:
                 await ctx.send(
-                    "No upcoming interest slots yet. Create one with `!interest 9pm`."
+                    "No upcoming interest slots yet. Create one with `/interest 9pm`.",
+                    ephemeral=True,
                 )
                 return
 
@@ -63,7 +72,7 @@ class InterestCommand(BotCommands):
 
         dt_utc, err = parse_time_to_utc(time)
         if err:
-            await ctx.send(err)
+            await ctx.send(err, ephemeral=True)
             return
 
         # Round to 5 minutes
@@ -101,7 +110,7 @@ def parse_time_to_utc(time: str):
     if not time:
         return (
             None,
-            "Provide a time, e.g. `!interest 9pm` or `!interest tomorrow 7`.",
+            "Provide a time, e.g. `/interest 9pm` or `/interest tomorrow 7`.",
         )
 
     now_local = datetime.now(TIME_ZONE_CST)
@@ -129,7 +138,7 @@ def parse_time_to_utc(time: str):
             target_local = now_local + timedelta(minutes=mins)
             return target_local.astimezone(timezone.utc), None
         except Exception:
-            return None, "Couldn’t parse relative time. Try `in 2h` or `in 45m`."
+            return None, "Couldn't parse relative time. Try `in 2h` or `in 45m`."
 
     # Normalize helper functions
     def try_formats(candidate, fmts):
@@ -155,7 +164,7 @@ def parse_time_to_utc(time: str):
         if not t_try:
             return (
                 None,
-                "Couldn’t parse time. Try formats like `9pm`, `9:30pm`, `21:00`.",
+                "Couldn't parse time. Try formats like `9pm`, `9:30pm`, `21:00`.",
             )
         dt_local = datetime(
             base_date.year,
@@ -212,7 +221,7 @@ def parse_time_to_utc(time: str):
                     if not t_try:
                         return (
                             None,
-                            "Couldn’t parse the time. Try `8/22 9pm` or `8-22 21:00`.",
+                            "Couldn't parse the time. Try `8/22 9pm` or `8-22 21:00`.",
                         )
                     dt_local = datetime(
                         y, m, d, t_try.hour, t_try.minute, tzinfo=TIME_ZONE_CST
@@ -222,5 +231,5 @@ def parse_time_to_utc(time: str):
             pass
     return (
         None,
-        "Couldn’t understand that time. Examples: `9pm`, `tomorrow 7`, `8/22 9:30pm`, `in 2h`.",
+        "Couldn't understand that time. Examples: `9pm`, `tomorrow 7`, `8/22 9:30pm`, `in 2h`.",
     )

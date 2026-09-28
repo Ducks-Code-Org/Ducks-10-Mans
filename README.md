@@ -6,7 +6,7 @@ This project is Open Source, and can easily be forked and changed to fit users n
 
 ## How It Works
 
-First, users start a new queue with `!signup`. A new match channel is generated that allows users to freely join and leave the queue until the queue reaches 10 players.
+First, users start a new queue with `/signup`. A new match channel is generated that allows users to freely join and leave the queue until the queue reaches 10 players.
 
 ### Example Signup Queue
 
@@ -17,7 +17,7 @@ Next, the users go through the match setup process voting on the following:
 - Map Pool - Competetive Map Pool or All Standard Maps
 - Map - Players choose from 3 randomly chosen maps from the pool
 
-Then, the users simply play VALORANT match, and run the `!report` command once they are finished. This command will update all user statistics and update players' MMR based on the match results.
+Then, the users simply play VALORANT match, and run the `/report` command once they are finished. This command will update all user statistics and update players' MMR based on the match results.
 
 Finally, a leaderboard with all players' statistics may be viewed with the `!leaderboard` command.
 
@@ -41,7 +41,7 @@ All bot events are logged with Python's built-in `logging` module — never `pri
 
 ## Optimizations
 
-> Orginially, I found a bot that was able to create teams and allow you to manually report the matches, telling the discord bot exactly which team won. I want to do more than that. So, I got to work. What my bot does differently is it allows for a vote between a snake draft and balanced teams, creates a vote for the maps, and then after the match is finished, all you have to do is run the command "!report". Running the report command gets the Henrikdev API to fetch the most recent match data, match it to discord usernames, and even update their elo using a common formula. Aftewards, it saves all the data to the database. I took a common idea, and transformed it to be built directly for groups of Valorant players who want to have fun, and still play in a competitive manner.
+> Orginially, I found a bot that was able to create teams and allow you to manually report the matches, telling the discord bot exactly which team won. I want to do more than that. So, I got to work. What my bot does differently is it allows for a vote between a snake draft and balanced teams, creates a vote for the maps, and then after the match is finished, all you have to do is run the command "/report". Running the report command gets the Henrikdev API to fetch the most recent match data, match it to discord usernames, and even update their elo using a common formula. Aftewards, it saves all the data to the database. I took a common idea, and transformed it to be built directly for groups of Valorant players who want to have fun, and still play in a competitive manner.
 >
 > — *Colton (Duck)*
 

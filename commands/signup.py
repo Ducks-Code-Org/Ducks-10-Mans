@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 # Riot ID shown for players whose account vanished from Riot's side (account
 # deleted, region migrated, or Riot data corruption). Their MMR stats are
 # preserved — only the link is unset — and are restored as soon as they
-# re-link with `!linkriot` (which matches on discord_id and keeps the mmr doc).
+# re-link with `/linkriot` (which matches on discord_id and keeps the mmr doc).
 UNLINKED_NAME = "N/A"
 UNLINKED_TAG = "N/A"
 
@@ -34,8 +34,8 @@ def _unlink_user(doc) -> str:
 
     The user doc keeps its discord_id but name/tag/puuid are dropped, so the
     player shows as N/A on leaderboards and cannot rejoin the queue (signup
-    requires a linked Riot ID) until they run `!linkriot Name#Tag` again.
-    `!linkriot` updates the same users doc keyed by discord_id, so the
+    requires a linked Riot ID) until they run `/linkriot Name#Tag` again.
+    `/linkriot` updates the same users doc keyed by discord_id, so the
     historic mmr_data doc (keyed by player_id) is picked up automatically —
     nothing is deleted and no stats are lost.
     Returns the now-dead Riot ID string for the purge announcement.
@@ -85,7 +85,7 @@ async def purge_invalid_riot_ids(bot=None) -> list[str]:
     link is treated as a rename and refreshed (issue #182). Only an account
     that is gone entirely (no puuid or puuid also 404s) is unlinked: the
     Riot ID fields are cleared but the player's MMR stats are kept — they
-    reappear (restored) as soon as they re-link with `!linkriot`.
+    reappear (restored) as soon as they re-link with `/linkriot`.
     """
     docs = [
         doc
@@ -158,7 +158,7 @@ async def _run_background_purge(bot, ctx) -> None:
                     "Unlinked "
                     + ", ".join(f"`{r}`" for r in removed)
                     + " (Riot account no longer exists). Their stats are kept; "
-                    "re-link with `!linkriot Name#Tag` to play again."
+                    "re-link with `/linkriot Name#Tag` to play again."
                 )
             except discord.HTTPException:
                 pass
@@ -193,18 +193,24 @@ async def setup(bot):
 
 
 class SignupCommand(BotCommands):
-    @commands.command()
+    @commands.hybrid_command(
+        name="signup",
+        description="Start a new 10 mans signup session",
+    )
     async def signup(self, ctx):
         async with self.bot.signup_lock:
             if not await ensure_perms(ctx):
                 return
 
             if self.bot.signup_active:
-                await ctx.send("A signup is already in progress.")
+                await ctx.send("A signup is already in progress.", ephemeral=True)
                 return
 
             if self.bot.match_not_reported:
-                await ctx.send("Report the last match before starting another one.")
+                await ctx.send(
+                    "Report the last match before starting another one.",
+                    ephemeral=True,
+                )
                 return
 
             # A stale purge from a previous signup may still be hogging the
@@ -213,32 +219,35 @@ class SignupCommand(BotCommands):
 
             ok, msg, _db_user = await ensure_current_riot_identity(ctx.author.id)
             if not ok:
-                await ctx.send(msg)
+                await ctx.send(msg, ephemeral=True)
                 return
 
             self.bot.load_mmr_data()
             log.debug("Reloaded MMR data at start of signup")
 
-            # Tear down any existing signup view. Just dropping the reference
-            # leaks its background tasks, which then race the new signup's
-            # refresh task over current_signup_message — recreating stale
-            # embeds/buttons or deleting them (issue #181).
-            if self.bot.signup_view is not None:
-                self.bot.signup_view.cleanup()
-                self.bot.signup_view = None
-
-            # Recover from a stuck previous match: if a report never
-            # completed (e.g. the match was never visible on the Riot API and
-            # the report claim blocked retrying), the old match channel/role
-            # and per-match flags are still set. Cleaning them up here lets
-            # the new signup start from a blank slate instead of piling a new
-            # signup on top of the old match channel. The new signup's
-            # generation bump (below) also invalidates any stale views.
+            # Refuse to touch match resources owned by a LIVE setup cycle.
+            # Between the queue filling and the report, every flag !signup
+            # checks is False (signup_active flipped False by finalize_signup,
+            # match_not_reported/match_ongoing only set when the map vote
+            # ends) — a second !signup in that window would otherwise treat
+            # the live match channel/role as stale leftovers and delete them
+            # out from under the running match setup, deadlocking both
+            # signups (issue #218). Resources whose generation doesn't match
+            # the current one are genuinely stale (bot restarted mid-match,
+            # report never ran) and still get cleaned up below.
             if (
                 self.bot.match_channel is not None
                 or self.bot.match_role is not None
                 or self.bot.current_teams_message is not None
             ):
+                if self.bot.match_setup_generation == self.bot.setup_generation:
+                    await ctx.send(
+                        "A match is being set up right now (voting/draft in "
+                        "progress). Wait for it to finish, report it, or use "
+                        "`/cancel` to abort it.",
+                        ephemeral=True,
+                    )
+                    return
                 log.warning(
                     "Stale match resources found at signup: channel=%r role=%r — cleaning up",
                     self.bot.match_channel,
@@ -258,6 +267,8 @@ class SignupCommand(BotCommands):
         # Bump the setup generation so any stale views from a previous
         # match-setup cycle are invalidated.
         self.bot.setup_generation += 1
+        # Stamp the new match resources with this cycle's generation.
+        self.bot.match_setup_generation = self.bot.setup_generation
         self.bot.signup_active = True
         self.bot.queue = []
         self.bot.captain1 = None
@@ -296,10 +307,15 @@ class SignupCommand(BotCommands):
                 embed=self.bot.signup_view.get_signup_embed(), view=self.bot.signup_view
             )
 
-            await ctx.send(f"Queue started! Signup: <#{self.bot.match_channel.id}>")
+            await ctx.send(
+                f"Queue started! Signup: <#{self.bot.match_channel.id}>", silent=True
+            )
         except Exception as e:
             # Cleanup
             self.bot.signup_active = False
+            # The leftovers must look stale to the next !signup (nothing
+            # bumped setup_generation on this path).
+            self.bot.match_setup_generation = None
             if getattr(self.bot, "match_role", None):
                 try:
                     await self.bot.match_role.delete()
@@ -311,24 +327,29 @@ class SignupCommand(BotCommands):
                 except discord.HTTPException:
                     pass
             log.error("Error setting up queue: %s", e, exc_info=e)
-            await ctx.send(f"Error setting up queue: {e}")
+            await ctx.send(f"Error setting up queue: {e}", ephemeral=True)
             return
 
-        # Auto-signup the !signup runner: they've already verified their Riot
+        # Auto-signup the /signup runner: they've already verified their Riot
         # identity above, so their doc is passed straight through (no second
         # API round-trip). Failures just surface as a normal reply.
         author_id = str(ctx.author.id)
-        await self.bot.signup_view.signup_player(
+        added = await self.bot.signup_view.signup_player(
             author_id,
             ctx.author.name,
-            member=ctx.author,
+            guild=ctx.guild,
             verified_user=_db_user,
-            notify=lambda msg: ctx.send(msg),
+            notify=lambda msg: ctx.send(msg, ephemeral=True),
             channel=ctx.channel,
         )
-        await ctx.send(
-            f"You have been automatically added to the queue! ({len(self.bot.queue)}/10)"
-        )
+        # Only confirm when the add actually survived; a !cancel landing on
+        # any of signup_player's awaits returns False and has already sent
+        # its own cancellation notice (issue #236).
+        if added:
+            await ctx.send(
+                f"You have been automatically added to the queue! ({len(self.bot.queue)}/10)",
+                ephemeral=True,
+            )
 
 
 async def ensure_perms(ctx) -> bool:
@@ -340,19 +361,23 @@ async def ensure_perms(ctx) -> bool:
         missing.append("Manage Channels")
     if missing:
         await ctx.send(
-            f"I need the following permissions in this server: {', '.join(missing)}"
+            f"I need the following permissions in this server: {', '.join(missing)}",
+            ephemeral=True,
         )
         return False
     return True
 
 
 class PingRecentCommand(BotCommands):
-    @commands.command(name="pingrecent")
+    @commands.hybrid_command(
+        name="pingrecent",
+        description="Ping everyone who was in the most recently cancelled/finished queue",
+    )
     async def pingrecent(self, ctx):
         """Pings everyone who was in the most recently cancelled/finished queue."""
         recent_ids, cancelled = get_recent_queue()
         if not recent_ids:
-            await ctx.send("No recent queue found to ping.")
+            await ctx.send("No recent queue found to ping.", ephemeral=True)
             return
         log.info("%s pinged %s recent queue player(s)", ctx.author, len(recent_ids))
         await ctx.send(pingrecent_message(recent_ids, cancelled))

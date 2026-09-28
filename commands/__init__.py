@@ -4,7 +4,6 @@ from discord.ext import commands
 class BotCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.dev_mode = False
 
         self.bot.chosen_mode = None
         self.bot.selected_map = None

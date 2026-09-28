@@ -11,7 +11,10 @@ async def setup(bot):
 
 
 class BugCommand(commands.Cog):
-    @commands.command()
+    @commands.hybrid_command(
+        name="bug",
+        description="Report a bug (pings the maintainers)",
+    )
     async def bug(self, ctx):
         nate_discord_id = 348901216723402753
         file_path = "assets/bug.webp"
@@ -21,4 +24,4 @@ class BugCommand(commands.Cog):
             await ctx.send(f"<@{nate_discord_id}>", file=file)
         except Exception as e:
             log.error("Failed to upload bug image: %s", e, exc_info=e)
-            await ctx.send(f"Failed to upload image: {e}")
+            await ctx.send(f"Failed to upload image: {e}", ephemeral=True)

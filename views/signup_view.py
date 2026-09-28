@@ -19,6 +19,81 @@ from game.voice_presence import voice_presence_enabled, wait_for_lobby
 log = logging.getLogger(__name__)
 
 
+async def add_match_role(bot, guild, user_id) -> None:
+    """Grant the current match-# role to a member (best effort; issue #234).
+
+    Resolves the member at grant time (cache, then fetch) so callers don't
+    have to pre-resolve one; every failure is logged, never raised — a role
+    hiccup must never break the signup pipeline.
+    """
+    role = getattr(bot, "match_role", None)
+    if role is None or guild is None:
+        return
+    try:
+        member = guild.get_member(int(user_id))
+        if member is None:
+            member = await guild.fetch_member(int(user_id))
+    except (discord.NotFound, discord.HTTPException, ValueError, TypeError) as e:
+        log.warning("Could not resolve member %s for the match role: %s", user_id, e)
+        return
+    try:
+        if role not in member.roles:
+            await member.add_roles(role)
+    except discord.HTTPException as e:
+        log.warning("Could not add the match role to %s: %s", user_id, e)
+    except (AttributeError, TypeError) as e:
+        log.warning("Could not inspect member %s for roles: %s", user_id, e)
+
+
+async def remove_match_role(bot, guild, user_id) -> None:
+    """Strip the current match-# role from a member (best effort; issue #234).
+
+    Mirrors add_match_role: unresolved members and API failures are logged
+    and skipped so the leave/cleanup path never crashes after the queue
+    state was already updated.
+    """
+    role = getattr(bot, "match_role", None)
+    if role is None or guild is None:
+        return
+    try:
+        member = guild.get_member(int(user_id))
+        if member is None:
+            member = await guild.fetch_member(int(user_id))
+    except (discord.NotFound, discord.HTTPException, ValueError, TypeError) as e:
+        log.warning(
+            "Could not resolve member %s to remove the match role: %s", user_id, e
+        )
+        return
+    try:
+        if role in member.roles:
+            await member.remove_roles(role)
+    except discord.HTTPException as e:
+        log.warning("Could not remove the match role from %s: %s", user_id, e)
+    except (AttributeError, TypeError) as e:
+        log.warning("Could not inspect member %s for roles: %s", user_id, e)
+
+
+class ChannelContext:
+    """A minimal ctx bound to one channel (the match channel).
+
+    Slash contexts post interaction followups to the channel the command was
+    invoked in, so after the signup moves into the generated match channel the
+    downstream vote/draft views need a ctx whose `send` targets that channel
+    (the prefix path previously faked this by reassigning ctx.channel).
+    Exposes only what the setup views use: send, guild, channel, author.
+    """
+
+    def __init__(self, channel, guild=None, author=None):
+        self.channel = channel
+        self.guild = guild if guild is not None else getattr(channel, "guild", None)
+        self.author = author
+
+    async def send(self, content=None, **kwargs):
+        # Interactions-only kwargs (ephemeral/silent) don't apply to channel sends.
+        kwargs.pop("ephemeral", None)
+        return await self.channel.send(content, **kwargs)
+
+
 class SignupView(discord.ui.View):
     def __init__(self, ctx, bot):
         super().__init__(timeout=None)
@@ -125,12 +200,8 @@ class SignupView(discord.ui.View):
             ephemeral=True,
         )
 
-        # Remove the match role from the user
-        member: discord.Member = interaction.guild.get_member(
-            interaction.user.id
-        ) or await interaction.guild.fetch_member(interaction.user.id)
-        if member:
-            await member.remove_roles(self.bot.match_role)
+        # Remove the match role from the user (best effort; issue #234).
+        await remove_match_role(self.bot, interaction.guild, interaction.user.id)
 
     async def process_signup_queue(self):
         while True:
@@ -190,7 +261,7 @@ class SignupView(discord.ui.View):
         except discord.HTTPException:
             pass  # In case channel is deleted or something
 
-        # Remember who was in the queue for !pingrecent
+        # Remember who was in the queue for /pingrecent
         if self.bot.queue:
             remember_recent_queue(self.bot.queue, cancelled=True)
 
@@ -223,6 +294,7 @@ class SignupView(discord.ui.View):
             await self.bot.match_channel.delete()
         except discord.HTTPException:
             pass
+        self.bot.match_setup_generation = None
 
         # Cleanup view
         self.stop()
@@ -238,21 +310,10 @@ class SignupView(discord.ui.View):
         async def notify(msg: str):
             await safe_reply(interaction, msg, ephemeral=True)
 
-        # Resolve the member for the match-role grant (best effort).
-        member = None
-        guild = interaction.guild
-        if guild is not None:
-            member = guild.get_member(interaction.user.id)
-            if member is None:
-                try:
-                    member = await guild.fetch_member(interaction.user.id)
-                except (discord.NotFound, discord.HTTPException):
-                    member = None
-
         await self.signup_player(
             user_id,
             interaction.user.name,
-            member=member,
+            guild=interaction.guild,
             notify=notify,
             channel=interaction.channel,
         )
@@ -262,7 +323,7 @@ class SignupView(discord.ui.View):
         user_id: str,
         display_name: str,
         *,
-        member=None,
+        guild=None,
         notify=None,
         channel=None,
         verified_user: dict | None = None,
@@ -272,7 +333,7 @@ class SignupView(discord.ui.View):
         Runs the same gates (capacity, duplicates, Riot link), queue add,
         MMR seeding, match role, and signup-embed refresh for both paths.
         `verified_user` skips the Riot re-verification for callers that just
-        verified the identity themselves (the !signup command, which runs
+        verified the identity themselves (the /signup command, which runs
         ensure_current_riot_identity first). `notify` receives user-facing
         feedback (interaction followup or ctx.send); `channel` is where the
         full-queue handoff to match setup happens. Returns True when the
@@ -282,10 +343,19 @@ class SignupView(discord.ui.View):
             notify = lambda _msg: None  # noqa: E731 — silent by default
 
         async def send_notify(msg: str):
-            """Run notify, awaiting async callables and calling sync ones."""
-            result = notify(msg)
-            if hasattr(result, "__await__"):
-                await result
+            """Run notify, awaiting async callables and calling sync ones.
+
+            Best-effort: a failed user-facing reply (e.g. a followup whose
+            interaction channel no longer exists — 10003 Unknown Channel)
+            must never abort the signup pipeline, or a 10/10 queue silently
+            never reaches match setup (issue #216).
+            """
+            try:
+                result = notify(msg)
+                if hasattr(result, "__await__"):
+                    await result
+            except discord.HTTPException as e:
+                log.warning("Could not send signup notification %r: %s", msg, e)
 
         # If this signup was cancelled (e.g. by !cancel), stop processing.
         if self.bot is None or self.bot.setup_generation != self.setup_generation:
@@ -312,7 +382,7 @@ class SignupView(discord.ui.View):
         )
         if not db_user:
             await send_notify(
-                "❌ You must link your Riot account first using `!linkriot <Name#Tag>`."
+                "❌ You must link your Riot account first using `/linkriot <Name#Tag>`."
             )
             return False
 
@@ -337,9 +407,18 @@ class SignupView(discord.ui.View):
             if not linked_user or str(linked_user.get("discord_id")) != user_id:
                 await send_notify(
                     "❌ Your Riot ID is linked to a different Discord account, or was changed "
-                    "after another user linked it. Please re-link it using `!linkriot <Name#Tag>`."
+                    "after another user linked it. Please re-link it using `/linkriot <Name#Tag>`."
                 )
                 return False
+
+        # Re-check the cancellation gate AFTER the awaits above (issue #236):
+        # the Riot verification can take seconds, and a !cancel or queue
+        # timeout during that window invalidates this signup cycle. Without
+        # this re-check the player is appended to a dead queue — and told
+        # "added to the queue!" for a signup that no longer exists.
+        if self.bot is None or self.bot.setup_generation != self.setup_generation:
+            await send_notify("This signup was cancelled.")
+            return False
 
         # Add the user the queue, and create mmr data if not present
         self.bot.queue.append({"id": user_id, "name": display_name})
@@ -355,12 +434,17 @@ class SignupView(discord.ui.View):
         # Update last activity
         self.last_activity_time = asyncio.get_event_loop().time()
 
-        # Add match role to the new player (best effort)
-        if member is not None and getattr(self.bot, "match_role", None):
-            try:
-                await member.add_roles(self.bot.match_role)
-            except discord.HTTPException:
-                log.warning("Could not add the match role to %s", display_name)
+        # Add match role to the new player (best effort; issue #234).
+        if guild is not None:
+            await add_match_role(self.bot, guild, user_id)
+
+        # The role grant is an await: a !cancel landing during it bumps
+        # setup_generation, clears the queue, and (via cleanup) may null out
+        # this view's bot — the add did not survive, so bail before touching
+        # the dead view and never confirm it (issue #236).
+        if self.bot is None or self.bot.setup_generation != self.setup_generation:
+            await send_notify("This signup was cancelled.")
+            return False
 
         # Update the message and the signup button. Prefer the canonical
         # signup message: a stale/deleted message is recreated below so the
@@ -380,6 +464,14 @@ class SignupView(discord.ui.View):
                 )
             except (discord.NotFound, discord.HTTPException, AttributeError):
                 pass
+
+        # The embed refresh above is also an await; re-check so the
+        # confirmation only fires for a player still queued in a live signup
+        # (issue #236).
+        if self.bot is None or self.bot.setup_generation != self.setup_generation:
+            await send_notify("This signup was cancelled.")
+            return False
+
         await send_notify(f"{display_name} added to the queue!")
 
         # Check if queue is full
@@ -407,15 +499,21 @@ class SignupView(discord.ui.View):
         )
 
         # Wait for everyone to join the lobby voice channel before setup
-        # (feature-flagged in bot.ini).
+        # (feature-flagged in bot.ini). /substitute is allowed from this
+        # window onwards, so mark it explicitly (issue #249).
         if voice_presence_enabled():
-            ready = await wait_for_lobby(
-                self.ctx.guild,
-                self.bot.queue,
-                send=channel.send,
-                is_cancelled=lambda: self.bot is None
-                or self.bot.setup_generation != self.setup_generation,
-            )
+            self.bot.lobby_wait_active = True
+            try:
+                ready = await wait_for_lobby(
+                    self.ctx.guild,
+                    self.bot.queue,
+                    send=channel.send,
+                    is_cancelled=lambda: self.bot is None
+                    or self.bot.setup_generation != self.setup_generation,
+                )
+            finally:
+                if self.bot is not None:
+                    self.bot.lobby_wait_active = False
             if not ready:
                 if (
                     self.bot is not None
@@ -427,7 +525,13 @@ class SignupView(discord.ui.View):
                 return
 
         self.bot.signup_active = False
-        self.ctx.channel = self.bot.match_channel
+        # From here on the setup runs inside the match channel. A slash ctx
+        # always posts followups to the command's invocation channel, so bind
+        # a channel-bound ctx instead of reassigning ctx.channel (which only
+        # worked for prefix invocations).
+        self.ctx = ChannelContext(
+            self.bot.match_channel, guild=self.ctx.guild, author=self.ctx.author
+        )
 
         for child in self.children:
             if isinstance(child, discord.ui.Button):

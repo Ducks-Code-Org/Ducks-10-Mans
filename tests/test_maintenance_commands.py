@@ -1,6 +1,7 @@
 import os
 import sys
 import types
+import asyncio
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -34,13 +35,38 @@ _discord_stub.Embed = _FakeEmbed
 _discord_stub.utils = types.SimpleNamespace(get=lambda *a, **k: None)
 _discord_stub.NotFound = type("NotFound", (Exception,), {})
 _discord_stub.HTTPException = type("HTTPException", (Exception,), {})
+_discord_stub.Interaction = type("Interaction", (), {})
 _discord_stub.ext = types.SimpleNamespace()
 _discord_stub.ext.commands = types.SimpleNamespace(
     command=lambda *a, **k: (lambda f: f),
+    hybrid_command=lambda *a, **k: (lambda f: f),
     has_permissions=lambda **k: (lambda f: f),
+    has_role=lambda *a, **k: (lambda f: f),
     Cog=type("Cog", (), {"__init_subclass__": classmethod(lambda cls, **kw: None)}),
 )
+_app_stub = types.SimpleNamespace(
+    describe=lambda **k: (lambda f: f),
+    Attachment=object,
+)
+_discord_stub.app_commands = _app_stub
+_ui_stub = types.ModuleType("discord.ui")
+
+
+class _FakeUiItem:
+    def __init__(self, *a, **k):
+        pass
+
+    def __init_subclass__(cls, **k):
+        pass
+
+
+for _name in ("Button", "Select", "View", "Modal"):
+    setattr(_ui_stub, _name, type(_name, (_FakeUiItem,), {}))
+for _name in ("select", "button"):
+    setattr(_ui_stub, _name, lambda *a, **k: (lambda f: f))
+_discord_stub.ui = _ui_stub
 sys.modules["discord"] = _discord_stub
+sys.modules["discord.ui"] = _ui_stub
 sys.modules["discord.ext"] = _discord_stub.ext
 sys.modules["discord.ext.commands"] = _discord_stub.ext.commands
 
@@ -295,6 +321,168 @@ def demo():
         "start_transaction" in recoverseason_src
     ), "recoverseason must be transactional"
     assert "rolled back" in recoverseason_src, "failure reply must mention rollback"
+
+    # --- /substitute works pre-team (issue #249) ----------------------------
+    # The command must be callable from the lobby wait onwards, swapping the
+    # signup queue entry: the lobby wait tracks the new player through the
+    # live queue. Pre-team skips team assignment and doubledown refunds
+    # (nothing exists yet), keeps the Riot-ID check, and still swaps the
+    # match roles. Behavior is driven through a stubbed cog; the gate marker
+    # is bot.lobby_wait_active, set around wait_for_lobby in finalize_signup.
+    signup_view_src = open(
+        os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "views",
+            "signup_view.py",
+        ),
+        encoding="utf-8",
+    ).read()
+    finalize_src = signup_view_src.split("async def finalize_signup", 1)[1]
+    assert (
+        "self.bot.lobby_wait_active = True" in finalize_src
+    ), "finalize_signup must mark the lobby wait as active"
+    assert (
+        "self.bot.lobby_wait_active = False" in finalize_src
+    ), "the lobby-wait marker must be cleared when the wait returns"
+    import configparser
+    import views.signup_view as _sv
+
+    original_users = mc.users
+    original_verify = mc.verify_riot_account_async
+    original_add, original_remove = _sv.add_match_role, _sv.remove_match_role
+
+    _sub_users = {"9": {"discord_id": "9", "name": "Sub", "tag": "TAG"}}
+
+    async def _fake_verify(session, name, tag):
+        return (True, "ok")
+
+    _role_calls = []
+
+    async def _fake_add(bot_, guild, uid):
+        _role_calls.append(("add", uid))
+
+    async def _fake_remove(bot_, guild, uid):
+        _role_calls.append(("remove", uid))
+
+    mc.users = types.SimpleNamespace(find_one=lambda q: _sub_users.get("9"))
+    mc.verify_riot_account_async = _fake_verify
+    _sv.add_match_role, _sv.remove_match_role = _fake_add, _fake_remove
+    saved_features = globals_mod.BOT_FEATURES
+    features_cp = configparser.ConfigParser()
+    features_cp.read_dict({"features": {"duck_coins": "false"}})
+    globals_mod.BOT_FEATURES = features_cp["features"]
+    try:
+        bot = types.SimpleNamespace()
+        bot.report_lock = asyncio.Lock()
+        bot.signup_active = False
+        bot.lobby_wait_active = False
+        bot.setup_generation = 1
+        bot.match_setup_generation = 1
+        bot.match_ongoing = False
+        bot.queue = [{"id": "1", "name": "out"}, {"id": "2", "name": "keep"}]
+        bot.team1 = []
+        bot.team2 = []
+        bot.double_downs = set()
+        bot.player_names = {}
+        bot.ensure_player_mmr = lambda pid, names: None
+
+        cog = object.__new__(mc.MaintenanceCommands)
+        cog.bot = bot
+
+        class _SubCtx:
+            def __init__(self):
+                self.sent = []
+                self.author = types.SimpleNamespace(id=42, name="admin")
+                self.guild = None
+
+            async def send(self, msg=None, **k):
+                self.sent.append(msg)
+
+        # The real lobby-wait state: signup_active stays True until
+        # finalize_signup returns, so only lobby_wait_active marks the
+        # window (issue #249).
+        bot.signup_active = True
+        bot.lobby_wait_active = True
+        bot.queue = [{"id": str(i), "name": f"p{i}"} for i in range(1, 11)]
+        ctx = _SubCtx()
+        asyncio.run(cog.substitute(ctx, "<@3>", "<@11>"))
+        assert [p["id"] for p in bot.queue[:3]] == ["1", "2", "11"], bot.queue[:3]
+        assert len(bot.queue) == 10 and bot.team1 == [] and bot.team2 == []
+        assert "lobby wait now tracks the new player" in ctx.sent[0], ctx.sent[0]
+
+        # A live wait that dropped below 10 (purge kick) is still the wait
+        # window and must accept a substitution.
+        bot.queue = bot.queue[:9]
+        ctx = _SubCtx()
+        asyncio.run(cog.substitute(ctx, "<@5>", "<@12>"))
+        assert [p["id"] for p in bot.queue[:5]] == [
+            "1",
+            "2",
+            "11",
+            "4",
+            "12",
+        ], bot.queue[:5]
+        assert len(bot.queue) == 9
+        bot.signup_active = False
+        bot.lobby_wait_active = False
+
+        # Post-wait setup stage (voting/draft): allowed, no false claim
+        # about a wait that already ended.
+        bot.queue = [{"id": "1", "name": "out"}, {"id": "2", "name": "keep"}]
+        ctx = _SubCtx()
+        asyncio.run(cog.substitute(ctx, "<@1>", "<@9>"))
+        assert [p["id"] for p in bot.queue] == ["9", "2"], bot.queue
+        assert bot.team1 == [] and bot.team2 == [], "no team assignment pre-team"
+        assert ("add", "9") in _role_calls and ("remove", "1") in _role_calls
+        assert bot.double_downs == set(), "no doubledown handling pre-team"
+        assert "signup queue now includes" in ctx.sent[0], ctx.sent[0]
+
+        # Outgoing player must be in the queue (or a team) to be subbed out.
+        bot.queue = [{"id": "1", "name": "out"}, {"id": "2", "name": "keep"}]
+        ctx = _SubCtx()
+        asyncio.run(cog.substitute(ctx, "<@5>", "<@9>"))
+        assert "not in the current signup queue" in ctx.sent[0], ctx.sent[0]
+
+        # An unlinked substitute is refused before any state changes.
+        _sub_users.clear()
+        ctx = _SubCtx()
+        asyncio.run(cog.substitute(ctx, "<@1>", "<@9>"))
+        assert "no linked Riot ID" in ctx.sent[0], ctx.sent[0]
+        assert [p["id"] for p in bot.queue] == ["1", "2"], bot.queue
+        _sub_users["9"] = {"discord_id": "9", "name": "Sub", "tag": "TAG"}
+
+        # Filling phase (signup active, no live wait): refused.
+        bot.signup_active = True
+        bot.queue = [{"id": "2", "name": "keep"}]
+        ctx = _SubCtx()
+        asyncio.run(cog.substitute(ctx, "<@2>", "<@9>"))
+        assert "queue is full" in ctx.sent[0], ctx.sent[0]
+        bot.signup_active = False
+
+        # Cancelled signup (generation cleared, resources released): refused.
+        bot.match_setup_generation = None
+        ctx = _SubCtx()
+        asyncio.run(cog.substitute(ctx, "<@2>", "<@9>"))
+        assert "Substitutions work" in ctx.sent[0], ctx.sent[0]
+        bot.match_setup_generation = bot.setup_generation
+
+        # Post-team: unchanged behavior — team entry swapped, refund branch
+        # reachable, side named in the announcement.
+        bot.match_ongoing = True
+        bot.team1 = [{"id": "2", "name": "keep"}]
+        bot.team2 = []
+        bot.double_downs = {"2"}
+        bot.queue = [{"id": "1", "name": "out"}, {"id": "2", "name": "keep"}]
+        ctx = _SubCtx()
+        asyncio.run(cog.substitute(ctx, "<@2>", "<@9>"))
+        assert bot.team1 == [{"id": "9", "name": "Sub"}], bot.team1
+        assert [p["id"] for p in bot.queue] == ["1", "9"], bot.queue
+        assert "(Attackers)" in ctx.sent[0], ctx.sent[0]
+    finally:
+        mc.users = original_users
+        mc.verify_riot_account_async = original_verify
+        _sv.add_match_role, _sv.remove_match_role = original_add, original_remove
+        globals_mod.BOT_FEATURES = saved_features
 
     print("all maintenance_commands self-checks passed")
 

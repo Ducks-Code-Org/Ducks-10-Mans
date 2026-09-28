@@ -27,6 +27,9 @@ class CustomBot(commands.Bot):
         self.team1: list[dict] = []
         self.team2: list[dict] = []
         self.signup_active = False
+        # True while finalize_signup waits for everyone to join the lobby
+        # voice channel (issue #249: /substitute is allowed from here on).
+        self.lobby_wait_active = False
         self.current_signup_message = None
         self.current_teams_message = None
         self.queue: list[dict] = []
@@ -43,6 +46,12 @@ class CustomBot(commands.Bot):
         # "this setup was cancelled or superseded" (e.g. by !cancel).
         self.setup_generation = 0
 
+        # The setup_generation that created the current match channel/role.
+        # The signup/match flags are all False during the match-setup phase
+        # (votes/captains draft after the queue fills), so !signup needs this
+        # to tell a LIVE setup apart from resources left by a crashed cycle.
+        self.match_setup_generation: int | None = None
+
         # Discord log mirror flush task (started in on_ready).
         self.mirror_flush_loop = None
 
@@ -52,8 +61,9 @@ class CustomBot(commands.Bot):
         self.map_override_last: int = 0
         self.map_override_last_by: str | None = None
         self.map_override_deadline: float | None = None
-        # Every override wager this match, in order: [{"payer", "amount"}].
-        # Used to refund the whole escalation chain on cancel/crash.
+        # The standing override wager: [{"payer", "amount"}] (issue #205
+        # refunds outbid wagers live, so this holds only the current one).
+        # Used to refund it on cancel/crash.
         self.map_override_chain: list[dict] = []
 
         self.load_mmr_data()
@@ -271,6 +281,12 @@ class CustomBot(commands.Bot):
         }
 
     async def setup_hook(self):
+        # Global check + shared error replies for every (hybrid) command
+        # (issue #210). Registered before the cogs load so nothing can slip
+        # past the dev-mode gate.
+        from commands.slash_helpers import register_error_handlers
+
+        register_error_handlers(self)
         await self.load_extension("commands.admin_commands")
         await self.load_extension("commands.bug")
         await self.load_extension("commands.coin_commands")
@@ -284,7 +300,24 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.signup")
         await self.load_extension("commands.stats")
         self.tree.on_error = self._on_app_command_error
-        await self.tree.sync()
+        # Slash registration must never kill startup (issue #227): a failed
+        # sync (missing `applications.commands` scope, Discord 4xx, network)
+        # used to propagate out of login() and crash the bot with no hint,
+        # while a "successful" sync against an invite lacking the
+        # applications.commands scope silently registered nothing — both
+        # leaving `!` as the only working prefix, indistinguishably. Log the
+        # outcome either way so `/` availability is provable from the logs.
+        try:
+            synced = await self.tree.sync()
+            log.info("Synced %d slash command(s) to Discord.", len(synced))
+        except Exception as e:
+            log.error(
+                "Slash command sync failed (%s: %s). Slash (/) commands will "
+                "not appear; `!` prefix commands keep working. Re-invite the "
+                "bot with the `applications.commands` scope and restart.",
+                type(e).__name__,
+                e,
+            )
         log.info("Bot is ready and cogs are loaded.")
 
     async def on_ready(self):
@@ -341,8 +374,10 @@ class CustomBot(commands.Bot):
             pass
 
     async def on_command(self, ctx):
+        name = getattr(ctx.command, "qualified_name", ctx.command)
+        prefix = "/" if getattr(ctx, "interaction", None) is not None else "!"
         log.info(
-            "Command !%s invoked by %s in #%s", ctx.command, ctx.author, ctx.channel
+            "Command %s%s invoked by %s in #%s", prefix, name, ctx.author, ctx.channel
         )
 
     async def on_app_command_completion(self, interaction, command):
@@ -368,18 +403,20 @@ class CustomBot(commands.Bot):
         log.error("Unhandled exception in event %s", event_method, exc_info=True)
 
     async def on_command_error(self, ctx, error):
+        # User-facing replies are handled by slash_helpers (issue #210);
+        # this method stays the logging backstop for anything unhandled.
         if isinstance(error, commands.CommandNotFound):
             log.debug("Unknown command from %s: %s", ctx.author, ctx.message.content)
             return
         if isinstance(error, commands.MissingPermissions):
-            log.warning("%s lacks permissions for !%s", ctx.author, ctx.command)
+            log.warning("%s lacks permissions for %s", ctx.author, ctx.command)
         elif isinstance(error, (commands.MissingRole, commands.MissingAnyRole)):
-            log.warning("%s lacks role for !%s", ctx.author, ctx.command)
+            log.warning("%s lacks role for %s", ctx.author, ctx.command)
         elif isinstance(error, commands.CheckFailure):
-            log.warning("Check failed for !%s by %s", ctx.command, ctx.author)
+            log.warning("Check failed for %s by %s", ctx.command, ctx.author)
         else:
             log.error(
-                "Unhandled error in !%s by %s: %r",
+                "Unhandled error in %s by %s: %r",
                 ctx.command,
                 ctx.author,
                 error,

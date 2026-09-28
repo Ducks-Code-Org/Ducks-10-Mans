@@ -1,6 +1,7 @@
 "Commands related to displaying leaderboards."
 
 import logging
+from typing import Literal
 
 from discord.ext import commands
 
@@ -57,17 +58,27 @@ class LeaderboardCommand(BotCommands):
         )
         return leaderboard_view, content, None
 
-    @commands.command()
-    async def leaderboard(self, ctx, sort_by: str = "mmr"):
+    @commands.hybrid_command(
+        name="leaderboard",
+        description="View the 10 mans leaderboard (hidden reply)",
+    )
+    async def leaderboard(
+        self,
+        ctx,
+        sort_by: Literal[
+            "mmr", "rating", "wins", "losses", "kd", "acs", "coins"
+        ] = "mmr",
+    ):
         leaderboard_view, content, error = LeaderboardCommand.generate_leaderboard(
             self.bot, ctx, sort_by
         )
         if error:
-            await ctx.send(error)
+            await ctx.send(error, ephemeral=True)
             return
         self.leaderboard_view = leaderboard_view
-        # Reply directly to the invoker so concurrent users don't pile onto
-        # the same button set (issue #183). Each invocation gets its own view.
-        self.leaderboard_message = await ctx.reply(
-            content=content, view=leaderboard_view
+        # Hidden (ephemeral) per issue #210: the persistent public board posts
+        # to #leaderboard on startup; a manual invocation is personal. Each
+        # invocation still gets its own view (issue #183).
+        self.leaderboard_message = await ctx.send(
+            content=content, view=leaderboard_view, ephemeral=True
         )

@@ -244,35 +244,56 @@ def main():
 
     # --- issue #159: delta_mmr math --------------------------------------
     d = stats_helper.delta_mmr
-    # Equal MMR, 1.0 VLR: win = 10·1 + 8.571 = +18.57; loss = −10 + 0 = −10.0
-    assert abs(d(17.3, 13, 500, 500, 1.0) - (10 + 60 / 7)) < 1e-9
-    assert abs(d(8.7, 13, 500, 500, 1.0) - (-10.0)) < 1e-9
-    # The new win-row (win by +4.3, equal MMR): A=10 adds +7.14 over the old row
+    # Equal MMR, 1.0 VLR: win = 12·1 + 8.571 = +20.57; loss = −12 + 0 = −12.0
+    assert abs(d(17.3, 13, 500, 500, 1.0) - (12 + 60 / 7)) < 1e-9
+    assert abs(d(8.7, 13, 500, 500, 1.0) - (-12.0)) < 1e-9
+    # Win-row (win by +4.3, equal MMR) across the skill curve, 2026-09-24
+    # tuning: A=12 (rounds matter more), C=3 (slightly stronger skill
+    # spread); the carry term is gone so rating affects only C·(h−4). The
+    # h-curve's no-bonus floor ends at vlr 0.4 now, so h(0.5) = 1/3.
     for v, want in [
-        (0.5, 50 / 7),
-        (0.7, 10.0),
-        (0.8, 90 / 7),
-        (0.9, 110 / 7),
-        (1.0, 130 / 7),
-        (1.3, 180 / 7),
+        (0.5, 67 / 7),
+        (0.7, 81 / 7),
+        (0.8, 102 / 7),
+        (0.9, 123 / 7),
+        (1.0, 144 / 7),
+        (1.3, 165 / 7),
     ]:
         assert abs(d(17.3, 13, 500, 500, v) - want) < 0.01
-    # No loser can gain at equal MMR: loss branch is B·(1−m) ≤ 0, r ≤ 0, skill may add
-    # but only exceeds it above VLR ≈ 1.45 (accepted remainder); at 1.3 exactly:
-    assert d(11, 13, 500, 500, 1.3) < 0
-    # h curve points unchanged
+    # No loser can gain at equal MMR: loss branch is B·(1−m) ≤ 0, r ≤ 0, and
+    # since #253 the loss clamp caps every loss at −5 whatever the skill
+    # term adds; at 1.3 exactly (raw ≈ −2.58):
+    assert d(11, 13, 500, 500, 1.3) == -5.0
+    # h curve points: flat 0 up to vlr 0.4, then a gentler climb to (0.7, 1)
     h = stats_helper._h
-    assert h(0.5) == 0.0 and h(0.7) == 1.0 and h(1.0) == 4.0 and h(1.3) == 5.0
+    assert h(0.4) == 0.0 and h(0.7) == 1.0 and h(1.0) == 4.0 and h(1.3) == 5.0
+    assert abs(h(0.5) - 1.0 / 3.0) < 1e-9 and 0.0 < h(0.6) < h(0.7)
     # r saturation at ±4.3
     assert abs(d(20, 5, 500, 500, 1.0) - d(17.3, 13, 500, 500, 1.0)) < 1e-9
-    # Favorite (5x) winning evenly at 1.0: m = 5^0.75 → B term negative
-    assert d(13, 0, 2500, 500, 1.0) < 0 < d(17.3, 13, 500, 500, 1.0)
-    # Underdog (1/5) winning: +12.2 max on expectation term
-    assert d(13, 0, 500, 2500, 1.0) > 60 / 7 + 10
-    # Carry bonus: round lead AND vlr > 1.0 only
+    # Favorite (5x) stomping 13-0 at 1.0: the raw formula nets ~MMR-neutral
+    # (+0.48), but the minimum-swing floor (issue #253) lifts every win to
+    # at least +5 — a favorite can no longer lose MMR on a win. An equal-MMR
+    # win still pays more than the floored stomp.
+    assert d(13, 0, 2500, 500, 1.0) == 5.0
+    assert 5.0 < d(17.3, 13, 500, 500, 1.0)
+    # Underdog (1/5) winning 13-0: ≈ +24.2 on A + expectation
+    assert d(13, 0, 500, 2500, 1.0) > 60 / 7 + 12
+    # --- 2026-09-24 retune checks: the carry term is gone (rating moves
+    # wins and losses identically; #253's minimum swing is result-
+    # conditional, so it moves them identically too).
+    lead = d(13, 10, 500, 500, 1.3) - d(13, 10, 500, 500, 1.0)
     no_lead = d(10, 13, 500, 500, 1.3) - d(10, 13, 500, 500, 1.0)
-    with_lead = d(13, 10, 500, 500, 1.3) - d(13, 10, 500, 500, 1.0)
-    assert no_lead > 0 and with_lead > no_lead
+    assert abs(lead - no_lead) < 1e-9, (lead, no_lead)
+    # --- 2026-09-26 minimum-swing checks (issue #253): every win pays at
+    # least +5, every loss at most −5, whatever the raw formula says. The
+    # win floor is pinned with the favorite-stomp check above; a high-skill
+    # player's narrow loss (the skill term nearly cancels the loss) lands
+    # exactly on the loss floor.
+    assert d(12, 13, 500, 500, 1.3) == -5.0
+    # Unclamped results still exceed the floors (raw equal-MMR win ≈ +20.6,
+    # raw equal-MMR loss ≈ −12): the clamp only binds when it must.
+    assert d(13, 0, 500, 500, 1.0) > 5.0
+    assert d(8.7, 13, 500, 500, 1.0) < -5.0
     # Sign guarantee: every win > every loss at equal MMR/VLR
     assert d(13, 0, 500, 500, 0.5) > d(0, 13, 500, 500, 1.3)
 

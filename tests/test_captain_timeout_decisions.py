@@ -54,12 +54,15 @@ class FakeCtx:
         self.messages = []
         # (content, kwargs) pairs, so tests can assert on view= sends.
         self.sent = []
+        self.embeds = []
         self.guild = None
         self.channel = self
 
     async def send(self, content=None, **kwargs):
         self.messages.append(content)
         self.sent.append((content, kwargs))
+        if kwargs.get("embed") is not None:
+            self.embeds.append(kwargs["embed"])
         return types.SimpleNamespace(
             edit=types.MethodType(
                 lambda self, **kw: asyncio.sleep(0), types.SimpleNamespace()
@@ -160,6 +163,105 @@ async def demo():
     assert (
         bot.match_ongoing and bot.match_not_reported
     ), "empty-pool auto-pick skipped finalize_draft (teams never announced)"
+
+    # --- Issue #235: the match flags flip before the teams embed is sent ---
+    # The powerup notice opens as soon as teams are announced; /doubledown is
+    # gated on match_ongoing, so that flag must be live before (not ~15s of
+    # voice moves after) the announcement.
+    bot = FakeBot()
+    ctx, view = make_draft_view(bot, single_pick=True)
+    view.remaining_players.clear()
+    flags_during_announce = []
+    _real_send = ctx.send
+
+    async def flag_check_send(content=None, **kwargs):
+        flags_during_announce.append((bot.match_ongoing, bot.match_not_reported))
+        await _real_send(content, **kwargs)
+
+    ctx.send = flag_check_send
+    await view._auto_pick_on_timeout("someone")
+    assert any(
+        ongoing and reported for ongoing, reported in flags_during_announce
+    ), f"match flags must be live by the time the teams embed is sent: {flags_during_announce}"
+
+    # --- Issue #218 on the captains path: a !cancel racing the finalize ----
+    # finalize_draft re-checks is_setup_cancelled at entry, but the message
+    # deletions below are awaits: a cancel landing during them must not let
+    # the superseded cycle resurrect match_not_reported/match_ongoing (which
+    # would deadlock /signup and /report). The Balanced path
+    # (finalize_match_setup) re-checks right before the flag writes; the
+    # captains path must too.
+    bot = FakeBot()
+    ctx, view = make_draft_view(bot, single_pick=True)
+    view.remaining_players.clear()
+
+    class CancelOnDeleteMessage:
+        async def delete(self):
+            bot.setup_generation += 1  # what !cancel does
+            await asyncio.sleep(0)
+
+        async def edit(self, **kwargs):
+            await asyncio.sleep(0)
+
+    view.remaining_players_message = CancelOnDeleteMessage()
+    view.drafting_message = CancelOnDeleteMessage()
+    view.captain_pick_message = CancelOnDeleteMessage()
+    await view.finalize_draft()
+    assert not (bot.match_ongoing or bot.match_not_reported), (
+        "cancelled draft finalize resurrected the match flags "
+        f"(ongoing={bot.match_ongoing}, reported={bot.match_not_reported})"
+    )
+
+    # --- Issue #212: draft surfaces show rank mentions, never raw MMR -----
+    bot = FakeBot()
+    ctx, view = make_draft_view(bot, single_pick=True)
+    bot.player_mmr = {
+        "0": {"mmr": 150, "matches_played": 3, "wins": 2, "losses": 1},
+        "1": {"mmr": 0, "matches_played": 0, "wins": 0, "losses": 0},
+        "2": {"mmr": 500, "matches_played": 9, "wins": 6, "losses": 3},
+        "3": {"mmr": 0, "matches_played": 0, "wins": 0, "losses": 0},
+    }
+    remaining = [p for p in view.remaining_players]
+    assert {p["id"] for p in remaining} >= {"2", "3"}
+    await view.send_current_draft_view()
+
+    remaining_embed = next(
+        (e for e in ctx.embeds if e.title == "Remaining Players"), None
+    )
+    assert remaining_embed is not None, [e.title for e in ctx.embeds]
+    assert "MMR" not in remaining_embed.description, remaining_embed.description
+    assert (
+        "@Duck-Master Rank" in remaining_embed.description
+    ), remaining_embed.description
+    assert "Unranked" in remaining_embed.description, remaining_embed.description
+
+    drafting_embed = next((e for e in ctx.embeds if e.title == "Current Draft"), None)
+    assert drafting_embed is not None
+    team_values = "\n".join(f.value for f in drafting_embed.fields)
+    assert "MMR" not in team_values, team_values
+    assert "@Stone Rank" in team_values, team_values
+    assert "Unranked" in team_values, team_values
+
+    # The pick dropdown labels carry the same rank text, but as plain text:
+    # select labels cannot render a mention pill, so a raw <@&id> would leak.
+    labels = [o.label for o in view.player_select.options]
+    assert any("Duck-Master Rank" in l for l in labels), labels
+    assert any("Unranked" in l for l in labels), labels
+    assert not any("MMR" in l for l in labels), labels
+    assert not any("<@&" in l for l in labels), labels
+
+    # The finalized teams embed (finalize_draft) shows ranks too.
+    await view.finalize_draft()
+    teams_embed = next(
+        (e for e in ctx.embeds if (e.title or "").startswith("Teams on ")), None
+    )
+    assert teams_embed is not None, [e.title for e in ctx.embeds]
+    final_values = "\n".join(f.value for f in teams_embed.fields)
+    assert "MMR" not in final_values, final_values
+    assert (
+        "@Stone Rank" in final_values or "@Duck-Master Rank" in final_values
+    ), final_values
+    assert "Unranked" in final_values, final_values
 
     # --- !cancel still works mid-draft (setup generation bumped) ---
     bot = FakeBot()

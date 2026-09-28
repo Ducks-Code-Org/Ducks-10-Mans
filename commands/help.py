@@ -33,7 +33,7 @@ def _chunk_embed_lines(lines: list[str], limit: int = 1000) -> list[str]:
 
 # (usage arguments, short description) per command, grouped by the section
 # they render under — mirrors ADMIN_COMMAND_HELP in
-# commands/maintenance_commands.py so !help and !adminhelp share one style.
+# commands/maintenance_commands.py so /help and /adminhelp share one style.
 HELP_SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
     (
         "10 Mans",
@@ -43,7 +43,7 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
             (
                 "interest",
                 "<time>",
-                "Plan a time to play 10 mans (`!interest list` for upcoming)",
+                "Plan a time to play 10 mans (`/interest list` for upcoming)",
             ),
             ("pingrecent", "", "Ping everyone from the most recent queue"),
         ],
@@ -51,26 +51,38 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
     (
         "Stats",
         [
-            ("stats", "<Name#Tag|@user>", "Check a player's MMR and match statistics"),
-            ("linkriot", "<Name#Tag>", "Link your Riot account"),
-            ("ranks", "", "View rank roles and their MMR thresholds"),
+            (
+                "stats",
+                "[Name#Tag|@user]",
+                "Check a player's MMR and match statistics (hidden)",
+            ),
+            ("linkriot", "<Name#Tag>", "Link your Riot account (hidden)"),
+            ("ranks", "", "View rank roles and their MMR thresholds (hidden)"),
             (
                 "leaderboard",
-                "<type>",
-                "View the leaderboard\n↪ _Types: `mmr` (default), `rating`, `wins`, `losses`, `kd`, `acs`, `coins`_",
+                "[type]",
+                "View the leaderboard (hidden)\n↪ _Types: `mmr` (default), `rating`, `wins`, `losses`, `kd`, `acs`, `coins`_",
             ),
         ],
     ),
     (
         "Duck Coins",
         [
-            ("coins", "<Name#Tag|@user>", "Check Duck Coin balance (yours by default)"),
-            ("bet", "attackers|defenders <amount>", "Bet Duck Coins on the match"),
-            ("doubledown", "", "Spend 5 Duck Coins to double your MMR change"),
+            (
+                "coins",
+                "[Name#Tag|@user]",
+                "Check Duck Coin balance (yours by default, hidden)",
+            ),
+            (
+                "bet",
+                "attackers|defenders <amount>",
+                "Bet Duck Coins on the match (public)",
+            ),
+            ("doubledown", "", "Spend 5 Duck Coins to double your MMR change (public)"),
             (
                 "setmap",
-                "<map> <amount>",
-                "Wager Duck Coins (min 3) to override the chosen map",
+                "<map> [amount]",
+                "Wager Duck Coins (min 3) to override the chosen map (public)",
             ),
         ],
     ),
@@ -84,7 +96,10 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
 
 
 class HelpCommand(commands.Cog):
-    @commands.command()
+    @commands.hybrid_command(
+        name="help",
+        description="Show the 10 mans command list (hidden reply)",
+    )
     async def help(self, ctx):
         help_embed = discord.Embed(
             title="Help Menu",
@@ -92,13 +107,13 @@ class HelpCommand(commands.Cog):
             color=discord.Color.green(),
         )
 
-        # Same layout as !adminhelp: one non-inline field per section, each
-        # command rendered as `!usage` — description, chunked to stay under
-        # Discord's 1024-character embed field limit.
+        # Same layout as /adminhelp: one non-inline field per section, each
+        # command rendered as `/usage`, chunked to stay under Discord's
+        # 1024-character embed field limit.
         for section, entries in HELP_SECTIONS:
             lines = []
             for name, usage_args, desc in entries:
-                usage = f"!{name} {usage_args}".strip()
+                usage = f"/{name} {usage_args}".strip()
                 lines.append(f"`{usage}` — {desc}")
             chunks = _chunk_embed_lines(lines)
             for i, chunk in enumerate(chunks, start=1):
@@ -107,6 +122,6 @@ class HelpCommand(commands.Cog):
                 )
                 help_embed.add_field(name=field, value=chunk, inline=False)
 
-        help_embed.set_footer(text="Admins: !adminhelp lists maintenance commands.")
+        help_embed.set_footer(text="Admins: /adminhelp lists maintenance commands.")
 
-        await ctx.send(embed=help_embed)
+        await ctx.send(embed=help_embed, ephemeral=True)
