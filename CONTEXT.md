@@ -26,6 +26,16 @@ _Avoid_: timeout ping, 2-minute ping
 The minute-and-seconds remaining display, edited every second onto the final warning message until the lobby wait ends or the match is cancelled.
 _Avoid_: timer message, clock
 
+### Interest boards
+
+**Interest board**:
+The message that announces an interest slot and carries its Join / Remove / Refresh buttons.
+_Avoid_: signup board, polling message
+
+**Interest slot**:
+A planned time to run Duck’s 10 Mans, announced on an interest board and identified by its exact time; retired once that time passes.
+_Avoid_: signup slot, interest check
+
 ### Player changes
 
 **Substitute**:
@@ -48,3 +58,24 @@ _Avoid_: win floor, gain boost
 **Minimum loss**:
 The smallest amount of MMR any loss can cost.
 _Avoid_: loss floor, loss cap
+
+**Leaderboard rank**:
+A player's 1-based position in the canonical leaderboard order (MMR descending, then matches played, wins, and player_id); players who have never played have none.
+_Avoid_: standing, placement
+
+**Rank tier**:
+The MMR-bucket role a player holds, unrelated to leaderboard position.
+_Avoid_: leaderboard rank, placement
+### Betting
+
+**Parimutuel pool**:
+The coins escrowed on both betting sides for a match; each winning bettor's share is their stake's proportion of the whole pool, rounded half-up.
+_Avoid_: pot, prize pool
+
+**Payout floor**:
+The guarantee that every winning bet pays at least 1.5x its stake, with the bot minting any top-up the pool cannot fund.
+_Avoid_: minimum payout, win guarantee
+
+**Unclaimed pool**:
+The pool that sinks with no payout when nobody bet on the winning side.
+_Avoid_: dead pool, lost pool

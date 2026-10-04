@@ -9,7 +9,7 @@ from discord.ext import commands
 from commands import BotCommands
 from database import users
 from game.ranks import SSR_NAME, role_mention, tier_for_player
-from game.ranking import position_of
+from game.ranking import has_played, position_of
 from game.stats_helper import DEFAULT_MMR, avg_rating_of
 from tracker_links import (
     display_line_for,
@@ -120,10 +120,7 @@ class StatsCommand(BotCommands):
         # player's rank role (issue #178). Rank 1 also holds Supersonic Radiant.
         position = position_of(self.bot.player_mmr, player_id)
         ranked_total = sum(
-            1
-            for stats in self.bot.player_mmr.values()
-            if stats.get("matches_played", 0) > 0
-            or (stats.get("wins", 0) + stats.get("losses", 0)) > 0
+            1 for stats in self.bot.player_mmr.values() if has_played(stats)
         )
         tier = tier_for_player(mmr_value, matches_played=matches_played)
         rank_parts = []

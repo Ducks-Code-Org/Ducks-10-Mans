@@ -30,6 +30,7 @@ from game.duck_coins import (
     duck_coins_enabled,
     duck_emote,
 )
+from game.ranking import leaderboard_order
 from game.stats_helper import DEFAULT_MMR, update_stats
 from game.voice_presence import move_teams_to_voice, voice_presence_enabled
 from globals import BOT_CONFIG
@@ -257,19 +258,10 @@ def sync_ranks(bot) -> None:
     Mirrors the rank snapshot report.py writes after each match; used after an
     admin edits someone's MMR so the leaderboard's rank column stays truthful.
     """
-    played = {
-        pid
-        for pid, s in bot.player_mmr.items()
-        if s.get("matches_played", 0) > 0 or (s.get("wins", 0) + s.get("losses", 0)) > 0
-    }
     ranks = {
         pid: rank
         for rank, (pid, _) in enumerate(
-            sorted(
-                ((pid, s) for pid, s in bot.player_mmr.items() if pid in played),
-                key=lambda x: x[1].get("mmr", 0),
-                reverse=True,
-            ),
+            leaderboard_order(list(bot.player_mmr.items())),
             start=1,
         )
     }
@@ -1089,20 +1081,14 @@ class MaintenanceCommands(BotCommands):
         """Rewrite previous/current rank fields from the current MMR order
         (mirrors the rank snapshot report.py writes after each match)."""
         data = list(mmr_collection.find())
-        played = [
-            d
-            for d in data
-            if d.get("matches_played", 0) > 0
-            or (d.get("wins", 0) + d.get("losses", 0)) > 0
-        ]
-        played.sort(key=lambda x: x.get("mmr", 0), reverse=True)
+        ordered = leaderboard_order([(d["player_id"], d) for d in data])
         previous = {d["player_id"]: d.get("current_rank") for d in data}
-        for pos, d in enumerate(played, 1):
+        for pos, (pid, d) in enumerate(ordered, 1):
             mmr_collection.update_one(
-                {"player_id": d["player_id"]},
+                {"player_id": pid},
                 {
                     "$set": {
-                        "previous_rank": previous.get(d["player_id"]),
+                        "previous_rank": previous.get(pid),
                         "current_rank": pos,
                     }
                 },
