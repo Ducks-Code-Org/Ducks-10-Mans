@@ -294,6 +294,13 @@ class SignupView(discord.ui.View):
             await self.bot.match_channel.delete()
         except discord.HTTPException:
             pass
+        # Null the refs so the next /signup doesn't treat these deleted
+        # objects as stale leftovers (and log "Stale match resources" /
+        # re-round-trip deletes) — cleanup_match_resources (report.py) does
+        # the same for every other cancel path.
+        self.bot.match_role = None
+        self.bot.match_channel = None
+        self.bot.current_signup_message = None
         self.bot.match_setup_generation = None
 
         # Cleanup view

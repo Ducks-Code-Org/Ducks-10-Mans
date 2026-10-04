@@ -198,6 +198,12 @@ class SignupCommand(BotCommands):
         description="Start a new 10 mans signup session",
     )
     async def signup(self, ctx):
+        # Acknowledge the interaction before any slow work (Riot identity
+        # refresh, stale cleanup, channel/role creation — all multi-second).
+        # Without this, the 3-second interaction deadline (Discord 10062)
+        # kills the token and every later ctx.send fails; with it, all later
+        # sends ride the long-lived followup webhook.
+        await ctx.defer(ephemeral=True)
         async with self.bot.signup_lock:
             if not await ensure_perms(ctx):
                 return
