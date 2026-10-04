@@ -18,7 +18,7 @@ from game.duck_coins import (
     refund_open_bets,
     settle_bets,
 )
-from game.ranking import has_played
+from game.ranking import has_played, leaderboard_order
 from game.ranks import RANKS, SSR_NAME, rank_of, role_mention, sync_player_rank
 from game.recent_queue import remember_recent_queue
 from game.stats_helper import update_stats
@@ -495,24 +495,10 @@ class ReportCommand(BotCommands):
         }
 
         # Snapshot each player's leaderboard rank before this match is applied
-        pre_played_ids = {
-            pid
-            for pid, stats in pre_update_mmr.items()
-            if stats.get("matches_played", 0) > 0
-            or (stats.get("wins", 0) + stats.get("losses", 0)) > 0
-        }
         pre_update_ranks = {
             pid: rank
             for rank, (pid, _) in enumerate(
-                sorted(
-                    (
-                        (pid, stats)
-                        for pid, stats in pre_update_mmr.items()
-                        if pid in pre_played_ids
-                    ),
-                    key=lambda x: x[1]["mmr"],
-                    reverse=True,
-                ),
+                leaderboard_order(list(pre_update_mmr.items())),
                 start=1,
             )
         }
@@ -857,24 +843,10 @@ class ReportCommand(BotCommands):
 
         # Record each player's previous leaderboard rank so the
         # leaderboard can display rank gain/loss since the last match
-        played_ids = {
-            pid
-            for pid, stats in self.bot.player_mmr.items()
-            if stats.get("matches_played", 0) > 0
-            or (stats.get("wins", 0) + stats.get("losses", 0)) > 0
-        }
         new_ranks = {
             pid: rank
             for rank, (pid, _) in enumerate(
-                sorted(
-                    (
-                        (pid, stats)
-                        for pid, stats in self.bot.player_mmr.items()
-                        if pid in played_ids
-                    ),
-                    key=lambda x: x[1].get("mmr", 0),
-                    reverse=True,
-                ),
+                leaderboard_order(list(self.bot.player_mmr.items())),
                 start=1,
             )
         }

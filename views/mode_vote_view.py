@@ -7,7 +7,7 @@ import discord
 from discord.ui import Button
 
 from game.stats_helper import DEFAULT_MMR
-from views import safe_reply
+from views import defer_component, reflect_board, safe_reply
 from views.map_type_vote_view import MapTypeVoteView
 
 log = logging.getLogger(__name__)
@@ -70,13 +70,11 @@ class ModeVoteView(discord.ui.View):
         )
 
     async def vote_callback(self, interaction: discord.Interaction, mode: str):
-        # Defer the interaction if not already done, to allow time for processing
-        if not interaction.response.is_done():
-            try:
-                await interaction.response.defer(ephemeral=True)
-            except discord.errors.NotFound:
-                # Interaction expired, do not queue
-                return
+        # Component-style defer (update-message intent): the deferred ack is
+        # completed by reflect_board below, so the write that records the
+        # vote and the write that shows it are the SAME request (issue #258).
+        if not await defer_component(interaction):
+            return
 
         # Add the interaction to the interaction queue and wait for processing
         loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
@@ -140,7 +138,12 @@ class ModeVoteView(discord.ui.View):
             self.balanced_button.label = f"Balanced Teams ({self.votes['Balanced']})"
         else:
             self.captains_button.label = f"Captains ({self.votes['Captains']})"
-        await interaction.message.edit(view=self)
+        # Confirm-after-reflect (issue #258): the board is updated THROUGH
+        # the click's own interaction — the identical request that completes
+        # its deferred ack — and the confirmation is skipped if that write
+        # fails, so it can never lead the board.
+        if not await reflect_board(interaction, self):
+            return
 
         # Reply and check for vote finish
         log.info("Recorded new vote. Current state: %s", self.votes)
@@ -279,6 +282,9 @@ class ModeVoteView(discord.ui.View):
         self.bot.team2 = team2
 
     async def timeout_timer(self):
+        # Countdown text only: timer edits pass NO view, so they can never
+        # repaint stale button counts over a vote that just landed (issue
+        # #258). Player-facing button updates ride interactions only.
         for _ in range(25):
             await asyncio.sleep(1)
             if self.voting_phase_ended:
@@ -293,7 +299,6 @@ class ModeVoteView(discord.ui.View):
                 try:
                     await self.view_message.edit(
                         content=f"Vote how teams should be chosen: ({self.vote_time_remaining}s)",
-                        view=self,
                     )
                 except discord.NotFound:
                     pass
