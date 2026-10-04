@@ -84,6 +84,7 @@ async def demo():
         "coins",
         "bet",
         "doubledown",
+        "dodge",
         "setmap",
         "help",
         "bug",
@@ -195,6 +196,73 @@ async def demo():
 
     # toggledev no longer switches the prefix (slash commands make it moot).
     assert "command_prefix" not in toggle_src, "toggledev must not switch prefixes"
+
+    # Issue #260: /dodge is a real command that must AWAIT the engine (a bare
+    # lambda would send the coroutine object) and reply at all. Drive it
+    # behaviorally against the loaded cog with fake ctx/bot: rejection replies
+    # hidden, no teardown on rejection.
+    import game.duck_coins as dc
+
+    dodge_cmd = bot.get_command("dodge")
+    assert dodge_cmd is not None, "/dodge must be registered"
+    cog = bot.get_cog("CoinCommands")
+
+    class _FakeGuild:
+        id = 1
+        text_channels = []
+
+    class _DodgeBot:
+        report_lock = asyncio.Lock()
+        # Match running but no powerup window yet: command_available passes,
+        # the engine is reached, and it rejects on the missing window.
+        match_ongoing = True
+        match_channel = None
+        match_name = "match"
+        map_override_deadline = None
+        ten_mans_channel = None
+
+    sent = []
+
+    class _FakeCtx:
+        author = types.SimpleNamespace(id=99)
+        channel = types.SimpleNamespace(id=1, name="match-260")
+        guild = _FakeGuild()
+
+        async def send(self, content=None, **kw):
+            sent.append((content, kw))
+
+    dodge_bot = _DodgeBot()
+    orig_bot = cog.bot
+    cog.bot = dodge_bot
+    try:
+        await dodge_cmd.callback(cog, _FakeCtx())
+    finally:
+        cog.bot = orig_bot
+    assert sent, "/dodge must reply even when it rejects"
+    rejected, kw = sent[-1]
+    assert "only available after teams are announced" in rejected, rejected
+    assert kw.get("ephemeral") is True, "a rejected /dodge must stay hidden"
+    assert "<coroutine" not in rejected, "the engine coroutine must be awaited"
+
+    # Channel gate: a live match with a known match channel rejects a dodge
+    # from anywhere else, hidden, with no engine call (no charge).
+    from game.duck_coins import DODGE_COST
+
+    dodge_bot.match_channel = types.SimpleNamespace(id=777, name="match-260")
+    before = dc.coins_of(99)
+    sent.clear()
+    cog.bot = dodge_bot
+    try:
+        await dodge_cmd.callback(cog, _FakeCtx())
+    finally:
+        cog.bot = orig_bot
+    assert sent, "an off-channel /dodge must still reply"
+    off_channel, kw2 = sent[-1]
+    assert "match channel" in off_channel, off_channel
+    assert kw2.get("ephemeral") is True, "the channel rejection must stay hidden"
+    assert dc.coins_of(99) == before, "a rejected dodge must charge nothing"
+    # (coins_of(99) is 0 in the fake store; the assertion documents no charge.)
+    assert before == 0 and DODGE_COST > 0
 
     print("all slash-conversion self-checks passed")
 

@@ -17,7 +17,16 @@ _database_stub.mmr_collection = types.SimpleNamespace(
 )
 _database_stub.seasons = types.SimpleNamespace()
 _database_stub.all_matches = types.SimpleNamespace()
-_database_stub.recent_queue = types.SimpleNamespace()
+_recent_doc = {}
+
+
+def _recent_upsert(query, update, upsert=False):
+    _recent_doc.update(update.get("$set", {}))
+
+
+_database_stub.recent_queue = types.SimpleNamespace(
+    update_one=_recent_upsert, find_one=lambda *a, **k: None
+)
 
 # Fake coin_escrow collection backed by a dict: mirrors Mongo's upsert/$unset
 # contract closely enough for the escrow-journal self-checks.
@@ -994,6 +1003,166 @@ def demo():
         )
     ).read()
     assert "refund_match_coins(self.bot)" in src, "!cancel must refund on cancel"
+
+    # --- Issue #260: /dodge — paid match dodge during the powerup window ---
+    from game.duck_coins import DODGE_COST, _powerups_announcement, dodge
+
+    add_coins = duck_coins.add_coins
+
+    def _dodge_guild():
+        """A fake guild whose #10-mans records sends, with one member."""
+        sends = []
+        channel = types.SimpleNamespace(name="10-mans", send=None)
+
+        async def _capture(content=None, **kw):
+            sends.append(content)
+
+        channel.send = _capture
+
+        class _Member:
+            id = 1
+            display_name = "QuackLegend"
+
+        guild = types.SimpleNamespace(
+            text_channels=[channel], get_member=lambda uid: _Member()
+        )
+        return guild, sends
+
+    async def _run_dodge():
+        # Fresh match state: players 1 and 2, spectator 5 with bets.
+        b = FakeBot()
+        b.match_ongoing = True
+        b.match_not_reported = True
+        b.setup_generation = 3
+        b.match_setup_generation = 3
+        b.map_override_deadline = time.monotonic() + 120
+        b.emojis = []
+        DB["1"]["duck_coins"] = 15  # exactly the fee
+        DB["2"]["duck_coins"] = 100
+        DB["5"]["duck_coins"] = 10
+        session = open_window(b)
+        # Spectator 5 escrowed a 4-coin bet on attackers; player 1 doubled
+        # down and holds the standing map-override wager.
+        session["bets"]["attackers"]["5"] = 4
+        DB["5"]["duck_coins"] = 6  # as if escrowed
+        b.double_downs = {"1"}
+        b.map_override_last = 5
+        b.map_override_last_by = "1"
+        b.map_override_chain = [{"payer": "1", "amount": 5}]
+        # Player 1's ledger, told honestly: started at 25, paid 5 for the
+        # doubledown (20), paid 5 for the standing override wager (15) —
+        # exactly the DODGE_COST balance the gate then accepts.
+        DB["1"]["duck_coins"] = 25
+        add_coins("1", -DOUBLEDOWN_COST)
+        add_coins("1", -5)
+
+        guild, sends = _dodge_guild()
+        b.match_channel = types.SimpleNamespace(id=1, name="match-260", guild=guild)
+
+        balance_before = coins_of("1")
+        reply = await dodge(b, "1")
+        return b, reply, sends, balance_before
+
+    b, reply, sends, balance_before = asyncio.run(_run_dodge())
+    assert balance_before == DODGE_COST, balance_before
+    # Fee burned (15 -> 0), while their doubledown and standing wager refund:
+    assert (
+        coins_of("1") == 10
+    ), f"refund must restore 5+5 with fee burned: {coins_of('1')}"
+    # Everyone else's purchases refunded: the spectator's escrowed bet.
+    assert coins_of("5") == 10, f"spectator bet must refund: {coins_of('5')}"
+    # Teardown flags cleared, generation bumped, queue remembered.
+    assert b.match_ongoing is False and b.match_not_reported is False
+    assert b.setup_generation == 4 and b.match_setup_generation is None
+    assert _recent_doc.get("cancelled") is True, "/pingrecent memory must update"
+    assert b.bet_session is None and b.double_downs == set()
+    assert b.map_override_chain == []
+    # In-channel success states the fee (public reply).
+    assert "15" in reply and "dodged" in reply, reply
+    # #10-mans got exactly ONE message: the attributed dodge announcement,
+    # carrying the server nickname and the fee; generic cancel notice absent.
+    assert len(sends) == 1, sends
+    assert "**QuackLegend** just dodged the match for 15" in sends[0], sends
+    assert "refunded" in sends[0], sends
+    assert "Match cancelled" not in sends[0], sends
+
+    # Gate order — every rejection charges nothing and moves no coins:
+    # disabled feature, no match, no window, timed-out window, non-player,
+    # insufficient balance. Second call after success also rejects.
+    async def _run_gates():
+        out = []
+        b = FakeBot()
+        b.map_override_deadline = time.monotonic() + 120
+        b.emojis = []
+        b.match_channel = None
+        DB["1"]["duck_coins"] = 100
+        # Duck Coins disabled (feature flag), match running.
+        real_enabled = duck_coins.duck_coins_enabled
+        duck_coins.duck_coins_enabled = lambda: False
+        try:
+            reply = await dodge(b, "1")
+        finally:
+            duck_coins.duck_coins_enabled = real_enabled
+        out.append(("disabled", reply, 100))
+        # No match running.
+        b.match_ongoing = False
+        reply = await dodge(b, "1")
+        out.append(("no match", reply, 100))
+        # Live match: no window yet.
+        b.match_ongoing = True
+        b.map_override_deadline = None
+        reply = await dodge(b, "1")
+        out.append(("no window", reply, 100))
+        # Timed-out window.
+        b.map_override_deadline = time.monotonic() - 1
+        reply = await dodge(b, "1")
+        out.append(("timed out", reply, 100))
+        # Non-player (window live again).
+        b.map_override_deadline = time.monotonic() + 120
+        reply = await dodge(b, "7")
+        out.append(("non-player", reply, coins_of("7")))
+        # Insufficient balance.
+        DB["1"]["duck_coins"] = 14
+        reply = await dodge(b, "1")
+        out.append(("insufficient", reply, 14))
+        return out
+
+    gates = asyncio.run(_run_gates())
+    assert "disabled" in gates[0][1], gates[0]
+    assert "No match is running" in gates[1][1], gates[1]
+    assert "only available after teams are announced" in gates[2][1], gates[2]
+    assert "dodge window has timed out" in gates[3][1], gates[3]
+    assert "Only players in this match" in gates[4][1], gates[4]
+    assert "have 14" in gates[5][1] and "need 15" in gates[5][1], gates[5]
+    assert coins_of("7") == 0, "a rejected dodge must not create a balance"
+    assert [g[2] for g in gates] == [100, 100, 100, 100, 0, 14], "no charge on reject"
+
+    # Second dodge after success rejects on the flipped gates; no refunds.
+    # b is torn down (match_ongoing False, deadline None from refund path).
+    reply2 = asyncio.run(asyncio.wait_for(dodge(b, "1"), 2))
+    assert "No match is running" in reply2, reply2
+
+    # The powerup notice lists /dodge with its cost while open; the closed
+    # state locks all three commands.
+    text_open = _powerups_announcement(bot, 120)
+    assert "/dodge" in text_open and "15" in text_open, text_open
+    text_closed = _powerups_announcement(bot, 0)
+    assert "/dodge" in text_closed, text_closed
+
+    # Help's Duck Coins table lists /dodge with the fee (issue #260). The
+    # help module imports discord.ext at module scope, so parse its table
+    # source — the test_duck_coins seam has no command layer.
+    help_src = open(
+        os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "commands",
+            "help.py",
+        )
+    ).read()
+    duck_src = help_src.split('"Duck Coins",')[1].split('"Utility"')[0]
+    assert '"dodge"' in duck_src, "help table must list /dodge under Duck Coins"
+    dodge_entry = duck_src.split('"dodge"')[1]
+    assert "15" in dodge_entry.split(")")[0], dodge_entry
 
     print("all duck coins self-checks passed")
 
