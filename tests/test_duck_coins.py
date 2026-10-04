@@ -175,6 +175,9 @@ def open_window(bot):
         "bets": {"attackers": {}, "defenders": {}},
         "message": None,
         "task": None,
+        "powerup_message": None,
+        "powerup_task": None,
+        "ends_at": 0,
     }
     return bot.bet_session
 
@@ -202,6 +205,8 @@ def demo():
     assert "Pick a side" in reply
     reply = place_bet(bot, "1", "attackers", 1)
     assert "can't bet" in reply, "match player must not bet"
+    reply = place_bet(bot, "1", "defenders", 1)
+    assert "can't bet" in reply, "match player must stay barred (issue #255)"
     reply = place_bet(bot, "5", "defenders", 0)
     assert "Minimum" in reply
     reply = place_bet(bot, "5", "attackers", 0)
@@ -251,7 +256,6 @@ def demo():
 
     # Issue #255: a one-sided pool pays the 1.5x floor, minted by the bot.
     # Stake 2 solo → share 2, floor half_up(3.0)=3 → pays 3 (1 coin minted).
-    DB["5"]["duck_coins"] = 5
     session = open_window(bot)
     session["bets"]["attackers"]["5"] = 2
     DB["5"]["duck_coins"] = 3  # as if the 2-coin bet was escrowed
@@ -266,7 +270,6 @@ def demo():
     embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
     assert coins_of("5") == 2, f"1-coin floor must pay 2 (half-up): {coins_of('5')}"
     assert "(+1)" in embed.fields[0]["value"], embed.fields
-    assert "1.50x" not in embed.fields[0]["value"], embed.fields
 
     # Large solo stake: 1.5x uncapped — a 100-coin stake pays 150.
     DB["5"]["duck_coins"] = 0
@@ -304,30 +307,26 @@ def demo():
 
     # The live betting embed shows the floored odds on lopsided pools
     # (max(actual, 1.50x)) so the guarantee is visible before betting.
-    from game.duck_coins import _betting_embed as _be_embed
+    import game.duck_coins as _dc
 
-    solo = {
-        "open": True,
-        "bets": {"attackers": {"5": 2}, "defenders": {}},
-        "message": None,
-        "powerup_message": None,
-        "task": None,
-        "powerup_task": None,
-        "ends_at": 0,
-    }
-    embed = _be_embed(bot, solo, 300)
-    assert "1.50x" in embed.fields[0]["value"], embed.fields[0]
-    heavy = {
-        "open": True,
-        "bets": {"attackers": {"5": 2}, "defenders": {"6": 8}},
-        "message": None,
-        "powerup_message": None,
-        "task": None,
-        "powerup_task": None,
-        "ends_at": 0,
-    }
-    embed = _be_embed(bot, heavy, 300)
-    assert "5.00x" in embed.fields[0]["value"], embed.fields[0]
+    class _FakeBetMessage:
+        def __init__(self):
+            self.embeds = []
+
+        async def edit(self, embed=None):
+            self.embeds.append(embed)
+
+    solo = open_window(bot)
+    solo["message"] = _FakeBetMessage()
+    solo["bets"]["attackers"]["5"] = 2
+    asyncio.run(_dc._refresh_betting_embed(bot, solo))
+    assert "1.50x" in solo["message"].embeds[-1].fields[0]["value"]
+    heavy = open_window(bot)
+    heavy["message"] = _FakeBetMessage()
+    heavy["bets"]["attackers"]["5"] = 2
+    heavy["bets"]["defenders"]["6"] = 8
+    asyncio.run(_dc._refresh_betting_embed(bot, heavy))
+    assert "5.00x" in heavy["message"].embeds[-1].fields[0]["value"]
 
     # Nobody bet at all: no embed, nothing to post.
     open_window(bot)

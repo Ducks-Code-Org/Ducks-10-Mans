@@ -404,12 +404,12 @@ def _team_lines(bot, team) -> list[str]:
 
 
 def _half_up(x: float) -> int:
-    """Round half away from zero (0.5 rounds up).
+    """Round half up (0.5 rounds up) for non-negative payout values.
 
     Betting payout math must not use builtin round(): it does banker's
     rounding (round(2.5) == 2), breaking the coin rule that 0.5 rounds up.
     """
-    return int((x * 2 + 1) // 2) if x >= 0 else -int((-x * 2 + 1) // 2)
+    return int((x * 2 + 1) // 2)
 
 
 def _betting_embed(bot, session, remaining: int) -> discord.Embed:
@@ -439,9 +439,7 @@ def _betting_embed(bot, session, remaining: int) -> discord.Embed:
         if pool and total:
             # Parimutuel: every coin on a side pays total/side when it wins.
             # Lopsided pools pay at least the 1.5x payout floor (issue #255).
-            value += (
-                f"\n**Pool:** {pool} {e} — pays **{max(total / pool, PAYOUT_FLOOR):.2f}x** per coin\n"
-            )
+            value += f"\n**Pool:** {pool} {e} — pays **{max(total / pool, PAYOUT_FLOOR):.2f}x** per coin\n"
         else:
             value += f"\n**Pool:** {pool} {e}\n"
         return value
@@ -797,9 +795,7 @@ async def settle_bets(bot, winner: str):
     for pid, amount in sorted(winners.items(), key=lambda item: -item[1]):
         # Parimutuel share, floored at 1.5x the stake (issue #255). A pool
         # that can't fund the floor gets a minted top-up from the bot.
-        payout = max(
-            _half_up(amount * total / pool), _half_up(PAYOUT_FLOOR * amount)
-        )
+        payout = max(_half_up(amount * total / pool), _half_up(PAYOUT_FLOOR * amount))
         add_coins(pid, payout)
         winner_rows.append((pid, amount, payout, payout - amount))
     # Minted = coins paid beyond the escrowed pool (floor top-ups and
