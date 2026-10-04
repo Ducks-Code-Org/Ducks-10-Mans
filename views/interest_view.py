@@ -1,5 +1,6 @@
 # views/interest_view.py
 import logging
+from datetime import datetime, timezone
 
 import discord
 from discord.ui import Button, View
@@ -10,16 +11,24 @@ from globals import TIME_ZONE_CST
 log = logging.getLogger(__name__)
 
 
+def slot_is_past(scheduled_at_utc, now=None) -> bool:
+    """True once the slot's exact time has passed — the board is retired."""
+    return (now or datetime.now(timezone.utc)) >= scheduled_at_utc
+
+
 class InterestView(View):
     """
     A simple join/leave interest view for a planned Duck's 10 Mans slot.
     Each message is tied to one UTC timestamp (the slot time).
+
+    Every click edits the board through the click's own interaction
+    (`response.edit_message`), whose webhook token is always fresh — the
+    board works at any age until the slot passes (issue #257).
     """
 
-    def __init__(self, scheduled_at_utc, message=None, timeout=None):
+    def __init__(self, scheduled_at_utc, timeout=None):
         super().__init__(timeout=timeout)
         self.scheduled_at_utc = scheduled_at_utc
-        self.message = message
 
         # Buttons
         self.join_button = Button(style=discord.ButtonStyle.success, label="I’m in ✅")
@@ -78,35 +87,59 @@ class InterestView(View):
                 lines.append(f"• <@{uid}>")
         return "\n".join(lines)
 
-    async def _render(self, interaction: discord.Interaction):
-        doc = self._slot_doc() or {"interested_ids": []}
+    def _board_embed(self, doc=None) -> discord.Embed:
+        """The full board: header plus roster, built before posting."""
+        doc = doc or self._slot_doc() or {"interested_ids": []}
         count = len(doc.get("interested_ids") or [])
         body = self._format_list(doc)
-        embed = discord.Embed(
+        return discord.Embed(
             title="",
             description=f"{self._format_header()}\n\n**Interested ({count})**:\n{body}",
             color=discord.Color.green(),
         )
-        if self.message:
-            await self.message.edit(embed=embed, view=self)
-        else:
-            await interaction.response.edit_message(embed=embed, view=self)
+
+    def _retired(self) -> "InterestView":
+        """A copy of this board with every button grayed out (slot over)."""
+        view = InterestView(self.scheduled_at_utc, timeout=None)
+        for item in view.children:
+            item.disabled = True
+        return view
+
+    async def _retire_if_past(self, interaction: discord.Interaction) -> bool:
+        """On an expired slot: gray out the board, change nothing, return True."""
+        if not slot_is_past(self.scheduled_at_utc):
+            return False
+        await interaction.response.edit_message(
+            embed=self._board_embed(), view=self._retired()
+        )
+        return True
 
     # end of helpers, start of callback functions
     async def join_callback(self, interaction: discord.Interaction):
+        if await self._retire_if_past(interaction):
+            return
         user_id = str(interaction.user.id)
         self._ensure_membership(user_id, add=True)
         log.info("%s joined interest slot %s", interaction.user, self.scheduled_at_utc)
-        await interaction.response.defer(thinking=False)
-        await self._render(interaction)
+        # One atomic Discord write: the ack IS the board update, carrying
+        # the member who just clicked (issue #257).
+        await interaction.response.edit_message(
+            embed=self._board_embed(), view=self
+        )
 
     async def leave_callback(self, interaction: discord.Interaction):
+        if await self._retire_if_past(interaction):
+            return
         user_id = str(interaction.user.id)
         self._ensure_membership(user_id, add=False)
         log.info("%s left interest slot %s", interaction.user, self.scheduled_at_utc)
-        await interaction.response.defer(thinking=False)
-        await self._render(interaction)
+        await interaction.response.edit_message(
+            embed=self._board_embed(), view=self
+        )
 
     async def refresh_callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=False)
-        await self._render(interaction)
+        if await self._retire_if_past(interaction):
+            return
+        await interaction.response.edit_message(
+            embed=self._board_embed(), view=self
+        )
