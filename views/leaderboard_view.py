@@ -11,6 +11,7 @@ from table2ascii import table2ascii as t2a
 
 from database import mmr_collection, users
 from game.duck_coins import duck_coins_enabled
+from game.ranking import leaderboard_order
 from game.stats_helper import DEFAULT_MMR, avg_rating_of
 from tracker_links import display_name_for
 
@@ -25,19 +26,22 @@ def _has_played(doc: dict) -> bool:
 
 
 def sort_key_for(sort_by: str):
-    """Sort key for a leaderboard column, highest first.
+    """Deterministic sort key for a leaderboard row document (issue #256):
+    the primary column best-first, ties by player_id ascending (MMR
+    additionally breaks ties by matches played, then wins, descending) —
+    the same canonical order the stored ranks are written in, so the Rank
+    column and the rows can never disagree.
 
     `avg_rating` uses the round-weighted average VLR rating; players without
     a recorded rating sort to the bottom.
     """
-    if sort_by == "avg_rating":
+    from game.ranking import leaderboard_key
 
-        def key(doc):
-            rating = avg_rating_of(doc)
-            return rating if rating is not None else float("-inf")
+    def key(doc):
+        pid, stats = str(doc.get("player_id", "")), doc
+        return leaderboard_key((pid, stats), sort_by)
 
-        return key
-    return lambda doc: doc.get(sort_by, 0)
+    return key
 
 
 def _rank_display(player_data: dict, sort_by: str, fallback_rank: int) -> str:
@@ -254,12 +258,16 @@ class LeaderboardView(View):
         await self.update_message(interaction)
 
     async def on_refresh(self, interaction: discord.Interaction):
-        self.sorted_data = sorted(
-            mmr_collection.find(),
-            key=sort_key_for(self.sort_by),
-            reverse=True,
-        )
-        self.sorted_data = [d for d in self.sorted_data if _has_played(d)]
+        # Canonical deterministic order (issue #256), then the zero-match
+        # filter the view applies everywhere else.
+        self.sorted_data = [
+            d
+            for _, d in leaderboard_order(
+                [(str(d["player_id"]), d) for d in mmr_collection.find()],
+                self.sort_by,
+            )
+            if _has_played(d)
+        ]
 
         self.total_pages = math.ceil(len(self.sorted_data) / self.players_per_page)
         if self.current_page >= self.total_pages:
