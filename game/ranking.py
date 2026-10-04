@@ -1,27 +1,28 @@
 """Shared helpers for computing a player's leaderboard rank."""
 
+from typing import Iterable, TypeVar
+
 from game.stats_helper import DEFAULT_MMR, avg_rating_of
 
-
-def has_played(stats: dict) -> bool:
-    """True when the player has played at least one match."""
-    mp = stats.get("matches_played")
-    if isinstance(mp, (int, float)):
-        return mp > 0
-    return (stats.get("wins", 0) + stats.get("losses", 0)) > 0
+P = TypeVar("P", bound=tuple[str, dict])
 
 
-def _matches_played(stats: dict) -> int:
+def matches_played(stats: dict) -> int:
+    """Played-match count, falling back to wins+losses for legacy docs."""
     mp = stats.get("matches_played")
     if isinstance(mp, (int, float)):
         return int(mp)
     return int(stats.get("wins", 0) + stats.get("losses", 0))
 
 
-def leaderboard_key(pair, column: str = "mmr"):
+def has_played(stats: dict) -> bool:
+    """True when the player has played at least one match."""
+    return matches_played(stats) > 0
+
+
+def leaderboard_key(pair: P, column: str = "mmr") -> tuple:
     """Sort key behind leaderboard_order: primary column descending (as a
-    negated ascending value), then the tie chain. Exposed so document-level
-    consumers (leaderboard rows) sort with the exact same rule."""
+    negated ascending value), then the tie chain."""
     pid, s = pair
     if column == "avg_rating":
         rating = avg_rating_of(s)
@@ -31,12 +32,12 @@ def leaderboard_key(pair, column: str = "mmr"):
     else:
         primary = s.get(column, 0)
     if column == "mmr":
-        # Matches/wins use the same fallback semantics as has_played.
-        return (-primary, -_matches_played(s), -(s.get("wins", 0) or 0), str(pid))
+        # MMR ties: matches played desc, wins desc, then player_id asc.
+        return (-primary, -matches_played(s), -(s.get("wins", 0) or 0), str(pid))
     return (-primary, str(pid))
 
 
-def leaderboard_order(entries, column: str = "mmr") -> list[tuple[str, dict]]:
+def leaderboard_order(entries: Iterable[P], column: str = "mmr") -> list[P]:
     """Deterministic leaderboard order over (player_id, stats) pairs.
 
     Players who have never played are filtered out first (Leaderboard rank:

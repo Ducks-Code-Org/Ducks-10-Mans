@@ -11,37 +11,11 @@ from table2ascii import table2ascii as t2a
 
 from database import mmr_collection, users
 from game.duck_coins import duck_coins_enabled
-from game.ranking import leaderboard_order
+from game.ranking import has_played, leaderboard_order
 from game.stats_helper import DEFAULT_MMR, avg_rating_of
 from tracker_links import display_name_for
 
 log = logging.getLogger(__name__)
-
-
-def _has_played(doc: dict) -> bool:
-    mp = doc.get("matches_played")
-    if isinstance(mp, (int, float)):
-        return mp > 0
-    return (doc.get("wins", 0) + doc.get("losses", 0)) > 0
-
-
-def sort_key_for(sort_by: str):
-    """Deterministic sort key for a leaderboard row document (issue #256):
-    the primary column best-first, ties by player_id ascending (MMR
-    additionally breaks ties by matches played, then wins, descending) —
-    the same canonical order the stored ranks are written in, so the Rank
-    column and the rows can never disagree.
-
-    `avg_rating` uses the round-weighted average VLR rating; players without
-    a recorded rating sort to the bottom.
-    """
-    from game.ranking import leaderboard_key
-
-    def key(doc):
-        pid, stats = str(doc.get("player_id", "")), doc
-        return leaderboard_key((pid, stats), sort_by)
-
-    return key
 
 
 def _rank_display(player_data: dict, sort_by: str, fallback_rank: int) -> str:
@@ -98,8 +72,8 @@ class LeaderboardView(View):
         self.players_per_page = players_per_page
         self.current_page = 0
 
-        # Hide users with zero matches
-        self.sorted_data = [d for d in self.sorted_data if _has_played(d)]
+        # Hide users with zero matches (canonical ranking filter; issue #256)
+        self.sorted_data = [d for d in self.sorted_data if has_played(d)]
 
         # compute pages after filtering
         self.total_pages = max(
@@ -258,15 +232,14 @@ class LeaderboardView(View):
         await self.update_message(interaction)
 
     async def on_refresh(self, interaction: discord.Interaction):
-        # Canonical deterministic order (issue #256), then the zero-match
-        # filter the view applies everywhere else.
+        # Canonical deterministic order (issue #256); leaderboard_order
+        # already drops zero-match players.
         self.sorted_data = [
             d
             for _, d in leaderboard_order(
                 [(str(d["player_id"]), d) for d in mmr_collection.find()],
                 self.sort_by,
             )
-            if _has_played(d)
         ]
 
         self.total_pages = math.ceil(len(self.sorted_data) / self.players_per_page)

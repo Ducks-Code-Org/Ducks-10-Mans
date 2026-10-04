@@ -48,3 +48,11 @@ _Avoid_: win floor, gain boost
 **Minimum loss**:
 The smallest amount of MMR any loss can cost.
 _Avoid_: loss floor, loss cap
+
+**Leaderboard rank**:
+A player's 1-based position in the canonical leaderboard order (MMR descending, then matches played, wins, and player_id); players who have never played have none.
+_Avoid_: standing, placement
+
+**Rank tier**:
+The MMR-bucket role a player holds, unrelated to leaderboard position.
+_Avoid_: leaderboard rank, placement
