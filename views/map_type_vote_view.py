@@ -72,10 +72,12 @@ class MapTypeVoteView(discord.ui.View):
         )
 
     async def vote_callback(self, interaction: discord.Interaction, mode: str):
-        # Defer the interaction if not already done, to allow time for processing
+        # Component-style defer (update-message intent): the deferred ack is
+        # completed by the board edit below, so the write that records the
+        # vote and the write that shows it are the SAME request (issue #258).
         if not interaction.response.is_done():
             try:
-                await interaction.response.defer(ephemeral=True)
+                await interaction.response.defer(thinking=False)
             except discord.errors.NotFound:
                 # Interaction expired, do not queue
                 return
@@ -148,7 +150,12 @@ class MapTypeVoteView(discord.ui.View):
             )
         else:
             self.all_maps_button.label = f"All Maps ({self.map_pool_votes['All']})"
-        await interaction.message.edit(view=self)
+        # Confirm-after-reflect (issue #258): the board is updated THROUGH
+        # the click's own interaction before the confirmation can exist.
+        try:
+            await interaction.edit_original_response(view=self)
+        except (discord.NotFound, discord.HTTPException):
+            return
 
         # Reply and check for vote finish
         log.info("Recorded new vote. Current state: %s", self.map_pool_votes)
@@ -243,6 +250,8 @@ class MapTypeVoteView(discord.ui.View):
         self.cancel_timeout_timer()
 
     async def timeout_timer(self):
+        # Countdown text only: no view kwarg, so timer edits can never
+        # repaint stale button counts (issue #258).
         for _ in range(25):
             await asyncio.sleep(1)
             if self.voting_phase_ended:
@@ -257,7 +266,6 @@ class MapTypeVoteView(discord.ui.View):
                 try:
                     await self.view_message.edit(
                         content=f"Vote for the map pool: ({self.vote_time_remaining}s)",
-                        view=self,
                     )
                 except discord.NotFound:
                     pass

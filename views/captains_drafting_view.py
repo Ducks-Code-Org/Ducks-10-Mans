@@ -11,6 +11,7 @@ from game.ranks import display_rank_for
 from game.stats_helper import DEFAULT_MMR
 from tracker_links import display_line_for, display_name_for
 from game.voice_presence import move_teams_to_voice, voice_presence_enabled
+from views import safe_reply
 
 log = logging.getLogger(__name__)
 
@@ -105,23 +106,23 @@ class SecondCaptainChoiceView(discord.ui.View):
         self.cancel_timeout_timer()
         self.decision_finished = True
 
-        # Acknowledge the interaction FIRST. Discord must receive a response
-        # within 3 seconds; message edits can be slow and were previously
-        # burning that window, causing 404 Unknown interaction (10062).
-        if interaction.response.is_done():
-            await interaction.followup.send("First pick selected!", ephemeral=True)
-        else:
-            await interaction.response.send_message(
-                "First pick selected!", ephemeral=True
-            )
-
+        # Confirm-after-reflect (issue #258): defer, then update the board
+        # THROUGH the click's own interaction (the same request completes
+        # the ack, so the disabling edit carries both new buttons), and only
+        # then send the confirmation followup. The board can never show
+        # "selected" after the ephemeral already did.
+        try:
+            await interaction.response.defer(thinking=False)
+        except (discord.NotFound, discord.HTTPException):
+            return
         self.first_pick_button.disabled = True
         self.double_pick_button.disabled = True
         try:
-            await interaction.message.edit(view=self)
+            await interaction.edit_original_response(view=self)
         except (discord.NotFound, discord.HTTPException):
             log.warning("Could not disable draft-type buttons (message gone)")
 
+        await safe_reply(interaction, "First pick selected!", ephemeral=True)
         await self.start_draft(single_pick=True)
 
     async def double_pick_callback(self, interaction: discord.Interaction):
@@ -132,21 +133,19 @@ class SecondCaptainChoiceView(discord.ui.View):
         self.cancel_timeout_timer()
         self.decision_finished = True
 
-        # Acknowledge the interaction FIRST (see first_pick_callback).
-        if interaction.response.is_done():
-            await interaction.followup.send("2nd + 3rd pick selected!", ephemeral=True)
-        else:
-            await interaction.response.send_message(
-                "2nd + 3rd pick selected!", ephemeral=True
-            )
-
+        # Confirm-after-reflect (issue #258): see first_pick_callback.
+        try:
+            await interaction.response.defer(thinking=False)
+        except (discord.NotFound, discord.HTTPException):
+            return
         self.first_pick_button.disabled = True
         self.double_pick_button.disabled = True
         try:
-            await interaction.message.edit(view=self)
+            await interaction.edit_original_response(view=self)
         except (discord.NotFound, discord.HTTPException):
             log.warning("Could not disable draft-type buttons (message gone)")
 
+        await safe_reply(interaction, "2nd + 3rd pick selected!", ephemeral=True)
         await self.start_draft(single_pick=False)
 
     async def start_draft(self, single_pick: bool):
@@ -192,9 +191,10 @@ class SecondCaptainChoiceView(discord.ui.View):
                     return
                 if self.view_message:
                     try:
+                        # Countdown text only (issue #258): no view kwarg, so
+                        # the timer can't repaint the buttons over a click.
                         await self.view_message.edit(
                             content=f"<@{captain2['id']}>, choose draft type: ({self.decision_time_remaining}s)",
-                            view=self,
                         )
                     except discord.NotFound:
                         pass

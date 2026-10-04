@@ -59,10 +59,11 @@ class MapVoteView(discord.ui.View):
         for map in self.chosen_maps:
             # Dynamically setup buttons and callbacks for each map
             async def vote_callback(interaction: discord.Interaction, map=map):
-                # Defer the interaction if not already done, to allow time for processing
+                # Component-style defer (update-message intent): the deferred
+                # ack is completed by the board edit below (issue #258).
                 if not interaction.response.is_done():
                     try:
-                        await interaction.response.defer(ephemeral=True)
+                        await interaction.response.defer(thinking=False)
                     except discord.errors.NotFound:
                         # Interaction expired, do not queue
                         return
@@ -155,7 +156,12 @@ class MapVoteView(discord.ui.View):
         for button in self.map_buttons:
             if button.label.startswith(map):
                 button.label = f"{map} ({self.map_votes[map]})"
-        await interaction.message.edit(view=self)
+        # Confirm-after-reflect (issue #258): the board is updated THROUGH
+        # the click's own interaction before the confirmation can exist.
+        try:
+            await interaction.edit_original_response(view=self)
+        except (discord.NotFound, discord.HTTPException):
+            return
 
         # Reply and check for vote finish
         log.info("Recorded new vote. Current state: %s", self.map_votes)
@@ -387,6 +393,8 @@ class MapVoteView(discord.ui.View):
                 pass
 
     async def timeout_timer(self):
+        # Countdown text only: no view kwarg, so timer edits can never
+        # repaint stale button counts (issue #258).
         for _ in range(25):
             await asyncio.sleep(1)
             if self.voting_phase_ended:
@@ -401,7 +409,6 @@ class MapVoteView(discord.ui.View):
                 try:
                     await self.view_message.edit(
                         content=f"Vote for the map to play: ({self.vote_time_remaining}s)",
-                        view=self,
                     )
                 except discord.NotFound:
                     pass
