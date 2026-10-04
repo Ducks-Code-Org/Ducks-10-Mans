@@ -1071,6 +1071,9 @@ def demo():
     )[0]
     assert "channel=ctx.channel" in dodge_body, "dodge must be match-channel-gated"
     assert "public=True" in dodge_body, "dodge must reply publicly"
+    assert "report_lock" in cmd_src.split("async def dodge_command")[1].split(
+        "async def _gated_send"
+    )[0], "dodge must serialize against report/cancel via bot.report_lock"
 
     print("all duck coins self-checks passed")
 

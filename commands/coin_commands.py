@@ -118,13 +118,17 @@ class CoinCommands(BotCommands):
         description="Spend 15 Duck Coins to cancel the running match yourself (public reply)",
     )
     async def dodge_command(self, ctx: commands.Context):
-        # Powerup: only usable inside the generated match-# channel.
-        await self._gated_send(
-            ctx,
-            lambda: dodge(self.bot, str(ctx.author.id)),
-            channel=ctx.channel,
-            public=True,
-        )
+        # Serialize against /report and /cancel (same lock discipline as
+        # admin /cancel): a mid-report dodge must never refund a match that
+        # actually got played.
+        async with self.bot.report_lock:
+            # Powerup: only usable inside the generated match-# channel.
+            await self._gated_send(
+                ctx,
+                lambda: dodge(self.bot, str(ctx.author.id)),
+                channel=ctx.channel,
+                public=True,
+            )
 
     @commands.hybrid_command(
         name="setmap",
