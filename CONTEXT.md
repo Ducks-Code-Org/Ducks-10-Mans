@@ -48,3 +48,17 @@ _Avoid_: win floor, gain boost
 **Minimum loss**:
 The smallest amount of MMR any loss can cost.
 _Avoid_: loss floor, loss cap
+
+### Betting
+
+**Parimutuel pool**:
+The coins escrowed on both betting sides for a match; each winning bettor's share is their stake's proportion of the whole pool, rounded half-up.
+_Avoid_: pot, prize pool
+
+**Payout floor**:
+The guarantee that every winning bet pays at least 1.5x its stake, with the bot minting any top-up the pool cannot fund.
+_Avoid_: minimum payout, win guarantee
+
+**Unclaimed pool**:
+The pool that sinks with no payout when nobody bet on the winning side.
+_Avoid_: dead pool, lost pool

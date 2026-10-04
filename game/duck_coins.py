@@ -17,6 +17,9 @@ log = logging.getLogger(__name__)
 BET_WINDOW_SECONDS = 300
 BET_TICK_SECONDS = 30
 DOUBLEDOWN_COST = 5
+# Every winning bet pays at least 1.5x its stake (issue #255); a pool that
+# can't fund the floor gets a minted top-up from the bot.
+PAYOUT_FLOOR = 1.5
 SETMAP_BASE_COST = 3
 # After teams finalize (match_ongoing flips True), !setmap stays usable this
 # long — a grace window for last-second map swaps in both modes.
@@ -351,8 +354,8 @@ def _side_name(side: str) -> str:
     return "Attackers" if side == "attackers" else "Defenders"
 
 
-# Betting: parimutuel pools, twitch-prediction style. ponytail: floor() rounding
-# dust (at most one coin per winning bettor) is not redistributed.
+# Betting: parimutuel pools, twitch-prediction style. ponytail: fractional
+# rounding dust (at most one coin per winning bettor) is not redistributed.
 
 
 def _fmt_clock(seconds: int) -> str:
@@ -400,6 +403,15 @@ def _team_lines(bot, team) -> list[str]:
     return lines
 
 
+def _half_up(x: float) -> int:
+    """Round half up (0.5 rounds up) for non-negative payout values.
+
+    Betting payout math must not use builtin round(): it does banker's
+    rounding (round(2.5) == 2), breaking the coin rule that 0.5 rounds up.
+    """
+    return int((x * 2 + 1) // 2)
+
+
 def _betting_embed(bot, session, remaining: int) -> discord.Embed:
     """The live #10-mans betting embed: teams+MMR, pools, odds, countdown."""
     e = duck_emote(bot)
@@ -426,7 +438,8 @@ def _betting_embed(bot, session, remaining: int) -> discord.Embed:
         value = "\n".join(_team_lines(bot, team)) or "—"
         if pool and total:
             # Parimutuel: every coin on a side pays total/side when it wins.
-            value += f"\n**Pool:** {pool} {e} — pays **{total / pool:.2f}x** per coin\n"
+            # Lopsided pools pay at least the 1.5x payout floor (issue #255).
+            value += f"\n**Pool:** {pool} {e} — pays **{max(total / pool, PAYOUT_FLOOR):.2f}x** per coin\n"
         else:
             value += f"\n**Pool:** {pool} {e}\n"
         return value
@@ -780,11 +793,22 @@ async def settle_bets(bot, winner: str):
 
     winner_rows = []
     for pid, amount in sorted(winners.items(), key=lambda item: -item[1]):
-        payout = amount * total // pool
+        # Parimutuel share, floored at 1.5x the stake (issue #255). A pool
+        # that can't fund the floor gets a minted top-up from the bot.
+        payout = max(_half_up(amount * total / pool), _half_up(PAYOUT_FLOOR * amount))
         add_coins(pid, payout)
         winner_rows.append((pid, amount, payout, payout - amount))
+    # Minted = coins paid beyond the escrowed pool (floor top-ups and
+    # half-up rounding dust) — logged so coin inflation stays observable.
+    minted = max(0, sum(payout for _, _, payout, _ in winner_rows) - total)
     if winners:
-        log.info("Settled %s bets on %s (%s coin pool)", len(winners), winner, total)
+        log.info(
+            "Settled %s bets on %s (%s coin pool, %s coin(s) minted for the payout floor)",
+            len(winners),
+            winner,
+            total,
+            minted,
+        )
     else:
         log.info("No winning bets on %s; %s coin pool unclaimed", winner, total)
     clear_escrow_journal(bot)
