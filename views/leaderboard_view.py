@@ -11,33 +11,11 @@ from table2ascii import table2ascii as t2a
 
 from database import mmr_collection, users
 from game.duck_coins import duck_coins_enabled
+from game.ranking import has_played, leaderboard_order
 from game.stats_helper import DEFAULT_MMR, avg_rating_of
 from tracker_links import display_name_for
 
 log = logging.getLogger(__name__)
-
-
-def _has_played(doc: dict) -> bool:
-    mp = doc.get("matches_played")
-    if isinstance(mp, (int, float)):
-        return mp > 0
-    return (doc.get("wins", 0) + doc.get("losses", 0)) > 0
-
-
-def sort_key_for(sort_by: str):
-    """Sort key for a leaderboard column, highest first.
-
-    `avg_rating` uses the round-weighted average VLR rating; players without
-    a recorded rating sort to the bottom.
-    """
-    if sort_by == "avg_rating":
-
-        def key(doc):
-            rating = avg_rating_of(doc)
-            return rating if rating is not None else float("-inf")
-
-        return key
-    return lambda doc: doc.get(sort_by, 0)
 
 
 def _rank_display(player_data: dict, sort_by: str, fallback_rank: int) -> str:
@@ -94,8 +72,8 @@ class LeaderboardView(View):
         self.players_per_page = players_per_page
         self.current_page = 0
 
-        # Hide users with zero matches
-        self.sorted_data = [d for d in self.sorted_data if _has_played(d)]
+        # Hide users with zero matches (canonical ranking filter; issue #256)
+        self.sorted_data = [d for d in self.sorted_data if has_played(d)]
 
         # compute pages after filtering
         self.total_pages = max(
@@ -254,12 +232,15 @@ class LeaderboardView(View):
         await self.update_message(interaction)
 
     async def on_refresh(self, interaction: discord.Interaction):
-        self.sorted_data = sorted(
-            mmr_collection.find(),
-            key=sort_key_for(self.sort_by),
-            reverse=True,
-        )
-        self.sorted_data = [d for d in self.sorted_data if _has_played(d)]
+        # Canonical deterministic order (issue #256); leaderboard_order
+        # already drops zero-match players.
+        self.sorted_data = [
+            d
+            for _, d in leaderboard_order(
+                [(str(d["player_id"]), d) for d in mmr_collection.find()],
+                self.sort_by,
+            )
+        ]
 
         self.total_pages = math.ceil(len(self.sorted_data) / self.players_per_page)
         if self.current_page >= self.total_pages:

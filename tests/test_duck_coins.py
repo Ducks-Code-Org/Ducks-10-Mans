@@ -184,6 +184,9 @@ def open_window(bot):
         "bets": {"attackers": {}, "defenders": {}},
         "message": None,
         "task": None,
+        "powerup_message": None,
+        "powerup_task": None,
+        "ends_at": 0,
     }
     return bot.bet_session
 
@@ -211,20 +214,26 @@ def demo():
     assert "Pick a side" in reply
     reply = place_bet(bot, "1", "attackers", 1)
     assert "can't bet" in reply, "match player must not bet"
+    reply = place_bet(bot, "1", "defenders", 1)
+    assert "can't bet" in reply, "match player must stay barred (issue #255)"
     reply = place_bet(bot, "5", "defenders", 0)
     assert "Minimum" in reply
     reply = place_bet(bot, "5", "attackers", 0)
     assert "Minimum" in reply
 
-    # Parimutuel payout: attackers pool 4 (3+1) vs defenders 1 → total 5.
-    # Payouts: 3*5//4=3 for "5", 1*5//4=1 for "7"; dust stays in the pool.
-    # (A small losing pool means break-even nets here: 3-3=0, 1-1=0.)
+    # Parimutuel payout with the 1.5x payout floor and half-up rounding
+    # (issue #255): attackers pool 4 (3+1) vs defenders 1 → total 5.
+    # Parimutuel shares: 3*5/4=3.75→4, 1*5/4=1.25→1; both also clear the
+    # 1.5x floor (3→5, 1→2), so the floor tops both up. The direct
+    # injections below simulate the escrow: "5" paid 3 (balance 3), "7"
+    # "paid" 1 (injected without deducting). After settle:
+    # "5": 3 + 5 = 8, "7": 0 + 2 = 2, "6" (loser): 0.
     session["bets"]["attackers"]["5"] = 3
     session["bets"]["attackers"]["7"] = 1
     session["bets"]["defenders"]["6"] = 1
     embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
-    assert coins_of("5") == 6, f"bettor payout wrong: {coins_of('5')}"
-    assert coins_of("7") == 1, f"second bettor payout wrong: {coins_of('7')}"
+    assert coins_of("5") == 8, f"bettor payout wrong: {coins_of('5')}"
+    assert coins_of("7") == 2, f"second bettor payout wrong: {coins_of('7')}"
     assert coins_of("6") == 0, "losing side must not be paid"
     assert bot.bet_session is None
     # The summary embed must list winners AND losers with net results.
@@ -235,12 +244,12 @@ def demo():
     assert "<@7>" in embed.fields[0]["value"], embed.fields
     assert "<@6>" in embed.fields[1]["value"], embed.fields
     assert "bet 3" in embed.fields[0]["value"], embed.fields
-    assert "(+0)" in embed.fields[0]["value"], embed.fields
+    assert "(+2)" in embed.fields[0]["value"], embed.fields
     assert "lost 1" in embed.fields[1]["value"], embed.fields
     assert "Attackers won" in embed.title, embed.title
 
     # A bigger losing pool yields a real profit: winners pool 4, losers 6,
-    # total 10 → payout 2x per coin (3*10//4=7, 1*10//4=2).
+    # total 10 → parimutuel share 3*10/4=7.5→8 (≥ floor 5), 1*10/4=2.5→3.
     DB["5"]["duck_coins"] = 0
     DB["7"]["duck_coins"] = 0
     session = open_window(bot)
@@ -248,11 +257,85 @@ def demo():
     session["bets"]["attackers"]["7"] = 1
     session["bets"]["defenders"]["6"] = 6
     embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
-    assert coins_of("5") == 7, f"2x payout wrong: {coins_of('5')}"
-    assert coins_of("7") == 2, f"2x payout wrong: {coins_of('7')}"
-    assert "(+4)" in embed.fields[0]["value"], embed.fields
-    assert "(+1)" in embed.fields[0]["value"], embed.fields
+    assert coins_of("5") == 8, f"2.5x share payout wrong: {coins_of('5')}"
+    assert coins_of("7") == 3, f"2.5x share payout wrong: {coins_of('7')}"
+    assert "(+5)" in embed.fields[0]["value"], embed.fields
+    assert "(+2)" in embed.fields[0]["value"], embed.fields
     assert "lost 6" in embed.fields[1]["value"], embed.fields
+
+    # Issue #255: a one-sided pool pays the 1.5x floor, minted by the bot.
+    # Stake 2 solo → share 2, floor half_up(3.0)=3 → pays 3 (1 coin minted).
+    session = open_window(bot)
+    session["bets"]["attackers"]["5"] = 2
+    DB["5"]["duck_coins"] = 3  # as if the 2-coin bet was escrowed
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
+    assert coins_of("5") == 6, f"1.5x floor payout wrong: {coins_of('5')}"
+    assert "(+1)" in embed.fields[0]["value"], embed.fields
+
+    # Half-up proof: a 1-coin bet floored at 1.5 pays 2, never 1.
+    DB["5"]["duck_coins"] = 0
+    session = open_window(bot)
+    session["bets"]["attackers"]["5"] = 1
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
+    assert coins_of("5") == 2, f"1-coin floor must pay 2 (half-up): {coins_of('5')}"
+    assert "(+1)" in embed.fields[0]["value"], embed.fields
+
+    # Large solo stake: 1.5x uncapped — a 100-coin stake pays 150.
+    DB["5"]["duck_coins"] = 0
+    session = open_window(bot)
+    session["bets"]["attackers"]["5"] = 100
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
+    assert coins_of("5") == 150, f"uncapped floor wrong: {coins_of('5')}"
+    assert "(+50)" in embed.fields[0]["value"], embed.fields
+
+    # Healthy mixed pool above the floor pays parimutuel exactly (half-up):
+    # winners 3+3 (pool 6) vs losers 10 → total 16; share 3*16/6=8 each.
+    DB["5"]["duck_coins"] = 0
+    DB["7"]["duck_coins"] = 0
+    session = open_window(bot)
+    session["bets"]["attackers"]["5"] = 3
+    session["bets"]["attackers"]["7"] = 3
+    session["bets"]["defenders"]["6"] = 10
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
+    assert coins_of("5") == 8 and coins_of("7") == 8, (
+        coins_of("5"),
+        coins_of("7"),
+    )
+    assert "(+5)" in embed.fields[0]["value"], embed.fields
+
+    # No-winner match: the unclaimed pool sinks — nobody gets anything.
+    DB["5"]["duck_coins"] = 7
+    DB.setdefault("6", {"player_id": "6"})["duck_coins"] = 7
+    session = open_window(bot)
+    session["bets"]["defenders"]["5"] = 3
+    session["bets"]["defenders"]["6"] = 2
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
+    assert coins_of("5") == 7 and coins_of("6") == 7, "losers must lose it all"
+    assert "unclaimed" in embed.description, embed.description
+    assert "Lost" in embed.fields[0]["name"], "losers still listed with no winners"
+
+    # The live betting embed shows the floored odds on lopsided pools
+    # (max(actual, 1.50x)) so the guarantee is visible before betting.
+    import game.duck_coins as _dc
+
+    class _FakeBetMessage:
+        def __init__(self):
+            self.embeds = []
+
+        async def edit(self, embed=None):
+            self.embeds.append(embed)
+
+    solo = open_window(bot)
+    solo["message"] = _FakeBetMessage()
+    solo["bets"]["attackers"]["5"] = 2
+    asyncio.run(_dc._refresh_betting_embed(bot, solo))
+    assert "1.50x" in solo["message"].embeds[-1].fields[0]["value"]
+    heavy = open_window(bot)
+    heavy["message"] = _FakeBetMessage()
+    heavy["bets"]["attackers"]["5"] = 2
+    heavy["bets"]["defenders"]["6"] = 8
+    asyncio.run(_dc._refresh_betting_embed(bot, heavy))
+    assert "5.00x" in heavy["message"].embeds[-1].fields[0]["value"]
 
     # Nobody bet at all: no embed, nothing to post.
     open_window(bot)
@@ -664,12 +747,12 @@ def demo():
     DB["9"]["duck_coins"] = 8
     embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
     assert embed is not None, "a lone winner must still get a summary embed"
-    assert coins_of("9") == 10, "settlement must pay the winning bettor"
+    assert coins_of("9") == 11, "floor must pay the lone bettor 1.5x (3)"
     assert "data" not in _ESCROW_DOCS.get(
         "open_bets", {}
     ), "settlement must clear the journal"
     recover_orphaned_escrow(bot)
-    assert coins_of("9") == 10, "settled bets must never be re-refunded"
+    assert coins_of("9") == 11, "settled bets must never be re-refunded"
 
     # --- Map-override journal and startup recovery (issue #205) -----------
     # (Reset the once-per-process gate so this simulates a fresh process.)
