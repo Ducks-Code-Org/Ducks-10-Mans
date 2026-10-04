@@ -26,6 +26,16 @@ _Avoid_: timeout ping, 2-minute ping
 The minute-and-seconds remaining display, edited every second onto the final warning message until the lobby wait ends or the match is cancelled.
 _Avoid_: timer message, clock
 
+### Interest boards
+
+**Interest board**:
+The message that announces an interest slot and carries its Join / Remove / Refresh buttons.
+_Avoid_: signup board, polling message
+
+**Interest slot**:
+A planned time to run Duck’s 10 Mans, announced on an interest board and identified by its exact time; retired once that time passes.
+_Avoid_: signup slot, interest check
+
 ### Player changes
 
 **Substitute**:

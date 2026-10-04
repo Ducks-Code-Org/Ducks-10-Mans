@@ -87,7 +87,7 @@ class InterestView(View):
                 lines.append(f"• <@{uid}>")
         return "\n".join(lines)
 
-    def _board_embed(self, doc=None) -> discord.Embed:
+    def board_embed(self, doc=None) -> discord.Embed:
         """The full board: header plus roster, built before posting."""
         doc = doc or self._slot_doc() or {"interested_ids": []}
         count = len(doc.get("interested_ids") or [])
@@ -98,19 +98,23 @@ class InterestView(View):
             color=discord.Color.green(),
         )
 
-    def _retired(self) -> "InterestView":
+    def _retired_view(self) -> "InterestView":
         """A copy of this board with every button grayed out (slot over)."""
         view = InterestView(self.scheduled_at_utc, timeout=None)
         for item in view.children:
             item.disabled = True
         return view
 
+    async def _edit_board(self, interaction: discord.Interaction):
+        """The one board write shared by all three buttons (issue #257)."""
+        await interaction.response.edit_message(embed=self.board_embed(), view=self)
+
     async def _retire_if_past(self, interaction: discord.Interaction) -> bool:
         """On an expired slot: gray out the board, change nothing, return True."""
         if not slot_is_past(self.scheduled_at_utc):
             return False
         await interaction.response.edit_message(
-            embed=self._board_embed(), view=self._retired()
+            embed=self.board_embed(), view=self._retired_view()
         )
         return True
 
@@ -123,9 +127,7 @@ class InterestView(View):
         log.info("%s joined interest slot %s", interaction.user, self.scheduled_at_utc)
         # One atomic Discord write: the ack IS the board update, carrying
         # the member who just clicked (issue #257).
-        await interaction.response.edit_message(
-            embed=self._board_embed(), view=self
-        )
+        await self._edit_board(interaction)
 
     async def leave_callback(self, interaction: discord.Interaction):
         if await self._retire_if_past(interaction):
@@ -133,13 +135,9 @@ class InterestView(View):
         user_id = str(interaction.user.id)
         self._ensure_membership(user_id, add=False)
         log.info("%s left interest slot %s", interaction.user, self.scheduled_at_utc)
-        await interaction.response.edit_message(
-            embed=self._board_embed(), view=self
-        )
+        await self._edit_board(interaction)
 
     async def refresh_callback(self, interaction: discord.Interaction):
         if await self._retire_if_past(interaction):
             return
-        await interaction.response.edit_message(
-            embed=self._board_embed(), view=self
-        )
+        await self._edit_board(interaction)

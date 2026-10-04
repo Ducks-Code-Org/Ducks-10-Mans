@@ -100,10 +100,7 @@ class InterestCommand(BotCommands):
         # creator already on it): no placeholder-then-fetch dance — that
         # path died on the 15-minute webhook token (issue #257).
         view = InterestView(rounded, timeout=None)
-        doc = interests.find_one({"scheduled_at_utc": rounded}) or {
-            "interested_ids": [str(ctx.author.id)]
-        }
-        embed = view._board_embed(doc)
+        embed = view.board_embed(doc)
         await ctx.send(embed=embed, view=view)
 
 
