@@ -7,7 +7,7 @@ import discord
 from discord.ui import Button
 
 from game.stats_helper import DEFAULT_MMR
-from views import safe_reply
+from views import defer_component, reflect_board, safe_reply
 from views.map_type_vote_view import MapTypeVoteView
 
 log = logging.getLogger(__name__)
@@ -71,14 +71,10 @@ class ModeVoteView(discord.ui.View):
 
     async def vote_callback(self, interaction: discord.Interaction, mode: str):
         # Component-style defer (update-message intent): the deferred ack is
-        # completed by the board edit below, so the write that records the
+        # completed by reflect_board below, so the write that records the
         # vote and the write that shows it are the SAME request (issue #258).
-        if not interaction.response.is_done():
-            try:
-                await interaction.response.defer(thinking=False)
-            except discord.errors.NotFound:
-                # Interaction expired, do not queue
-                return
+        if not await defer_component(interaction):
+            return
 
         # Add the interaction to the interaction queue and wait for processing
         loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
@@ -144,11 +140,9 @@ class ModeVoteView(discord.ui.View):
             self.captains_button.label = f"Captains ({self.votes['Captains']})"
         # Confirm-after-reflect (issue #258): the board is updated THROUGH
         # the click's own interaction — the identical request that completes
-        # its deferred ack — so the public board carries the new tally before
-        # the confirmation can exist, as one atomic Discord write.
-        try:
-            await interaction.edit_original_response(view=self)
-        except (discord.NotFound, discord.HTTPException):
+        # its deferred ack — and the confirmation is skipped if that write
+        # fails, so it can never lead the board.
+        if not await reflect_board(interaction, self):
             return
 
         # Reply and check for vote finish

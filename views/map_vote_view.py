@@ -10,7 +10,7 @@ from game.ranking import has_played
 from game.ranks import display_rank_for
 from game.stats_helper import DEFAULT_MMR
 from tracker_links import display_line_for
-from views import safe_reply
+from views import defer_component, reflect_board, safe_reply
 from views.captains_drafting_view import SecondCaptainChoiceView
 from game.voice_presence import move_teams_to_voice, voice_presence_enabled
 
@@ -60,13 +60,9 @@ class MapVoteView(discord.ui.View):
             # Dynamically setup buttons and callbacks for each map
             async def vote_callback(interaction: discord.Interaction, map=map):
                 # Component-style defer (update-message intent): the deferred
-                # ack is completed by the board edit below (issue #258).
-                if not interaction.response.is_done():
-                    try:
-                        await interaction.response.defer(thinking=False)
-                    except discord.errors.NotFound:
-                        # Interaction expired, do not queue
-                        return
+                # ack is completed by reflect_board below (issue #258).
+                if not await defer_component(interaction):
+                    return
 
                 # Add the interaction to the interaction queue and wait for processing
                 loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
@@ -157,10 +153,8 @@ class MapVoteView(discord.ui.View):
             if button.label.startswith(map):
                 button.label = f"{map} ({self.map_votes[map]})"
         # Confirm-after-reflect (issue #258): the board is updated THROUGH
-        # the click's own interaction before the confirmation can exist.
-        try:
-            await interaction.edit_original_response(view=self)
-        except (discord.NotFound, discord.HTTPException):
+        # the click's own interaction; no confirmation if that write fails.
+        if not await reflect_board(interaction, self):
             return
 
         # Reply and check for vote finish

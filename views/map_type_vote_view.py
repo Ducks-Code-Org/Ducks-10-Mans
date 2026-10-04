@@ -7,7 +7,7 @@ import discord
 from discord.ui import Button
 
 from services.maps_service import get_competitive_maps, get_standard_maps
-from views import safe_reply
+from views import defer_component, reflect_board, safe_reply
 from views.map_vote_view import MapVoteView
 
 log = logging.getLogger(__name__)
@@ -73,14 +73,9 @@ class MapTypeVoteView(discord.ui.View):
 
     async def vote_callback(self, interaction: discord.Interaction, mode: str):
         # Component-style defer (update-message intent): the deferred ack is
-        # completed by the board edit below, so the write that records the
-        # vote and the write that shows it are the SAME request (issue #258).
-        if not interaction.response.is_done():
-            try:
-                await interaction.response.defer(thinking=False)
-            except discord.errors.NotFound:
-                # Interaction expired, do not queue
-                return
+        # completed by reflect_board below (issue #258).
+        if not await defer_component(interaction):
+            return
 
         # Add the interaction to the interaction queue and wait for processing
         loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
@@ -151,10 +146,8 @@ class MapTypeVoteView(discord.ui.View):
         else:
             self.all_maps_button.label = f"All Maps ({self.map_pool_votes['All']})"
         # Confirm-after-reflect (issue #258): the board is updated THROUGH
-        # the click's own interaction before the confirmation can exist.
-        try:
-            await interaction.edit_original_response(view=self)
-        except (discord.NotFound, discord.HTTPException):
+        # the click's own interaction; no confirmation if that write fails.
+        if not await reflect_board(interaction, self):
             return
 
         # Reply and check for vote finish

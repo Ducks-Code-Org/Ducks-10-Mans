@@ -6,8 +6,9 @@ the confirmation could become visible before the board showed the vote —
 and the 1-second countdown edits re-asserted the full view, repainting
 stale tallies over votes that just landed. Now each vote click defers
 component-style, updates the board THROUGH the same interaction
-(edit_original_response — one atomic write that completes the ack), and
-only then sends the ephemeral confirmation; countdown edits pass no view.
+(reflect_board -> edit_original_response, one atomic write that completes
+the ack), and only then sends the ephemeral confirmation; countdown edits
+pass no view.
 """
 
 import asyncio
@@ -57,10 +58,11 @@ class _FakeButton:
 class _FakeInteraction:
     """Records the order and arguments of every write the handler performs."""
 
-    def __init__(self, user_id="0", queue_ids=None):
+    def __init__(self, user_id="0", queue_ids=None, fail_board=False):
         self.user = types.SimpleNamespace(id=user_id)
         self._is_done = False
-        self.order = []  # ("defer"|"edit_original"|"followup", payload)
+        self.order = []  # ("defer"|"edit_original"|"followup"|"send_message", payload)
+        self.fail_board = fail_board
         self.response = types.SimpleNamespace(
             is_done=lambda: self._is_done,
             defer=self._defer,
@@ -68,7 +70,6 @@ class _FakeInteraction:
             edit_message=self._edit_message,
         )
         self.followup = types.SimpleNamespace(send=self._followup_send)
-        self._in_queue = queue_ids or [user_id]
 
     async def _defer(self, **kw):
         self.order.append(("defer", kw))
@@ -82,6 +83,8 @@ class _FakeInteraction:
         self.order.append(("edit_message", kw))
 
     async def edit_original_response(self, **kw):
+        if self.fail_board:
+            raise _discord_stub.HTTPException("board edit failed")
         self.order.append(("edit_original", kw))
 
     async def _followup_send(self, *a, **kw):
@@ -101,18 +104,14 @@ class _BoardMessage:
 _discord_stub = types.ModuleType("discord")
 
 
-class _FakeViewBaseDiscord(_FakeViewBase):
-    pass
-
-
 _discord_stub.ui = types.SimpleNamespace()
 _discord_stub.ui.View = type("View", (_FakeViewBase,), {})
 _discord_stub.ui.Button = _FakeButton
 _discord_stub.ui.Select = type("Select", (_FakeViewBase,), {})
 _discord_stub.ui.select = lambda *a, **k: (lambda f: f)
-_discord_stub.SelectOption = lambda *a, **k: types.SimpleNamespace(label=None, value=None)
-# CaptainsDraftingView builds pick dropdowns at construction; stub its send
-# path instead of exercising it — #258 is about the confirm ordering only.
+_discord_stub.SelectOption = lambda *a, **k: types.SimpleNamespace(
+    label=None, value=None
+)
 _discord_stub.ButtonStyle = types.SimpleNamespace(
     success=1, secondary=2, primary=3, green=1, blurple=4
 )
@@ -126,9 +125,7 @@ _discord_stub.utils = types.SimpleNamespace(get=lambda *a, **k: None)
 _discord_stub.Interaction = type("Interaction", (), {})
 _discord_stub.NotFound = type("NotFound", (Exception,), {})
 _discord_stub.HTTPException = type("HTTPException", (Exception,), {})
-_discord_stub.errors = types.SimpleNamespace(
-    NotFound=type("NotFound", (Exception,), {})
-)
+_discord_stub.errors = types.SimpleNamespace(NotFound=_discord_stub.NotFound)
 _discord_stub.ext = types.SimpleNamespace()
 _discord_stub.ext.commands = types.SimpleNamespace(
     command=lambda *a, **k: (lambda f: f),
@@ -145,10 +142,12 @@ sys.modules["discord.ui"] = _discord_stub.ui
 sys.modules["discord.ext"] = _discord_stub.ext
 sys.modules["discord.ext.commands"] = _discord_stub.ext.commands
 
+from views.captains_drafting_view import (  # noqa: E402
+    SecondCaptainChoiceView,
+)
 from views.map_type_vote_view import MapTypeVoteView  # noqa: E402
 from views.map_vote_view import MapVoteView  # noqa: E402
 from views.mode_vote_view import ModeVoteView  # noqa: E402
-from views.captains_drafting_view import SecondCaptainChoiceView  # noqa: E402
 
 
 class FakeBot:
@@ -184,18 +183,23 @@ class FakeCtx:
         return _BoardMessage()
 
 
-def fresh_labels(view):
+def labels_of(view):
     return [b.label for b in view.children if hasattr(b, "label")]
 
 
-async def drive(view, interaction, *args):
-    """Run one click through the view's real queue machinery.
+def board_payload(interaction):
+    """The view payload of the recorded edit_original_response call."""
+    payloads = [kw for k, kw in interaction.order if k == "edit_original"]
+    assert payloads, interaction.order
+    return payloads[-1]
 
-    Does NOT stop the queue task: a second click in the same scenario must
-    still be consumable. MapVoteView's map buttons wire their own callbacks
-    (the view has no vote_callback); pass the button as the first arg to
-    route through it.
-    """
+
+def followup_texts(interaction):
+    return [payload[0][0] for k, payload in interaction.order if k == "followup"]
+
+
+async def drive(view, interaction, *args):
+    """Run one click through the view's real callback + queue machinery."""
     if args and hasattr(args[0], "callback"):
         button, rest = args[0], args[1:]
         await button.callback(interaction, *rest)
@@ -204,18 +208,6 @@ async def drive(view, interaction, *args):
         await callback(interaction, *rest)
     else:
         await view.vote_callback(interaction, *args)
-    # The queue task processes asynchronously; give it a bounded chance.
-    for _ in range(200):
-        if interaction.order and interaction.order[-1][0] in (
-            "edit_original",
-            "followup",
-        ):
-            break
-        await asyncio.sleep(0.01)
-
-
-def drive_sync(view, interaction, *args):
-    _ = asyncio.get_event_loop().create_task(view.vote_callback(interaction, *args))
 
 
 def stop(view):
@@ -231,25 +223,75 @@ async def build_mode_vote():
     return ctx, bot, view
 
 
+async def drive_timer(view, module, patch_loop=False):
+    """Run the view's real timer to completion with fast sleep.
+
+    Returns the per-second tick edits (the close/0s tail edit legitimately
+    passes the view, so it is excluded). The patched asyncio is restored in
+    a finally so a failing assertion can't leak the fake into later checks.
+    """
+    real_asyncio = module.asyncio
+    real_sleep = real_asyncio.sleep
+    fake_loop = types.SimpleNamespace()
+    step = [0.0]
+
+    def fake_time():
+        step[0] += 1.0
+        return step[0]
+
+    async def fast_sleep(_):
+        await real_sleep(0)
+
+    if patch_loop:
+        module.asyncio = types.SimpleNamespace(
+            sleep=fast_sleep, get_event_loop=lambda: fake_loop
+        )
+        fake_loop.time = fake_time
+    else:
+        module.asyncio = types.SimpleNamespace(
+            sleep=fast_sleep, get_event_loop=real_asyncio.get_event_loop
+        )
+    try:
+        await view.timeout_timer()
+    finally:
+        module.asyncio = real_asyncio
+    return [
+        e
+        for e in view.view_message.edits
+        if str(e.get("content", "")).endswith("s)") and "(0s)" not in e["content"]
+    ]
+
+
+async def noop(*a, **k):
+    return None
+
+
 async def demo():
     # --- Valid vote: exactly one board write, initiated BEFORE the
-    # confirmation; the deferred component ack precedes both.
+    # confirmation; the deferred component ack precedes both. The recorded
+    # edit payload carries the new tally (not just in-memory state).
     ctx, bot, view = await build_mode_vote()
     inter = _FakeInteraction(user_id="0")
     await drive(view, inter, "Balanced")
-    order = inter.order
-    kinds = [k for k, _ in order]
+    kinds = [k for k, _ in inter.order]
     assert kinds[0] == "defer", kinds
     assert kinds.count("edit_original") == 1, kinds
-    assert "followup" in kinds, kinds
     assert kinds.index("edit_original") < kinds.index("followup"), kinds
-    # The edit carries the full post-vote state — the new tally on the board.
-    assert "Balanced Teams (1)" in fresh_labels(view), fresh_labels(view)
-    followup_args, followup_kw = next(
-        payload for k, payload in order if k == "followup"
-    )
-    assert followup_kw.get("ephemeral") is True
-    assert "Voted Balanced!" in followup_args[0]
+    edited_view = board_payload(inter)["view"]
+    assert "Balanced Teams (1)" in labels_of(edited_view), labels_of(edited_view)
+    assert inter.order[-1][1][1].get("ephemeral") is True, inter.order
+    assert "Voted Balanced!" in followup_texts(inter), inter.order
+    stop(view)
+
+    # --- A failed board write suppresses the confirmation (never confirm
+    # before the board can show the vote).
+    ctx, bot, view = await build_mode_vote()
+    inter = _FakeInteraction(user_id="0", fail_board=True)
+    await drive(view, inter, "Balanced")
+    kinds = [k for k, _ in inter.order]
+    assert "edit_original" not in kinds, kinds
+    assert "followup" not in kinds, kinds
+    stop(view)
 
     # --- A second click by the same voter: "Already voted!", NO board write.
     ctx, bot, view = await build_mode_vote()
@@ -260,16 +302,7 @@ async def demo():
     stop(view)
     kinds2 = [k for k, _ in again.order]
     assert "edit_original" not in kinds2, again.order
-    # The rejection reply must have gone out (ephemeral), counts unchanged.
-    rejections = [
-        (a, kw)
-        for k, payload in again.order
-        if k in ("followup", "send_message")
-        and any("Already voted!" in str(x) for x in payload[0])
-        for a, kw in [payload]
-    ]
-    assert rejections, again.order
-    assert all(kw.get("ephemeral") for _, kw in rejections), rejections
+    assert any("Already voted!" in t for t in followup_texts(again)), again.order
     assert dict(view.votes) == votes_before, view.votes
 
     # --- Non-queue click: "Must be in queue!", no board write, no vote.
@@ -279,75 +312,67 @@ async def demo():
     stop(view)
     kinds3 = [k for k, _ in outsider.order]
     assert "edit_original" not in kinds3, outsider.order
+    assert any(
+        "Must be in queue!" in t for t in followup_texts(outsider)
+    ), outsider.order
     assert view.votes == {"Balanced": 0, "Captains": 0}
 
-    # --- Timer tick's edit carries NO view: the count-reversion regression
-    # (mutation-verified: restoring view= fails this). The timer is driven
-    # to completion (fast sleep), and only the countdown ticks count.
-    ctx, bot, view = await build_mode_vote()
-    board = view.view_message
+    # --- Timer tick's edit carries NO view (mutation-verified: restoring
+    # view= fails this). The real timer runs with fast sleep.
     import views.mode_vote_view as mvv
 
-    real_sleep = asyncio.sleep
-
-    async def fast_sleep(_):
-        await real_sleep(0)
-
-    mvv.asyncio.sleep = fast_sleep
-    try:
-        await view.timeout_timer()
-    except Exception:
-        pass  # post-timeout winner handling may walk into view paths we stub
-    mvv.asyncio.sleep = real_sleep
+    ctx, bot, view = await build_mode_vote()
+    view.check_for_winner = noop
+    ticks = await drive_timer(view, mvv)
     stop(view)
-    # Every per-second tick (content ends in "s)") must omit the view kwarg;
-    # the close-vote edit legitimately passes the view but is not a tick.
-    ticks = [e for e in board.edits if str(e.get("content", "")).endswith("s)")]
     assert ticks, "timer must keep the countdown updated"
-    assert all(
-        "view" not in e for e in ticks
-    ), f"timer tick edits must not pass the view: {[e for e in ticks if 'view' in e]}"
-    # A vote lands mid-countdown and then the timer edits again: fresh
-    # labels survive the tick (no stale repaint).
-    view.children[0].label = "Balanced Teams (9)"
-    await board.edit(content="Vote how teams should be chosen: (23s)")
-    assert "Balanced Teams (9)" in fresh_labels(view)
+    assert all("view" not in e for e in ticks), ticks
 
     # --- Expired interactions (NotFound on defer) are dropped silently and
     # never queued.
     ctx, bot, view = await build_mode_vote()
     dead = _FakeInteraction(user_id="0")
-    dead.response.defer = self_boom = types.SimpleNamespace()
 
     async def _boom(**kw):
-        raise _discord_stub.errors.NotFound(dead)
+        raise _discord_stub.NotFound("expired")
 
     dead.response = types.SimpleNamespace(is_done=lambda: False, defer=_boom)
     await view.vote_callback(dead, "Balanced")
     stop(view)
     assert dead.order == [], "expired interaction must not reach the handler"
+    assert view.interaction_request_queue.empty(), "expired click must not queue"
     assert view.votes == {"Balanced": 0, "Captains": 0}
 
-    # --- MapTypeVoteView: same pattern.
+    # --- MapTypeVoteView: same pattern + timer.
+    import views.map_type_vote_view as mtv
+
     ctx = FakeCtx()
     bot = FakeBot()
     view = MapTypeVoteView(ctx, bot)
     view.view_message = await ctx.send("vote")
     mt = _FakeInteraction(user_id="0")
     await drive(view, mt, "Competitive")
-    stop(view)
     kinds4 = [k for k, _ in mt.order]
     assert kinds4[0] == "defer" and kinds4.count("edit_original") == 1, mt.order
     assert kinds4.index("edit_original") < kinds4.index("followup"), mt.order
-    assert "Competitive Maps (1)" in fresh_labels(view)
+    edited_view = board_payload(mt)["view"]
+    assert "Competitive Maps (1)" in labels_of(edited_view), labels_of(edited_view)
+    view.check_for_winner = noop
+    ticks4 = await drive_timer(view, mtv)
+    stop(view)
+    assert ticks4, "map-type timer must keep the countdown updated"
+    assert all("view" not in e for e in ticks4), ticks4
 
-    # --- MapVoteView: same pattern.
+    # --- MapVoteView: same pattern + timer.
+    import views.map_vote_view as mvv2
+
     ctx = FakeCtx()
     bot = FakeBot()
     bot.chosen_mode = "Balanced"
     view = MapVoteView(ctx, bot, ["Ascent", "Bind", "Haven"])
-    # MapVoteView.__init__ never initializes .timeout (only check_for_winner
-    # reads it); give the fake a value like a matured view would carry.
+    # MapVoteView.__init__ never initializes .timeout (only
+    # check_for_winner reads it); give the fake a value like a matured
+    # view would carry.
     view.timeout = False
     await view.setup()
     view.view_message = await ctx.send("vote")
@@ -355,37 +380,24 @@ async def demo():
         view.add_item(b)
     mv = _FakeInteraction(user_id="0")
     ascent_button = next(
-        b for b in view.children if getattr(b, "label", "").startswith("Ascent")
+        b for b in view.map_buttons if getattr(b, "label", "").startswith("Ascent")
     )
     await drive(view, mv, ascent_button, "Ascent")
     kinds5 = [k for k, _ in mv.order]
     assert kinds5[0] == "defer" and kinds5.count("edit_original") == 1, mv.order
     assert kinds5.index("edit_original") < kinds5.index("followup"), mv.order
-    assert "Ascent (1)" in fresh_labels(view), fresh_labels(view)
-    # Its timer too: no view kwarg on countdown edits (driven to completion
-    # with fast sleep, like the mode-vote timer check).
+    edited_view = board_payload(mv)["view"]
+    assert "Ascent (1)" in labels_of(edited_view), labels_of(edited_view)
+    view.check_for_winner = noop
+    ticks5 = await drive_timer(view, mvv2)
     stop(view)
-    ctx = FakeCtx()
-    bot2 = FakeBot()
-    bot2.chosen_mode = "Balanced"
-    view2 = MapVoteView(ctx, bot2, ["Ascent", "Bind", "Haven"])
-    view2.timeout = False
-    board = view2.view_message = await ctx.send("vote")
-    import views.map_vote_view as mvv2
-
-    mvv2.asyncio.sleep = fast_sleep
-    try:
-        await view2.timeout_timer()
-    except Exception:
-        pass
-    mvv2.asyncio.sleep = real_sleep
-    stop(view2)
-    ticks2 = [e for e in board.edits if str(e.get("content", "")).endswith("s)")]
-    assert ticks2, "map-vote timer must keep the countdown updated"
-    assert all("view" not in e for e in ticks2), ticks2
+    assert ticks5, "map-vote timer must keep the countdown updated"
+    assert all("view" not in e for e in ticks5), ticks5
 
     # --- SecondCaptainChoiceView: defer -> disabling edit via the
     # interaction -> confirmation followup (never the reverse).
+    import views.captains_drafting_view as cdv
+
     ctx = FakeCtx()
     bot = FakeBot()
     choice = SecondCaptainChoiceView(ctx, bot)
@@ -398,16 +410,46 @@ async def demo():
 
     choice.start_draft = _fake_start_draft
     await choice.first_pick_callback(cap2)
+    choice.cancel_timeout_timer()
     kinds6 = [k for k, _ in cap2.order]
     assert kinds6[0] == "defer", cap2.order
     assert kinds6.count("edit_original") == 1, cap2.order
     assert kinds6.index("edit_original") < kinds6.index("followup"), cap2.order
-    edited_view = cap2.order[1][1]["view"]
+    edited_view = board_payload(cap2)["view"]
     assert all(b.disabled for b in edited_view.children), edited_view.children
-    f_args, f_kw = next(payload for k, payload in cap2.order if k == "followup")
-    assert f_kw.get("ephemeral") is True
-    assert "First pick selected!" in f_args[0]
+    assert cap2.order[-1][1][1].get("ephemeral") is True, cap2.order
+    assert "First pick selected!" in followup_texts(cap2), cap2.order
+    assert drafted == [True], drafted
+
+    # Board-write failure: no confirmation, but the draft still starts.
+    ctx = FakeCtx()
+    bot = FakeBot()
+    choice = SecondCaptainChoiceView(ctx, bot)
+    choice.view_message = await ctx.send("choose")
+    cap2 = _FakeInteraction(user_id="2", fail_board=True)
+    drafted = []
+
+    async def _fake_start_draft2(single_pick):
+        drafted.append(single_pick)
+
+    choice.start_draft = _fake_start_draft2
+    await choice.double_pick_callback(cap2)
     choice.cancel_timeout_timer()
+    kinds7 = [k for k, _ in cap2.order]
+    assert "edit_original" not in kinds7, cap2.order
+    assert "followup" not in kinds7, cap2.order
+    assert drafted == [False], drafted
+
+    # Its timer: per-second ticks carry no view (the 0s tail edit does).
+    ctx = FakeCtx()
+    bot = FakeBot()
+    choice = SecondCaptainChoiceView(ctx, bot)
+    choice.view_message = await ctx.send("choose")
+    choice.start_draft = noop
+    ticks6 = await drive_timer(choice, cdv, patch_loop=True)
+    choice.cancel_timeout_timer()
+    assert ticks6, "second-captain timer must keep the countdown updated"
+    assert all("view" not in e for e in ticks6), ticks6
 
     print("all vote confirm-order self-checks passed")
 
