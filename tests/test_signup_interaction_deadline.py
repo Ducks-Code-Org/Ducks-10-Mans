@@ -51,19 +51,42 @@ import commands.signup as signup_mod
 
 
 class FakeCtx:
-    def __init__(self):
+    def __init__(self, order=None):
         self.sent = []
         self.defer_calls = []
-        self.interaction = object()  # non-None so is_interaction-ish checks pass
+        self.order = order
         self.author = types.SimpleNamespace(id=1, name="owner")
         self.guild = None
         self.channel = types.SimpleNamespace(category=None)
 
     async def defer(self, *, ephemeral=False):
         self.defer_calls.append(ephemeral)
+        if self.order is not None:
+            self.order.append("defer")
 
     async def send(self, msg=None, **kw):
         self.sent.append(msg)
+
+
+class _Role:
+    async def delete(self):
+        pass
+
+
+class _Guild:
+    """Creates the match role, then fails creating the channel: the
+    realistic half-built error path (role exists, channel missing)."""
+
+    default_role = object()
+
+    async def create_role(self, **kw):
+        return _Role()
+
+    async def edit_role_positions(self, **kw):
+        pass
+
+    async def create_text_channel(self, **kw):
+        raise RuntimeError("channel creation failed")
 
 
 def make_bot():
@@ -98,7 +121,8 @@ async def _run_defer_order():
 
     cog = SignupCommand.__new__(SignupCommand)
     cog.bot = bot
-    ctx = FakeCtx()
+    ctx = FakeCtx(order)
+    ctx.guild = _Guild()
 
     async def _spy_identity(discord_id):
         order.append("identity")
@@ -111,20 +135,32 @@ async def _run_defer_order():
     signup_mod.ensure_perms = _perms
     signup_mod.ensure_current_riot_identity = _spy_identity
 
-    # Let identity (the slowest pre-reply await) run; the flow then exits via
-    # guild=None failing create_role, which lands in the error path.
+    # Identity (the slowest pre-reply await) runs; the flow then dies creating
+    # the match channel, after the role was already made, and lands in the
+    # error path.
     await SignupCommand.signup.callback(cog, ctx)
 
     assert ctx.defer_calls == [
         True
     ], f"/signup must defer (ephemeral) exactly once first, got {ctx.defer_calls}"
+    # Defer must be the FIRST event: it has to appear in the shared order
+    # before the permission check and the identity refresh, or a regression
+    # moving it after slow work would pass unnoticed.
     assert order == [
+        "defer",
         "perm-check",
         "identity",
     ], f"defer must precede every slow await, got {order}"
     assert any(
         "Error setting up queue" in (m or "") for m in ctx.sent
     ), f"expected the error-path reply (it rides the deferred followup), got {ctx.sent}"
+    # The error path must forget the created-then-deleted role or the next
+    # /signup logs the stale-leftovers warning this issue is about.
+    assert bot.match_role is None and bot.match_channel is None, (
+        f"error path must forget deleted refs, got "
+        f"role={bot.match_role!r} channel={bot.match_channel!r}"
+    )
+    assert bot.match_setup_generation is None, "leftovers must look stale"
 
 
 asyncio.run(_run_defer_order())

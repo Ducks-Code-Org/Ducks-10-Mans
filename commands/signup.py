@@ -17,6 +17,7 @@ from services.riot_api import (
     get_account_by_puuid,
     riot_account_exists_async,
 )
+from views import release_match_resources
 from views.signup_view import SignupView
 
 log = logging.getLogger(__name__)
@@ -317,11 +318,9 @@ class SignupCommand(BotCommands):
                 f"Queue started! Signup: <#{self.bot.match_channel.id}>", silent=True
             )
         except Exception as e:
-            # Cleanup
+            # Cleanup: delete whatever was created, then forget the deleted
+            # refs so the next /signup sees no stale leftovers (issue #259).
             self.bot.signup_active = False
-            # The leftovers must look stale to the next !signup (nothing
-            # bumped setup_generation on this path).
-            self.bot.match_setup_generation = None
             if getattr(self.bot, "match_role", None):
                 try:
                     await self.bot.match_role.delete()
@@ -332,6 +331,7 @@ class SignupCommand(BotCommands):
                     await self.bot.match_channel.delete()
                 except discord.HTTPException:
                     pass
+            release_match_resources(self.bot)
             log.error("Error setting up queue: %s", e, exc_info=e)
             await ctx.send(f"Error setting up queue: {e}", ephemeral=True)
             return
