@@ -7,7 +7,7 @@ import discord
 from discord.ui import Button
 
 from services.maps_service import get_competitive_maps, get_standard_maps
-from views import safe_reply
+from views import defer_component, reflect_board, safe_reply
 from views.map_vote_view import MapVoteView
 
 log = logging.getLogger(__name__)
@@ -72,13 +72,10 @@ class MapTypeVoteView(discord.ui.View):
         )
 
     async def vote_callback(self, interaction: discord.Interaction, mode: str):
-        # Defer the interaction if not already done, to allow time for processing
-        if not interaction.response.is_done():
-            try:
-                await interaction.response.defer(ephemeral=True)
-            except discord.errors.NotFound:
-                # Interaction expired, do not queue
-                return
+        # Component-style defer (update-message intent): the deferred ack is
+        # completed by reflect_board below (issue #258).
+        if not await defer_component(interaction):
+            return
 
         # Add the interaction to the interaction queue and wait for processing
         loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
@@ -148,7 +145,10 @@ class MapTypeVoteView(discord.ui.View):
             )
         else:
             self.all_maps_button.label = f"All Maps ({self.map_pool_votes['All']})"
-        await interaction.message.edit(view=self)
+        # Confirm-after-reflect (issue #258): the board is updated THROUGH
+        # the click's own interaction; no confirmation if that write fails.
+        if not await reflect_board(interaction, self):
+            return
 
         # Reply and check for vote finish
         log.info("Recorded new vote. Current state: %s", self.map_pool_votes)
@@ -243,6 +243,8 @@ class MapTypeVoteView(discord.ui.View):
         self.cancel_timeout_timer()
 
     async def timeout_timer(self):
+        # Countdown text only: no view kwarg, so timer edits can never
+        # repaint stale button counts (issue #258).
         for _ in range(25):
             await asyncio.sleep(1)
             if self.voting_phase_ended:
@@ -257,7 +259,6 @@ class MapTypeVoteView(discord.ui.View):
                 try:
                     await self.view_message.edit(
                         content=f"Vote for the map pool: ({self.vote_time_remaining}s)",
-                        view=self,
                     )
                 except discord.NotFound:
                     pass

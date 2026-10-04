@@ -10,7 +10,7 @@ from game.ranking import has_played
 from game.ranks import display_rank_for
 from game.stats_helper import DEFAULT_MMR
 from tracker_links import display_line_for
-from views import safe_reply
+from views import defer_component, reflect_board, safe_reply
 from views.captains_drafting_view import SecondCaptainChoiceView
 from game.voice_presence import move_teams_to_voice, voice_presence_enabled
 
@@ -59,13 +59,10 @@ class MapVoteView(discord.ui.View):
         for map in self.chosen_maps:
             # Dynamically setup buttons and callbacks for each map
             async def vote_callback(interaction: discord.Interaction, map=map):
-                # Defer the interaction if not already done, to allow time for processing
-                if not interaction.response.is_done():
-                    try:
-                        await interaction.response.defer(ephemeral=True)
-                    except discord.errors.NotFound:
-                        # Interaction expired, do not queue
-                        return
+                # Component-style defer (update-message intent): the deferred
+                # ack is completed by reflect_board below (issue #258).
+                if not await defer_component(interaction):
+                    return
 
                 # Add the interaction to the interaction queue and wait for processing
                 loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
@@ -155,7 +152,10 @@ class MapVoteView(discord.ui.View):
         for button in self.map_buttons:
             if button.label.startswith(map):
                 button.label = f"{map} ({self.map_votes[map]})"
-        await interaction.message.edit(view=self)
+        # Confirm-after-reflect (issue #258): the board is updated THROUGH
+        # the click's own interaction; no confirmation if that write fails.
+        if not await reflect_board(interaction, self):
+            return
 
         # Reply and check for vote finish
         log.info("Recorded new vote. Current state: %s", self.map_votes)
@@ -387,6 +387,8 @@ class MapVoteView(discord.ui.View):
                 pass
 
     async def timeout_timer(self):
+        # Countdown text only: no view kwarg, so timer edits can never
+        # repaint stale button counts (issue #258).
         for _ in range(25):
             await asyncio.sleep(1)
             if self.voting_phase_ended:
@@ -401,7 +403,6 @@ class MapVoteView(discord.ui.View):
                 try:
                     await self.view_message.edit(
                         content=f"Vote for the map to play: ({self.vote_time_remaining}s)",
-                        view=self,
                     )
                 except discord.NotFound:
                     pass

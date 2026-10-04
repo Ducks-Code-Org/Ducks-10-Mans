@@ -66,6 +66,7 @@ _Avoid_: standing, placement
 **Rank tier**:
 The MMR-bucket role a player holds, unrelated to leaderboard position.
 _Avoid_: leaderboard rank, placement
+
 ### Betting
 
 **Parimutuel pool**:
@@ -79,3 +80,17 @@ _Avoid_: minimum payout, win guarantee
 **Unclaimed pool**:
 The pool that sinks with no payout when nobody bet on the winning side.
 _Avoid_: dead pool, lost pool
+
+### Match setup votes
+
+**Vote board**:
+The message that announces a setup vote and carries its vote buttons and live tallies.
+_Avoid_: poll message, vote embed
+
+**Vote confirmation**:
+The ephemeral reply shown to a voter after their click, naming the choice they voted for.
+_Avoid_: vote ack, vote receipt
+
+**Reflect-before-confirm**:
+The invariant that a vote confirmation must never become visible before the vote board shows the vote it confirms; the board write rides the voter's own interaction and the confirmation follows it.
+_Avoid_: ack-first, optimistic confirm
