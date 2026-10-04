@@ -7,6 +7,7 @@ import time
 import discord
 
 from database import coin_escrow, mmr_collection, users
+from game.recent_queue import remember_recent_queue
 from game.stats_helper import DEFAULT_MMR
 from globals import feature_enabled
 from services.maps_service import get_standard_maps
@@ -17,6 +18,9 @@ log = logging.getLogger(__name__)
 BET_WINDOW_SECONDS = 300
 BET_TICK_SECONDS = 30
 DOUBLEDOWN_COST = 5
+# Cost to dodge (cancel) the current match during the powerup window
+# (issue #260). Burned — never refunded by any path.
+DODGE_COST = 15
 SETMAP_BASE_COST = 3
 # After teams finalize (match_ongoing flips True), !setmap stays usable this
 # long — a grace window for last-second map swaps in both modes.
@@ -371,13 +375,14 @@ def _powerups_announcement(bot, remaining: int) -> str:
         header = f"⚔️ **Powerups enabled for {_fmt_clock(remaining)}**"
     else:
         header = (
-            "⌛ **Powerup window closed** — `/doubledown` and `/setmap` are locked."
+            "⌛ **Powerup window closed** — `/doubledown`, `/setmap` and `/dodge` are locked."
         )
     return (
         f"{header}\n"
         f"`/doubledown` costs {DOUBLEDOWN_COST} {e} to double your MMR change for this match.\n"
         f"Override the chosen map with `/setmap <map> [amount]` — wager {SETMAP_BASE_COST}+ {e} "
-        f"(outbid the last override) to swap the map."
+        f"(outbid the last override) to swap the map.\n"
+        f"`/dodge` costs {DODGE_COST} {e} to cancel the match — every other coin spent on it is refunded."
     )
 
 
@@ -858,6 +863,92 @@ def doubledown(bot, user_id: str) -> str:
 def doubledown_multiplier_of(bot, player_id) -> int:
     """2 if this player paid for doubledown this match, else 1."""
     return 2 if str(player_id) in bot.double_downs else 1
+
+
+async def dodge(bot, user_id: str) -> str:
+    """Spend DODGE_COST coins to tear down the live match (issue #260).
+
+    Player-only powerup, gated to the powerup window (the shared
+    map-override deadline) — the same gates /doubledown answers to, inside
+    the match channel. On success the fee is charged and burned while every
+    OTHER coin spent on the match is refunded (escrowed bets, doubledowns,
+    the standing map-override wager — including the dodger's own purchases),
+    exactly like an admin cancel; #10-mans then gets one message naming the
+    dodger, instead of the generic cancel notice.
+
+    Returns the in-channel reply string. Public reply: the whole match
+    channel sees the price paid.
+    """
+    deadline = getattr(bot, "map_override_deadline", None)
+    if deadline is None:
+        return "Dodge is only available after teams are announced."
+    if time.monotonic() > deadline:
+        return "The dodge window has timed out."
+    if str(user_id) not in _match_players(bot):
+        return "Only players in this match can dodge."
+    balance = coins_of(user_id)
+    if balance < DODGE_COST:
+        return insufficient(bot, balance, DODGE_COST)
+    # The fee is burned first and routed through no refund path — refund
+    # machinery never sees it, so nothing below can give it back.
+    add_coins(user_id, -DODGE_COST)
+
+    # Teardown mirroring admin_commands._cancel_locked's in-progress branch:
+    # invalidate the setup cycle FIRST so lingering views bail out.
+    bot.setup_generation += 1
+    bot.match_setup_generation = None
+    bot.match_not_reported = False
+    bot.match_ongoing = False
+    bot.chosen_mode = None
+    bot.selected_map = None
+    bot.captain1 = None
+    bot.captain2 = None
+    bot.team1 = []
+    bot.team2 = []
+    if bot.queue:
+        remember_recent_queue(bot.queue, cancelled=True)
+
+    # Every match-associated coin except the burned fee comes back.
+    refunded_total = refund_match_coins(bot)
+    log.info(
+        "Match dodged by %s: fee %s burned, %s coin(s) refunded",
+        user_id,
+        DODGE_COST,
+        refunded_total,
+    )
+
+    # Announce in #10-mans, best-effort (never raises): who dodged and the
+    # fee — no generic cancel notice on this path.
+    e = duck_emote(bot)
+    guild = getattr(getattr(bot, "match_channel", None), "guild", None)
+    if guild is None:
+        member_name = None
+    else:
+        from tracker_links import _member_display_name
+
+        member_name = _member_display_name(guild, str(user_id))
+    nickname = member_name or f"<@{user_id}>"
+    channel = None
+    if guild is not None:
+        try:
+            channel = discord.utils.get(guild.text_channels, name="10-mans")
+        except AttributeError:
+            channel = None
+    if channel is not None:
+        try:
+            asyncio.create_task(
+                channel.send(
+                    f"**{nickname}** just dodged the match for {DODGE_COST} {e} — "
+                    f"all Duck Coins spent on this match are refunded."
+                )
+            )
+        except (discord.HTTPException, RuntimeError):
+            pass
+
+    return (
+        f"Paid {DODGE_COST} {e} — the match is dodged and every other coin "
+        f"spent on it is refunded!"
+    )
 
 
 async def setmap_override(bot, user_id: str, map_name: str, amount: int = None) -> str:

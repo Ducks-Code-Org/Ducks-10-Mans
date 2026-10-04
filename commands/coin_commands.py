@@ -13,6 +13,7 @@ from database import users
 from game.duck_coins import (
     coins_of,
     command_available,
+    dodge,
     duck_coins_enabled,
     duck_emote,
     doubledown,
@@ -108,6 +109,19 @@ class CoinCommands(BotCommands):
         await self._gated_send(
             ctx,
             lambda: doubledown(self.bot, str(ctx.author.id)),
+            channel=ctx.channel,
+            public=True,
+        )
+
+    @commands.hybrid_command(
+        name="dodge",
+        description="Spend 15 Duck Coins to cancel the running match yourself (public reply)",
+    )
+    async def dodge_command(self, ctx: commands.Context):
+        # Powerup: only usable inside the generated match-# channel.
+        await self._gated_send(
+            ctx,
+            lambda: dodge(self.bot, str(ctx.author.id)),
             channel=ctx.channel,
             public=True,
         )

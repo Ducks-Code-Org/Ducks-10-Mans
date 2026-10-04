@@ -84,6 +84,7 @@ async def demo():
         "coins",
         "bet",
         "doubledown",
+        "dodge",
         "setmap",
         "help",
         "bug",
