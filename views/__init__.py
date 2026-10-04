@@ -6,6 +6,18 @@ from discord import Interaction
 log = logging.getLogger(__name__)
 
 
+def release_match_resources(bot) -> None:
+    """Forget match resources that were just deleted.
+
+    The next /signup must see no leftovers (issue #259); every cancellation
+    path (timeout, error, admin cancel) ends with these refs None.
+    """
+    bot.match_channel = None
+    bot.match_role = None
+    bot.current_signup_message = None
+    bot.match_setup_generation = None
+
+
 async def safe_reply(interaction: Interaction, *args, **kwargs):
     """Send an interaction reply exactly once; afterward, use followup."""
     if interaction.response.is_done():

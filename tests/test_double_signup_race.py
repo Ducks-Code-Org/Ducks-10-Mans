@@ -165,6 +165,10 @@ class FakeCtx:
         self.guild = None
         self.channel = types.SimpleNamespace(category=None, send=None)
 
+    async def defer(self, *, ephemeral=False):
+        # /signup defers under its hybrid ctx before slow work (issue: 10062).
+        pass
+
     async def send(self, msg=None, **kw):
         self.sent.append(msg)
 
