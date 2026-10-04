@@ -12,7 +12,7 @@ from game.recent_queue import remember_recent_queue
 from services.riot_api import verify_riot_account_async
 from game.stats_helper import DEFAULT_MMR
 from tracker_links import tracker_link_for
-from views import safe_reply
+from views import release_match_resources, safe_reply
 from views.mode_vote_view import ModeVoteView
 from game.voice_presence import voice_presence_enabled, wait_for_lobby
 
@@ -294,7 +294,10 @@ class SignupView(discord.ui.View):
             await self.bot.match_channel.delete()
         except discord.HTTPException:
             pass
-        self.bot.match_setup_generation = None
+        # Forget the deleted resources so the next /signup doesn't treat
+        # them as stale leftovers and log "Stale match resources" (issue
+        # #259); cleanup_match_resources does the same on every other path.
+        release_match_resources(self.bot)
 
         # Cleanup view
         self.stop()

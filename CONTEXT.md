@@ -6,9 +6,17 @@ A Discord bot that runs signup queues for 10-man pick-up matches, drafts teams, 
 
 ### Signup flow
 
+**Signup session**:
+One full `/signup` cycle: from starting the queue, through filling it, to match setup, report, or cancellation.
+_Avoid_: signup (when the queue vs. the whole cycle is meant)
+
 **Signup queue**:
 The ordered list of players who have signed up for the next match, capped at ten.
 _Avoid_: signup list, queue roster
+
+**Signup timeout**:
+The automatic cancellation of a signup session left empty for ten minutes or inactive for two hours.
+_Avoid_: cleanup (an unattended cancel is not janitorial cleanup), session expire
 
 **Lobby wait**:
 The 10-minute window after the signup queue fills, during which all queued players must join the lobby voice channel before match setup begins.

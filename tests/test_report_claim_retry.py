@@ -145,6 +145,10 @@ class FakeCtx:
         self.guild = None
         self.sent = []
 
+    async def defer(self, *, ephemeral=False):
+        # /signup defers under its hybrid ctx before slow work (issue: 10062).
+        pass
+
     async def send(self, content=None, **kw):
         self.sent.append(content)
 
