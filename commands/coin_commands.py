@@ -5,9 +5,12 @@ the action (issue #210 follow-up)."""
 
 import logging
 
+import discord
 from discord.ext import commands
 
 from commands import BotCommands
+from commands.report import cleanup_match_resources
+from commands.signup import cancel_background_purge
 from commands.stats import _resolve_player
 from database import users
 from game.duck_coins import (
@@ -123,12 +126,31 @@ class CoinCommands(BotCommands):
         # actually got played.
         async with self.bot.report_lock:
             # Powerup: only usable inside the generated match-# channel.
-            await self._gated_send(
-                ctx,
-                lambda: dodge(self.bot, str(ctx.author.id)),
-                channel=ctx.channel,
-                public=True,
-            )
+            rejection = command_available(self.bot, channel=ctx.channel)
+            if rejection:
+                log.warning(
+                    "Duck Coins command rejected for %s: %s", ctx.author, rejection
+                )
+                await ctx.send(rejection, ephemeral=True)
+                return
+            was_ongoing = getattr(self.bot, "match_ongoing", False)
+            reply = await dodge(self.bot, str(ctx.author.id))
+            # A successful dodge is the one that flips match_ongoing off;
+            # rejections never touch it. Public only on success, so the match
+            # channel sees the price paid (issue #260).
+            dodged = was_ongoing and not self.bot.match_ongoing
+            await ctx.send(reply, ephemeral=not dodged)
+            if not dodged:
+                return
+            # The dodge itself only resets state; finish the teardown exactly
+            # like an admin /cancel (channel/role/message cleanup; issue #260).
+            guild = ctx.guild
+            if guild is not None:
+                self.bot.ten_mans_channel = discord.utils.get(
+                    guild.text_channels, name="10-mans"
+                )
+            cancel_background_purge(self.bot)
+            await cleanup_match_resources(self.bot, cancelled=True)
 
     @commands.hybrid_command(
         name="setmap",

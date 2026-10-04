@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+import types
 
 import discord
 
@@ -11,7 +12,7 @@ from game.recent_queue import remember_recent_queue
 from game.stats_helper import DEFAULT_MMR
 from globals import feature_enabled
 from services.maps_service import get_standard_maps
-from tracker_links import display_line_for
+from tracker_links import display_line_for, display_name_for
 
 log = logging.getLogger(__name__)
 
@@ -377,9 +378,7 @@ def _powerups_announcement(bot, remaining: int) -> str:
     if remaining:
         header = f"⚔️ **Powerups enabled for {_fmt_clock(remaining)}**"
     else:
-        header = (
-            "⌛ **Powerup window closed** — `/doubledown`, `/setmap` and `/dodge` are locked."
-        )
+        header = "⌛ **Powerup window closed** — `/doubledown`, `/setmap` and `/dodge` are locked."
     return (
         f"{header}\n"
         f"`/doubledown` costs {DOUBLEDOWN_COST} {e} to double your MMR change for this match.\n"
@@ -753,7 +752,15 @@ def announce_cancellation(bot, guild) -> None:
 
 async def announce_cancellation_async(bot, guild) -> None:
     """Async form of announce_cancellation for await-style callers."""
-    e = duck_emote(bot)
+    await _post_to_ten_mans(
+        bot,
+        guild,
+        f"Match cancelled, duck coins {duck_emote(bot)} returned to all users.",
+    )
+
+
+async def _ten_mans_channel_async(bot, guild):
+    """The #10-mans channel for `guild`, falling back to a cached channel."""
     channel = None
     if guild is not None:
         try:
@@ -761,11 +768,24 @@ async def announce_cancellation_async(bot, guild) -> None:
         except AttributeError:
             channel = None
     if channel is None:
+        channel = getattr(bot, "ten_mans_channel", None)
+    return channel
+
+
+async def _post_to_ten_mans(bot, guild, content: str) -> None:
+    """Send `content` to #10-mans, best effort — never raises.
+
+    The single delivery path for match-lifecycle notices, so a cancellation
+    notice and a dodge notice behave identically (issue #260).
+    """
+    channel = await _ten_mans_channel_async(bot, guild)
+    if channel is None:
+        log.warning("Could not post to #10-mans (channel unavailable): %s", content)
         return
     try:
-        await channel.send(f"Match cancelled, duck coins {e} returned to all users.")
-    except (discord.HTTPException, AttributeError):
-        pass
+        await channel.send(content)
+    except (discord.HTTPException, AttributeError) as e:
+        log.error("Could not post to #10-mans: %s", e, exc_info=e)
 
 
 async def settle_bets(bot, winner: str):
@@ -903,6 +923,10 @@ async def dodge(bot, user_id: str) -> str:
     Returns the in-channel reply string. Public reply: the whole match
     channel sees the price paid.
     """
+    if not duck_coins_enabled():
+        return "Duck Coins features are disabled."
+    if not getattr(bot, "match_ongoing", False):
+        return "No match is running right now."
     deadline = getattr(bot, "map_override_deadline", None)
     if deadline is None:
         return "Dodge is only available after teams are announced."
@@ -942,32 +966,19 @@ async def dodge(bot, user_id: str) -> str:
     )
 
     # Announce in #10-mans, best-effort (never raises): who dodged and the
-    # fee — no generic cancel notice on this path.
+    # fee — no generic cancel notice on this path. The server nickname is the
+    # ask; display_name_for falls back to the Discord name, then "N/A".
     e = duck_emote(bot)
     guild = getattr(getattr(bot, "match_channel", None), "guild", None)
     if guild is None:
-        member_name = None
-    else:
-        from tracker_links import _member_display_name
-
-        member_name = _member_display_name(guild, str(user_id))
-    nickname = member_name or f"<@{user_id}>"
-    channel = None
-    if guild is not None:
-        try:
-            channel = discord.utils.get(guild.text_channels, name="10-mans")
-        except AttributeError:
-            channel = None
-    if channel is not None:
-        try:
-            asyncio.create_task(
-                channel.send(
-                    f"**{nickname}** just dodged the match for {DODGE_COST} {e} — "
-                    f"all Duck Coins spent on this match are refunded."
-                )
-            )
-        except (discord.HTTPException, RuntimeError):
-            pass
+        guild = getattr(bot, "guild", None)
+    nickname = display_name_for(None, guild=guild, discord_id=str(user_id))
+    await _post_to_ten_mans(
+        bot,
+        guild,
+        f"**{nickname}** just dodged the match for {DODGE_COST} {e} — "
+        f"all Duck Coins spent on this match are refunded.",
+    )
 
     return (
         f"Paid {DODGE_COST} {e} — the match is dodged and every other coin "

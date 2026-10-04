@@ -94,3 +94,13 @@ _Avoid_: vote ack, vote receipt
 **Reflect-before-confirm**:
 The invariant that a vote confirmation must never become visible before the vote board shows the vote it confirms; the board write rides the voter's own interaction and the confirmation follows it.
 _Avoid_: ack-first, optimistic confirm
+
+### Match powerups
+
+**Powerup window**:
+The two-minute window after teams are announced, extended by each map override, during which match players may run the paid powerups `/doubledown`, `/setmap`, and `/dodge`.
+_Avoid_: grace period, setup window
+
+**Dodge**:
+A match player's paid cancellation of the live match, costing a burned fee while every other coin spent on the match is refunded.
+_Avoid_: quit, leave
