@@ -3,20 +3,28 @@
 import asyncio
 import logging
 import time
+import types
 
 import discord
 
 from database import coin_escrow, mmr_collection, users
+from game.recent_queue import remember_recent_queue
 from game.stats_helper import DEFAULT_MMR
 from globals import feature_enabled
 from services.maps_service import get_standard_maps
-from tracker_links import display_line_for
+from tracker_links import display_line_for, display_name_for
 
 log = logging.getLogger(__name__)
 
 BET_WINDOW_SECONDS = 300
 BET_TICK_SECONDS = 30
 DOUBLEDOWN_COST = 5
+# Cost to dodge (cancel) the current match during the powerup window
+# (issue #260). Burned — never refunded by any path.
+DODGE_COST = 15
+# Every winning bet pays at least 1.5x its stake (issue #255); a pool that
+# can't fund the floor gets a minted top-up from the bot.
+PAYOUT_FLOOR = 1.5
 SETMAP_BASE_COST = 3
 # After teams finalize (match_ongoing flips True), !setmap stays usable this
 # long — a grace window for last-second map swaps in both modes.
@@ -351,8 +359,8 @@ def _side_name(side: str) -> str:
     return "Attackers" if side == "attackers" else "Defenders"
 
 
-# Betting: parimutuel pools, twitch-prediction style. ponytail: floor() rounding
-# dust (at most one coin per winning bettor) is not redistributed.
+# Betting: parimutuel pools, twitch-prediction style. ponytail: fractional
+# rounding dust (at most one coin per winning bettor) is not redistributed.
 
 
 def _fmt_clock(seconds: int) -> str:
@@ -370,14 +378,13 @@ def _powerups_announcement(bot, remaining: int) -> str:
     if remaining:
         header = f"⚔️ **Powerups enabled for {_fmt_clock(remaining)}**"
     else:
-        header = (
-            "⌛ **Powerup window closed** — `/doubledown` and `/setmap` are locked."
-        )
+        header = "⌛ **Powerup window closed** — `/doubledown`, `/setmap` and `/dodge` are locked."
     return (
         f"{header}\n"
         f"`/doubledown` costs {DOUBLEDOWN_COST} {e} to double your MMR change for this match.\n"
         f"Override the chosen map with `/setmap <map> [amount]` — wager {SETMAP_BASE_COST}+ {e} "
-        f"(outbid the last override) to swap the map."
+        f"(outbid the last override) to swap the map.\n"
+        f"`/dodge` costs {DODGE_COST} {e} to cancel the match — every other coin spent on it is refunded."
     )
 
 
@@ -398,6 +405,15 @@ def _team_lines(bot, team) -> list[str]:
         )
         lines.append(f"{display_line_for(ud)} ({rank})")
     return lines
+
+
+def _half_up(x: float) -> int:
+    """Round half up (0.5 rounds up) for non-negative payout values.
+
+    Betting payout math must not use builtin round(): it does banker's
+    rounding (round(2.5) == 2), breaking the coin rule that 0.5 rounds up.
+    """
+    return int((x * 2 + 1) // 2)
 
 
 def _betting_embed(bot, session, remaining: int) -> discord.Embed:
@@ -426,7 +442,8 @@ def _betting_embed(bot, session, remaining: int) -> discord.Embed:
         value = "\n".join(_team_lines(bot, team)) or "—"
         if pool and total:
             # Parimutuel: every coin on a side pays total/side when it wins.
-            value += f"\n**Pool:** {pool} {e} — pays **{total / pool:.2f}x** per coin\n"
+            # Lopsided pools pay at least the 1.5x payout floor (issue #255).
+            value += f"\n**Pool:** {pool} {e} — pays **{max(total / pool, PAYOUT_FLOOR):.2f}x** per coin\n"
         else:
             value += f"\n**Pool:** {pool} {e}\n"
         return value
@@ -735,7 +752,15 @@ def announce_cancellation(bot, guild) -> None:
 
 async def announce_cancellation_async(bot, guild) -> None:
     """Async form of announce_cancellation for await-style callers."""
-    e = duck_emote(bot)
+    await _post_to_ten_mans(
+        bot,
+        guild,
+        f"Match cancelled, duck coins {duck_emote(bot)} returned to all users.",
+    )
+
+
+async def _ten_mans_channel_async(bot, guild):
+    """The #10-mans channel for `guild`, falling back to a cached channel."""
     channel = None
     if guild is not None:
         try:
@@ -743,11 +768,24 @@ async def announce_cancellation_async(bot, guild) -> None:
         except AttributeError:
             channel = None
     if channel is None:
+        channel = getattr(bot, "ten_mans_channel", None)
+    return channel
+
+
+async def _post_to_ten_mans(bot, guild, content: str) -> None:
+    """Send `content` to #10-mans, best effort — never raises.
+
+    The single delivery path for match-lifecycle notices, so a cancellation
+    notice and a dodge notice behave identically (issue #260).
+    """
+    channel = await _ten_mans_channel_async(bot, guild)
+    if channel is None:
+        log.warning("Could not post to #10-mans (channel unavailable): %s", content)
         return
     try:
-        await channel.send(f"Match cancelled, duck coins {e} returned to all users.")
-    except (discord.HTTPException, AttributeError):
-        pass
+        await channel.send(content)
+    except (discord.HTTPException, AttributeError) as e:
+        log.error("Could not post to #10-mans: %s", e, exc_info=e)
 
 
 async def settle_bets(bot, winner: str):
@@ -780,11 +818,22 @@ async def settle_bets(bot, winner: str):
 
     winner_rows = []
     for pid, amount in sorted(winners.items(), key=lambda item: -item[1]):
-        payout = amount * total // pool
+        # Parimutuel share, floored at 1.5x the stake (issue #255). A pool
+        # that can't fund the floor gets a minted top-up from the bot.
+        payout = max(_half_up(amount * total / pool), _half_up(PAYOUT_FLOOR * amount))
         add_coins(pid, payout)
         winner_rows.append((pid, amount, payout, payout - amount))
+    # Minted = coins paid beyond the escrowed pool (floor top-ups and
+    # half-up rounding dust) — logged so coin inflation stays observable.
+    minted = max(0, sum(payout for _, _, payout, _ in winner_rows) - total)
     if winners:
-        log.info("Settled %s bets on %s (%s coin pool)", len(winners), winner, total)
+        log.info(
+            "Settled %s bets on %s (%s coin pool, %s coin(s) minted for the payout floor)",
+            len(winners),
+            winner,
+            total,
+            minted,
+        )
     else:
         log.info("No winning bets on %s; %s coin pool unclaimed", winner, total)
     clear_escrow_journal(bot)
@@ -858,6 +907,83 @@ def doubledown(bot, user_id: str) -> str:
 def doubledown_multiplier_of(bot, player_id) -> int:
     """2 if this player paid for doubledown this match, else 1."""
     return 2 if str(player_id) in bot.double_downs else 1
+
+
+async def dodge(bot, user_id: str) -> str:
+    """Spend DODGE_COST coins to tear down the live match (issue #260).
+
+    Player-only powerup, gated to the powerup window (the shared
+    map-override deadline) — the same gates /doubledown answers to, inside
+    the match channel. On success the fee is charged and burned while every
+    OTHER coin spent on the match is refunded (escrowed bets, doubledowns,
+    the standing map-override wager — including the dodger's own purchases),
+    exactly like an admin cancel; #10-mans then gets one message naming the
+    dodger, instead of the generic cancel notice.
+
+    Returns the in-channel reply string. Public reply: the whole match
+    channel sees the price paid.
+    """
+    if not duck_coins_enabled():
+        return "Duck Coins features are disabled."
+    if not getattr(bot, "match_ongoing", False):
+        return "No match is running right now."
+    deadline = getattr(bot, "map_override_deadline", None)
+    if deadline is None:
+        return "Dodge is only available after teams are announced."
+    if time.monotonic() > deadline:
+        return "The dodge window has timed out."
+    if str(user_id) not in _match_players(bot):
+        return "Only players in this match can dodge."
+    balance = coins_of(user_id)
+    if balance < DODGE_COST:
+        return insufficient(bot, balance, DODGE_COST)
+    # The fee is burned first and routed through no refund path — refund
+    # machinery never sees it, so nothing below can give it back.
+    add_coins(user_id, -DODGE_COST)
+
+    # Teardown mirroring admin_commands._cancel_locked's in-progress branch:
+    # invalidate the setup cycle FIRST so lingering views bail out.
+    bot.setup_generation += 1
+    bot.match_setup_generation = None
+    bot.match_not_reported = False
+    bot.match_ongoing = False
+    bot.chosen_mode = None
+    bot.selected_map = None
+    bot.captain1 = None
+    bot.captain2 = None
+    bot.team1 = []
+    bot.team2 = []
+    if bot.queue:
+        remember_recent_queue(bot.queue, cancelled=True)
+
+    # Every match-associated coin except the burned fee comes back.
+    refunded_total = refund_match_coins(bot)
+    log.info(
+        "Match dodged by %s: fee %s burned, %s coin(s) refunded",
+        user_id,
+        DODGE_COST,
+        refunded_total,
+    )
+
+    # Announce in #10-mans, best-effort (never raises): who dodged and the
+    # fee — no generic cancel notice on this path. The server nickname is the
+    # ask; display_name_for falls back to the Discord name, then "N/A".
+    e = duck_emote(bot)
+    guild = getattr(getattr(bot, "match_channel", None), "guild", None)
+    if guild is None:
+        guild = getattr(bot, "guild", None)
+    nickname = display_name_for(None, guild=guild, discord_id=str(user_id))
+    await _post_to_ten_mans(
+        bot,
+        guild,
+        f"**{nickname}** just dodged the match for {DODGE_COST} {e} — "
+        f"all Duck Coins spent on this match are refunded.",
+    )
+
+    return (
+        f"Paid {DODGE_COST} {e} — the match is dodged and every other coin "
+        f"spent on it is refunded!"
+    )
 
 
 async def setmap_override(bot, user_id: str, map_name: str, amount: int = None) -> str:

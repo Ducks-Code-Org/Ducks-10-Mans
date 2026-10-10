@@ -5,14 +5,18 @@ the action (issue #210 follow-up)."""
 
 import logging
 
+import discord
 from discord.ext import commands
 
 from commands import BotCommands
+from commands.report import cleanup_match_resources
+from commands.signup import cancel_background_purge
 from commands.stats import _resolve_player
 from database import users
 from game.duck_coins import (
     coins_of,
     command_available,
+    dodge,
     duck_coins_enabled,
     duck_emote,
     doubledown,
@@ -111,6 +115,42 @@ class CoinCommands(BotCommands):
             channel=ctx.channel,
             public=True,
         )
+
+    @commands.hybrid_command(
+        name="dodge",
+        description="Spend 15 Duck Coins to cancel the running match yourself (public reply)",
+    )
+    async def dodge_command(self, ctx: commands.Context):
+        # Serialize against /report and /cancel (same lock discipline as
+        # admin /cancel): a mid-report dodge must never refund a match that
+        # actually got played.
+        async with self.bot.report_lock:
+            # Powerup: only usable inside the generated match-# channel.
+            rejection = command_available(self.bot, channel=ctx.channel)
+            if rejection:
+                log.warning(
+                    "Duck Coins command rejected for %s: %s", ctx.author, rejection
+                )
+                await ctx.send(rejection, ephemeral=True)
+                return
+            was_ongoing = getattr(self.bot, "match_ongoing", False)
+            reply = await dodge(self.bot, str(ctx.author.id))
+            # A successful dodge is the one that flips match_ongoing off;
+            # rejections never touch it. Public only on success, so the match
+            # channel sees the price paid (issue #260).
+            dodged = was_ongoing and not self.bot.match_ongoing
+            await ctx.send(reply, ephemeral=not dodged)
+            if not dodged:
+                return
+            # The dodge itself only resets state; finish the teardown exactly
+            # like an admin /cancel (channel/role/message cleanup; issue #260).
+            guild = ctx.guild
+            if guild is not None:
+                self.bot.ten_mans_channel = discord.utils.get(
+                    guild.text_channels, name="10-mans"
+                )
+            cancel_background_purge(self.bot)
+            await cleanup_match_resources(self.bot, cancelled=True)
 
     @commands.hybrid_command(
         name="setmap",

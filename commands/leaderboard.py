@@ -7,9 +7,9 @@ from discord.ext import commands
 
 from commands import BotCommands
 from database import mmr_collection
+from game.ranking import leaderboard_order
 from views.leaderboard_view import (
     LeaderboardView,
-    sort_key_for,
 )
 
 log = logging.getLogger(__name__)
@@ -42,8 +42,14 @@ class LeaderboardCommand(BotCommands):
 
         sort_by_internal = valid_sort_map[sort_by]
         cursor = mmr_collection.find()
-        sorted_data = list(cursor)
-        sorted_data.sort(key=sort_key_for(sort_by_internal), reverse=True)
+        # Canonical deterministic order (issue #256): row order and the Rank
+        # column come from the same helper as every stored-rank write.
+        sorted_data = [
+            d
+            for _, d in leaderboard_order(
+                [(str(d["player_id"]), d) for d in cursor], sort_by_internal
+            )
+        ]
 
         leaderboard_view = LeaderboardView(
             ctx,

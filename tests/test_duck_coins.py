@@ -17,7 +17,16 @@ _database_stub.mmr_collection = types.SimpleNamespace(
 )
 _database_stub.seasons = types.SimpleNamespace()
 _database_stub.all_matches = types.SimpleNamespace()
-_database_stub.recent_queue = types.SimpleNamespace()
+_recent_doc = {}
+
+
+def _recent_upsert(query, update, upsert=False):
+    _recent_doc.update(update.get("$set", {}))
+
+
+_database_stub.recent_queue = types.SimpleNamespace(
+    update_one=_recent_upsert, find_one=lambda *a, **k: None
+)
 
 # Fake coin_escrow collection backed by a dict: mirrors Mongo's upsert/$unset
 # contract closely enough for the escrow-journal self-checks.
@@ -175,6 +184,9 @@ def open_window(bot):
         "bets": {"attackers": {}, "defenders": {}},
         "message": None,
         "task": None,
+        "powerup_message": None,
+        "powerup_task": None,
+        "ends_at": 0,
     }
     return bot.bet_session
 
@@ -202,20 +214,26 @@ def demo():
     assert "Pick a side" in reply
     reply = place_bet(bot, "1", "attackers", 1)
     assert "can't bet" in reply, "match player must not bet"
+    reply = place_bet(bot, "1", "defenders", 1)
+    assert "can't bet" in reply, "match player must stay barred (issue #255)"
     reply = place_bet(bot, "5", "defenders", 0)
     assert "Minimum" in reply
     reply = place_bet(bot, "5", "attackers", 0)
     assert "Minimum" in reply
 
-    # Parimutuel payout: attackers pool 4 (3+1) vs defenders 1 → total 5.
-    # Payouts: 3*5//4=3 for "5", 1*5//4=1 for "7"; dust stays in the pool.
-    # (A small losing pool means break-even nets here: 3-3=0, 1-1=0.)
+    # Parimutuel payout with the 1.5x payout floor and half-up rounding
+    # (issue #255): attackers pool 4 (3+1) vs defenders 1 → total 5.
+    # Parimutuel shares: 3*5/4=3.75→4, 1*5/4=1.25→1; both also clear the
+    # 1.5x floor (3→5, 1→2), so the floor tops both up. The direct
+    # injections below simulate the escrow: "5" paid 3 (balance 3), "7"
+    # "paid" 1 (injected without deducting). After settle:
+    # "5": 3 + 5 = 8, "7": 0 + 2 = 2, "6" (loser): 0.
     session["bets"]["attackers"]["5"] = 3
     session["bets"]["attackers"]["7"] = 1
     session["bets"]["defenders"]["6"] = 1
     embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
-    assert coins_of("5") == 6, f"bettor payout wrong: {coins_of('5')}"
-    assert coins_of("7") == 1, f"second bettor payout wrong: {coins_of('7')}"
+    assert coins_of("5") == 8, f"bettor payout wrong: {coins_of('5')}"
+    assert coins_of("7") == 2, f"second bettor payout wrong: {coins_of('7')}"
     assert coins_of("6") == 0, "losing side must not be paid"
     assert bot.bet_session is None
     # The summary embed must list winners AND losers with net results.
@@ -226,12 +244,12 @@ def demo():
     assert "<@7>" in embed.fields[0]["value"], embed.fields
     assert "<@6>" in embed.fields[1]["value"], embed.fields
     assert "bet 3" in embed.fields[0]["value"], embed.fields
-    assert "(+0)" in embed.fields[0]["value"], embed.fields
+    assert "(+2)" in embed.fields[0]["value"], embed.fields
     assert "lost 1" in embed.fields[1]["value"], embed.fields
     assert "Attackers won" in embed.title, embed.title
 
     # A bigger losing pool yields a real profit: winners pool 4, losers 6,
-    # total 10 → payout 2x per coin (3*10//4=7, 1*10//4=2).
+    # total 10 → parimutuel share 3*10/4=7.5→8 (≥ floor 5), 1*10/4=2.5→3.
     DB["5"]["duck_coins"] = 0
     DB["7"]["duck_coins"] = 0
     session = open_window(bot)
@@ -239,11 +257,85 @@ def demo():
     session["bets"]["attackers"]["7"] = 1
     session["bets"]["defenders"]["6"] = 6
     embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
-    assert coins_of("5") == 7, f"2x payout wrong: {coins_of('5')}"
-    assert coins_of("7") == 2, f"2x payout wrong: {coins_of('7')}"
-    assert "(+4)" in embed.fields[0]["value"], embed.fields
-    assert "(+1)" in embed.fields[0]["value"], embed.fields
+    assert coins_of("5") == 8, f"2.5x share payout wrong: {coins_of('5')}"
+    assert coins_of("7") == 3, f"2.5x share payout wrong: {coins_of('7')}"
+    assert "(+5)" in embed.fields[0]["value"], embed.fields
+    assert "(+2)" in embed.fields[0]["value"], embed.fields
     assert "lost 6" in embed.fields[1]["value"], embed.fields
+
+    # Issue #255: a one-sided pool pays the 1.5x floor, minted by the bot.
+    # Stake 2 solo → share 2, floor half_up(3.0)=3 → pays 3 (1 coin minted).
+    session = open_window(bot)
+    session["bets"]["attackers"]["5"] = 2
+    DB["5"]["duck_coins"] = 3  # as if the 2-coin bet was escrowed
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
+    assert coins_of("5") == 6, f"1.5x floor payout wrong: {coins_of('5')}"
+    assert "(+1)" in embed.fields[0]["value"], embed.fields
+
+    # Half-up proof: a 1-coin bet floored at 1.5 pays 2, never 1.
+    DB["5"]["duck_coins"] = 0
+    session = open_window(bot)
+    session["bets"]["attackers"]["5"] = 1
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
+    assert coins_of("5") == 2, f"1-coin floor must pay 2 (half-up): {coins_of('5')}"
+    assert "(+1)" in embed.fields[0]["value"], embed.fields
+
+    # Large solo stake: 1.5x uncapped — a 100-coin stake pays 150.
+    DB["5"]["duck_coins"] = 0
+    session = open_window(bot)
+    session["bets"]["attackers"]["5"] = 100
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
+    assert coins_of("5") == 150, f"uncapped floor wrong: {coins_of('5')}"
+    assert "(+50)" in embed.fields[0]["value"], embed.fields
+
+    # Healthy mixed pool above the floor pays parimutuel exactly (half-up):
+    # winners 3+3 (pool 6) vs losers 10 → total 16; share 3*16/6=8 each.
+    DB["5"]["duck_coins"] = 0
+    DB["7"]["duck_coins"] = 0
+    session = open_window(bot)
+    session["bets"]["attackers"]["5"] = 3
+    session["bets"]["attackers"]["7"] = 3
+    session["bets"]["defenders"]["6"] = 10
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
+    assert coins_of("5") == 8 and coins_of("7") == 8, (
+        coins_of("5"),
+        coins_of("7"),
+    )
+    assert "(+5)" in embed.fields[0]["value"], embed.fields
+
+    # No-winner match: the unclaimed pool sinks — nobody gets anything.
+    DB["5"]["duck_coins"] = 7
+    DB.setdefault("6", {"player_id": "6"})["duck_coins"] = 7
+    session = open_window(bot)
+    session["bets"]["defenders"]["5"] = 3
+    session["bets"]["defenders"]["6"] = 2
+    embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
+    assert coins_of("5") == 7 and coins_of("6") == 7, "losers must lose it all"
+    assert "unclaimed" in embed.description, embed.description
+    assert "Lost" in embed.fields[0]["name"], "losers still listed with no winners"
+
+    # The live betting embed shows the floored odds on lopsided pools
+    # (max(actual, 1.50x)) so the guarantee is visible before betting.
+    import game.duck_coins as _dc
+
+    class _FakeBetMessage:
+        def __init__(self):
+            self.embeds = []
+
+        async def edit(self, embed=None):
+            self.embeds.append(embed)
+
+    solo = open_window(bot)
+    solo["message"] = _FakeBetMessage()
+    solo["bets"]["attackers"]["5"] = 2
+    asyncio.run(_dc._refresh_betting_embed(bot, solo))
+    assert "1.50x" in solo["message"].embeds[-1].fields[0]["value"]
+    heavy = open_window(bot)
+    heavy["message"] = _FakeBetMessage()
+    heavy["bets"]["attackers"]["5"] = 2
+    heavy["bets"]["defenders"]["6"] = 8
+    asyncio.run(_dc._refresh_betting_embed(bot, heavy))
+    assert "5.00x" in heavy["message"].embeds[-1].fields[0]["value"]
 
     # Nobody bet at all: no embed, nothing to post.
     open_window(bot)
@@ -655,12 +747,12 @@ def demo():
     DB["9"]["duck_coins"] = 8
     embed = asyncio.run(duck_coins.settle_bets(bot, "attackers"))
     assert embed is not None, "a lone winner must still get a summary embed"
-    assert coins_of("9") == 10, "settlement must pay the winning bettor"
+    assert coins_of("9") == 11, "floor must pay the lone bettor 1.5x (3)"
     assert "data" not in _ESCROW_DOCS.get(
         "open_bets", {}
     ), "settlement must clear the journal"
     recover_orphaned_escrow(bot)
-    assert coins_of("9") == 10, "settled bets must never be re-refunded"
+    assert coins_of("9") == 11, "settled bets must never be re-refunded"
 
     # --- Map-override journal and startup recovery (issue #205) -----------
     # (Reset the once-per-process gate so this simulates a fresh process.)
@@ -911,6 +1003,166 @@ def demo():
         )
     ).read()
     assert "refund_match_coins(self.bot)" in src, "!cancel must refund on cancel"
+
+    # --- Issue #260: /dodge — paid match dodge during the powerup window ---
+    from game.duck_coins import DODGE_COST, _powerups_announcement, dodge
+
+    add_coins = duck_coins.add_coins
+
+    def _dodge_guild():
+        """A fake guild whose #10-mans records sends, with one member."""
+        sends = []
+        channel = types.SimpleNamespace(name="10-mans", send=None)
+
+        async def _capture(content=None, **kw):
+            sends.append(content)
+
+        channel.send = _capture
+
+        class _Member:
+            id = 1
+            display_name = "QuackLegend"
+
+        guild = types.SimpleNamespace(
+            text_channels=[channel], get_member=lambda uid: _Member()
+        )
+        return guild, sends
+
+    async def _run_dodge():
+        # Fresh match state: players 1 and 2, spectator 5 with bets.
+        b = FakeBot()
+        b.match_ongoing = True
+        b.match_not_reported = True
+        b.setup_generation = 3
+        b.match_setup_generation = 3
+        b.map_override_deadline = time.monotonic() + 120
+        b.emojis = []
+        DB["1"]["duck_coins"] = 15  # exactly the fee
+        DB["2"]["duck_coins"] = 100
+        DB["5"]["duck_coins"] = 10
+        session = open_window(b)
+        # Spectator 5 escrowed a 4-coin bet on attackers; player 1 doubled
+        # down and holds the standing map-override wager.
+        session["bets"]["attackers"]["5"] = 4
+        DB["5"]["duck_coins"] = 6  # as if escrowed
+        b.double_downs = {"1"}
+        b.map_override_last = 5
+        b.map_override_last_by = "1"
+        b.map_override_chain = [{"payer": "1", "amount": 5}]
+        # Player 1's ledger, told honestly: started at 25, paid 5 for the
+        # doubledown (20), paid 5 for the standing override wager (15) —
+        # exactly the DODGE_COST balance the gate then accepts.
+        DB["1"]["duck_coins"] = 25
+        add_coins("1", -DOUBLEDOWN_COST)
+        add_coins("1", -5)
+
+        guild, sends = _dodge_guild()
+        b.match_channel = types.SimpleNamespace(id=1, name="match-260", guild=guild)
+
+        balance_before = coins_of("1")
+        reply = await dodge(b, "1")
+        return b, reply, sends, balance_before
+
+    b, reply, sends, balance_before = asyncio.run(_run_dodge())
+    assert balance_before == DODGE_COST, balance_before
+    # Fee burned (15 -> 0), while their doubledown and standing wager refund:
+    assert (
+        coins_of("1") == 10
+    ), f"refund must restore 5+5 with fee burned: {coins_of('1')}"
+    # Everyone else's purchases refunded: the spectator's escrowed bet.
+    assert coins_of("5") == 10, f"spectator bet must refund: {coins_of('5')}"
+    # Teardown flags cleared, generation bumped, queue remembered.
+    assert b.match_ongoing is False and b.match_not_reported is False
+    assert b.setup_generation == 4 and b.match_setup_generation is None
+    assert _recent_doc.get("cancelled") is True, "/pingrecent memory must update"
+    assert b.bet_session is None and b.double_downs == set()
+    assert b.map_override_chain == []
+    # In-channel success states the fee (public reply).
+    assert "15" in reply and "dodged" in reply, reply
+    # #10-mans got exactly ONE message: the attributed dodge announcement,
+    # carrying the server nickname and the fee; generic cancel notice absent.
+    assert len(sends) == 1, sends
+    assert "**QuackLegend** just dodged the match for 15" in sends[0], sends
+    assert "refunded" in sends[0], sends
+    assert "Match cancelled" not in sends[0], sends
+
+    # Gate order — every rejection charges nothing and moves no coins:
+    # disabled feature, no match, no window, timed-out window, non-player,
+    # insufficient balance. Second call after success also rejects.
+    async def _run_gates():
+        out = []
+        b = FakeBot()
+        b.map_override_deadline = time.monotonic() + 120
+        b.emojis = []
+        b.match_channel = None
+        DB["1"]["duck_coins"] = 100
+        # Duck Coins disabled (feature flag), match running.
+        real_enabled = duck_coins.duck_coins_enabled
+        duck_coins.duck_coins_enabled = lambda: False
+        try:
+            reply = await dodge(b, "1")
+        finally:
+            duck_coins.duck_coins_enabled = real_enabled
+        out.append(("disabled", reply, 100))
+        # No match running.
+        b.match_ongoing = False
+        reply = await dodge(b, "1")
+        out.append(("no match", reply, 100))
+        # Live match: no window yet.
+        b.match_ongoing = True
+        b.map_override_deadline = None
+        reply = await dodge(b, "1")
+        out.append(("no window", reply, 100))
+        # Timed-out window.
+        b.map_override_deadline = time.monotonic() - 1
+        reply = await dodge(b, "1")
+        out.append(("timed out", reply, 100))
+        # Non-player (window live again).
+        b.map_override_deadline = time.monotonic() + 120
+        reply = await dodge(b, "7")
+        out.append(("non-player", reply, coins_of("7")))
+        # Insufficient balance.
+        DB["1"]["duck_coins"] = 14
+        reply = await dodge(b, "1")
+        out.append(("insufficient", reply, 14))
+        return out
+
+    gates = asyncio.run(_run_gates())
+    assert "disabled" in gates[0][1], gates[0]
+    assert "No match is running" in gates[1][1], gates[1]
+    assert "only available after teams are announced" in gates[2][1], gates[2]
+    assert "dodge window has timed out" in gates[3][1], gates[3]
+    assert "Only players in this match" in gates[4][1], gates[4]
+    assert "have 14" in gates[5][1] and "need 15" in gates[5][1], gates[5]
+    assert coins_of("7") == 0, "a rejected dodge must not create a balance"
+    assert [g[2] for g in gates] == [100, 100, 100, 100, 0, 14], "no charge on reject"
+
+    # Second dodge after success rejects on the flipped gates; no refunds.
+    # b is torn down (match_ongoing False, deadline None from refund path).
+    reply2 = asyncio.run(asyncio.wait_for(dodge(b, "1"), 2))
+    assert "No match is running" in reply2, reply2
+
+    # The powerup notice lists /dodge with its cost while open; the closed
+    # state locks all three commands.
+    text_open = _powerups_announcement(bot, 120)
+    assert "/dodge" in text_open and "15" in text_open, text_open
+    text_closed = _powerups_announcement(bot, 0)
+    assert "/dodge" in text_closed, text_closed
+
+    # Help's Duck Coins table lists /dodge with the fee (issue #260). The
+    # help module imports discord.ext at module scope, so parse its table
+    # source — the test_duck_coins seam has no command layer.
+    help_src = open(
+        os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "commands",
+            "help.py",
+        )
+    ).read()
+    duck_src = help_src.split('"Duck Coins",')[1].split('"Utility"')[0]
+    assert '"dodge"' in duck_src, "help table must list /dodge under Duck Coins"
+    dodge_entry = duck_src.split('"dodge"')[1]
+    assert "15" in dodge_entry.split(")")[0], dodge_entry
 
     print("all duck coins self-checks passed")
 

@@ -96,14 +96,12 @@ class InterestCommand(BotCommands):
         )
 
         log.info("Interest slot %s created/joined by %s", rounded, ctx.author)
+        # The board is posted fully rendered (header + roster with the
+        # creator already on it): no placeholder-then-fetch dance — that
+        # path died on the 15-minute webhook token (issue #257).
         view = InterestView(rounded, timeout=None)
-        embed = discord.Embed(
-            description="Creating interest slot…", color=discord.Color.green()
-        )
-        msg = await ctx.send(embed=embed, view=view)
-        view.message = msg
-
-        await view._render(await ctx.fetch_message(msg.id))
+        embed = view.board_embed(doc)
+        await ctx.send(embed=embed, view=view)
 
 
 def parse_time_to_utc(time: str):
