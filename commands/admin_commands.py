@@ -16,6 +16,11 @@ from game.duck_coins import (
     announce_cancellation_async,
     refund_match_coins,
 )
+from game.nicknames import (
+    managed_nicknames_enabled,
+    strip_rank_icons,
+    sync_guild_nicknames,
+)
 from game.ranks import remove_all_rank_roles
 from game.recent_queue import remember_recent_queue
 from game.stats_helper import DEFAULT_MMR
@@ -67,11 +72,16 @@ class AdminCommands(BotCommands):
             winner_doc.get("player_id"),
         )
 
-        # Strip every rank role — fresh season means fresh ranks.
+        # Strip every rank role — fresh season means fresh ranks. Nicknames
+        # lose their rank icon too, with or without the stats reset.
         try:
             await remove_all_rank_roles(ctx.guild)
         except Exception as e:
             log.warning("Could not remove rank roles: %s", e)
+        try:
+            await strip_rank_icons(ctx.guild)
+        except Exception as e:
+            log.error("Could not strip rank icons: %s", e, exc_info=e)
 
         # Assign SSR Rank to winner
         ssr_role = await ctx.guild.create_role(
@@ -105,6 +115,39 @@ class AdminCommands(BotCommands):
             await announcement_channel.send(message)
         else:
             await ctx.send(message)
+
+    @commands.hybrid_command(
+        name="syncnicknames",
+        description="Apply managed nicknames to every linked member (admin only)",
+    )
+    @commands.has_permissions(administrator=True)
+    async def syncnicknames(self, ctx):
+        """Apply the managed nickname policy to every linked member here."""
+        if not managed_nicknames_enabled():
+            await ctx.send(
+                "The `managed_nicknames` feature flag is off. Enable it with "
+                "`/setconfig managed_nicknames true` first.",
+                ephemeral=True,
+            )
+            return
+        # A full server walk easily outlives a slash interaction's reply
+        # window, so acknowledge before starting.
+        await ctx.defer(ephemeral=True)
+        try:
+            counts = await sync_guild_nicknames(self.bot, ctx.guild)
+        except Exception as e:
+            log.error("Nickname backfill failed: %s", e, exc_info=e)
+            await ctx.send(
+                "Nickname backfill failed; check the bot logs.", ephemeral=True
+            )
+            return
+        log.info("Nickname backfill by %s: %s", ctx.author, counts)
+        await ctx.send(
+            "Nickname backfill complete: "
+            f"**{counts['updated']}** updated, **{counts['unchanged']}** unchanged, "
+            f"**{counts['skipped']}** skipped, **{counts['failed']}** failed.",
+            ephemeral=True,
+        )
 
     @commands.hybrid_command(
         name="initialize_rounds",

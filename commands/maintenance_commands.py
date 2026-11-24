@@ -30,6 +30,8 @@ from game.duck_coins import (
     duck_coins_enabled,
     duck_emote,
 )
+from game.identity import canonical_riot_id
+from game.nicknames import clear_member_nickname, sync_member_nickname
 from game.ranking import leaderboard_order
 from game.stats_helper import DEFAULT_MMR, update_stats
 from game.voice_presence import move_teams_to_voice, voice_presence_enabled
@@ -128,6 +130,11 @@ ADMIN_COMMAND_HELP: dict[str, tuple[str, str, str]] = {
         "Players",
         "<@user|Name#Tag> <amount>",
         "Grant or remove a player's Duck Coins",
+    ),
+    "syncnicknames": (
+        "Players",
+        "",
+        "Apply managed nicknames to every linked member",
     ),
     "setconfig": ("Config", "<key> <value>", "Update a bot.ini feature flag live"),
     "showconfig": ("Config", "", "Show current bot.ini feature flags"),
@@ -473,7 +480,16 @@ class MaintenanceCommands(BotCommands):
 
         # Same stale-link cleanup as !linkriot: a Riot ID links to one Discord account.
         for stale in users.find({"name": riot_name.lower(), "tag": riot_tag.lower()}):
-            if str(stale.get("discord_id")) != pid:
+            stale_id = str(stale.get("discord_id"))
+            if stale_id != pid:
+                # Clear while the stale doc still has the Riot ID, so only a
+                # nickname carrying it is removed (flag-gated), then delete.
+                try:
+                    await clear_member_nickname(ctx.guild, stale_id)
+                except Exception as e:
+                    log.error(
+                        "Nickname clear failed for %s: %s", stale_id, e, exc_info=e
+                    )
                 users.delete_one({"_id": stale["_id"]})
                 mmr_collection.delete_one({"player_id": stale.get("discord_id")})
                 log.info(
@@ -483,7 +499,12 @@ class MaintenanceCommands(BotCommands):
                     stale.get("discord_id"),
                 )
 
-        set_fields = {"name": riot_name.lower(), "tag": riot_tag.lower()}
+        canonical = canonical_riot_id(payload, riot_name, riot_tag)
+        set_fields = {
+            "name": riot_name.lower(),
+            "tag": riot_tag.lower(),
+            "riot_display_name": canonical,
+        }
         puuid = (payload.get("puuid") or "").strip()
         if puuid:
             set_fields["puuid"] = puuid
@@ -493,6 +514,10 @@ class MaintenanceCommands(BotCommands):
             {"$set": {"name": f"{riot_name}#{riot_tag}"}},
             upsert=False,
         )
+        try:
+            await sync_member_nickname(self.bot, ctx.guild, pid)
+        except Exception as e:
+            log.error("Nickname sync failed for %s: %s", pid, e, exc_info=e)
         log.info("%s relinked %s to %s#%s", ctx.author, pid, riot_name, riot_tag)
         await ctx.send(f"Relinked <@{pid}> to `{riot_name}#{riot_tag}`.")
 
