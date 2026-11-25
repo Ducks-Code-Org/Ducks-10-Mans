@@ -110,6 +110,12 @@ sys.modules["discord.app_commands"] = _app_stub
 
 import commands.report as report_mod  # noqa: E402
 from commands.report import ReportCommand  # noqa: E402
+import views.signup_view as _signup_view  # noqa: E402
+
+# These tests cover the pre-managed-nickname button path. Pin the flag off so
+# a developer's enabled bot.ini cannot turn the signup checks into Riot API
+# calls.
+_signup_view.managed_nicknames_enabled = lambda: False
 
 
 class FakeBot:

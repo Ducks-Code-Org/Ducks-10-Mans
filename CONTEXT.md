@@ -53,6 +53,24 @@ _Avoid_: sub-out, replacement (verb)
 **Sub announcement**:
 The channel message naming the incoming and outgoing players of a substitute.
 
+### Identity
+
+**Managed nickname**:
+The guild-specific server nickname the bot owns for a linked player, formatted as `<rank icon> <Riot ID>` when ranked and `<Riot ID>` otherwise.
+_Avoid_: bot name, forced nickname
+
+**Rank icon**:
+The Unicode emoji prefix representing the player's current rank tier; the rank-1 player shows the Supersonic Radiant icon instead of their tier icon.
+_Avoid_: rank badge, rank emoji
+
+**Nickname sync**:
+The event-driven reconciliation that applies a managed nickname; it only writes on sync events and does not watch for manual edits.
+_Avoid_: nickname watcher, rename loop
+
+**Backfill**:
+The admin-triggered one-off sync for every linked member in the guild.
+_Avoid_: mass rename, bulk sync
+
 ### Rating
 
 **MMR**:
@@ -72,8 +90,8 @@ A player's 1-based position in the canonical leaderboard order (MMR descending, 
 _Avoid_: standing, placement
 
 **Rank tier**:
-The MMR-bucket role a player holds, unrelated to leaderboard position.
-_Avoid_: leaderboard rank, placement
+One of the seven MMR bands a player's role comes from, unrelated to leaderboard position; Supersonic Radiant is a title for the rank-1 player, not a tier.
+_Avoid_: leaderboard rank, placement, rank level
 
 ### Betting
 

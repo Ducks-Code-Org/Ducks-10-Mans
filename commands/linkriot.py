@@ -9,6 +9,8 @@ from discord.ext import commands
 
 from commands import BotCommands
 from database import mmr_collection, users
+from game.identity import canonical_riot_id
+from game.nicknames import sync_member_nickname
 from services.riot_api import RiotApiInconclusive, get_account_by_riot_id
 from tracker_links import tracker_link
 
@@ -90,10 +92,13 @@ class LinkRiotCommand(BotCommands):
                 await ctx.send(_ALREADY_LINKED, ephemeral=True)
                 return
 
+        # Canonical casing lives beside the lowercase lookup keys.
+        canonical = canonical_riot_id(payload, riot_name, riot_tag)
         set_fields = {
             "discord_id": discord_id,
             "name": riot_name.lower().strip(),
             "tag": riot_tag.lower().strip(),
+            "riot_display_name": canonical,
         }
         if new_puuid:
             set_fields["puuid"] = new_puuid
@@ -107,6 +112,11 @@ class LinkRiotCommand(BotCommands):
         mmr_collection.update_one(
             {"player_id": discord_id}, {"$set": {"name": full_name}}, upsert=False
         )
+
+        try:
+            await sync_member_nickname(ctx.bot, ctx.guild, discord_id)
+        except Exception as e:
+            log.error("Nickname sync failed for %s: %s", discord_id, e, exc_info=e)
 
         await ctx.send(
             f"Successfully linked {tracker_link(riot_name, riot_tag)} to your Discord account.",
