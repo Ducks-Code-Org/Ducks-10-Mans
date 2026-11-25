@@ -365,8 +365,14 @@ def _channel_perms_ok(channel, guild, *, attachments: bool = False) -> bool:
         return True
     try:
         perms = checker(guild.me)
-    except Exception:
-        return True
+    except Exception as e:
+        log.error(
+            "Conduct setup: could not check permissions for #%s: %s",
+            getattr(channel, "name", "?"),
+            e,
+            exc_info=e,
+        )
+        return False
     if not (perms.view_channel and perms.send_messages):
         return False
     if attachments:
@@ -481,6 +487,37 @@ async def ensure_setup(bot, guild):
             raise SetupError(
                 "Could not create #duck-council; check Manage Channels."
             ) from e
+
+    if council_existed:
+        # Verify the existing channel's privacy and council visibility rather
+        # than rewriting its overwrites.
+        try:
+            everyone = council.permissions_for(guild.default_role)
+            council_perms = council.permissions_for(role)
+        except Exception as e:
+            log.error(
+                "Conduct setup: could not verify #duck-council permissions: %s",
+                e,
+                exc_info=e,
+            )
+            raise SetupError(
+                "Could not verify the existing #duck-council permissions."
+            ) from e
+        if getattr(everyone, "view_channel", True):
+            log.error("Conduct setup: existing #duck-council is visible to @everyone")
+            raise SetupError(
+                "The existing #duck-council is visible to @everyone; make it "
+                "private or delete it."
+            )
+        if not getattr(council_perms, "view_channel", False):
+            log.error(
+                "Conduct setup: the Duck Council role cannot view the existing "
+                "#duck-council"
+            )
+            raise SetupError(
+                "The Duck Council role cannot view the existing #duck-council; "
+                "grant it access or delete the channel."
+            )
 
     log_channel = discord.utils.get(guild.text_channels, name=PUBLIC_LOG_CHANNEL_NAME)
     if log_channel is None:
@@ -939,7 +976,6 @@ async def finish_case(bot, case_id: str, now=None):
     subject_name = doc.get("subject_name") or subject_id
 
     if outcome in (BAN, WARN) and guild is not None:
-        existing = conduct_sanctions.find_one({"case_id": case_id, "type": outcome})
         if outcome == BAN:
             # The DM must go out while the bot still shares a guild with the
             # subject, i.e. before the ban call.
@@ -954,22 +990,6 @@ async def finish_case(bot, case_id: str, now=None):
                     "ban",
                 )
                 conduct_cases.update_one({"_id": case_id}, {"$set": {"notified": True}})
-            if existing is None:
-                conduct_sanctions.insert_one(
-                    {
-                        "_id": uuid.uuid4().hex,
-                        "guild_id": doc.get("guild_id"),
-                        "subject_id": subject_id,
-                        "subject_name": subject_name,
-                        "type": BAN,
-                        "case_id": case_id,
-                        "issued_at": now,
-                        "expires_at": None,
-                        "revoked_at": None,
-                        "revoked_by": None,
-                        "revoke_reason": None,
-                    }
-                )
             ban_applied = bool(doc.get("ban_applied"))
             if not ban_applied:
                 try:
@@ -983,12 +1003,31 @@ async def finish_case(bot, case_id: str, now=None):
                     )
                 except (discord.Forbidden, discord.HTTPException) as e:
                     log.error("Could not apply the conduct ban: %s", e, exc_info=e)
-            if ban_applied and not doc.get("public_logged"):
-                if await _send_public_log(guild, public_ban_line(subject_name)):
-                    conduct_cases.update_one(
-                        {"_id": case_id}, {"$set": {"public_logged": True}}
+            if ban_applied:
+                existing = conduct_sanctions.find_one({"case_id": case_id, "type": BAN})
+                if existing is None:
+                    conduct_sanctions.insert_one(
+                        {
+                            "_id": uuid.uuid4().hex,
+                            "guild_id": doc.get("guild_id"),
+                            "subject_id": subject_id,
+                            "subject_name": subject_name,
+                            "type": BAN,
+                            "case_id": case_id,
+                            "issued_at": now,
+                            "expires_at": None,
+                            "revoked_at": None,
+                            "revoked_by": None,
+                            "revoke_reason": None,
+                        }
                     )
+                if not doc.get("public_logged"):
+                    if await _send_public_log(guild, public_ban_line(subject_name)):
+                        conduct_cases.update_one(
+                            {"_id": case_id}, {"$set": {"public_logged": True}}
+                        )
         else:
+            existing = conduct_sanctions.find_one({"case_id": case_id, "type": WARN})
             if existing is None:
                 conduct_sanctions.insert_one(
                     {
@@ -1027,7 +1066,13 @@ async def finish_case(bot, case_id: str, now=None):
                     )
 
     doc = conduct_cases.find_one({"_id": case_id})
-    if doc and not doc.get("result_posted") and doc.get("result_lines"):
+    if doc is None:
+        return
+    if outcome == BAN and guild is not None and not doc.get("ban_applied"):
+        # Do not announce a ban that Discord has not accepted yet; the next
+        # tick retries the ban and then posts the result.
+        return
+    if not doc.get("result_posted") and doc.get("result_lines"):
         if guild is not None:
             channel = guild.get_channel(doc.get("channel_id"))
             if channel is not None:
@@ -1059,14 +1104,16 @@ async def file_application(bot, interaction, answer: str):
         is not None
     ):
         raise ConductError("You are already on the Duck Council.")
-    if conduct_applications.find_one(
-        {"applicant_id": str(applicant.id), "status": APP_OPEN}
-    ):
-        raise ConductError("You already have an open Duck Council application.")
 
     council, _, role, role_error = await ensure_setup(bot, guild)
     if role_error:
         raise SetupError(role_error)
+    # Re-check after the only await: two concurrent submits must not both
+    # insert an open application.
+    if conduct_applications.find_one(
+        {"applicant_id": str(applicant.id), "status": APP_OPEN}
+    ):
+        raise ConductError("You already have an open Duck Council application.")
     now = utcnow()
     doc = {
         "_id": uuid.uuid4().hex,
@@ -1088,6 +1135,7 @@ async def file_application(bot, interaction, answer: str):
         "public_logged": False,
         "role_granted": False,
         "role_grant_error": False,
+        "owner_notified": False,
         "closed_at": None,
         "purge_after": None,
         "purged": False,
@@ -1240,13 +1288,40 @@ async def finish_application(bot, app_id: str, now=None):
                     "I approved a Duck Council application but could not grant "
                     "the role. Please grant it manually."
                 )
-                if owner_role is not None:
-                    notice = f"{owner_role.mention} {notice}"
+                channel_notice = (
+                    f"{owner_role.mention} {notice}"
+                    if owner_role is not None
+                    else notice
+                )
+                owner_notified = False
                 if channel is not None:
                     try:
-                        await channel.send(notice)
-                    except (discord.Forbidden, discord.HTTPException):
-                        pass
+                        await channel.send(channel_notice)
+                        owner_notified = True
+                    except (discord.Forbidden, discord.HTTPException) as e:
+                        log.error(
+                            "Could not post the role-grant failure notice: %s",
+                            e,
+                            exc_info=e,
+                        )
+                if not owner_notified:
+                    owners = list(owner_role.members) if owner_role is not None else []
+                    if not owners and guild.owner is not None:
+                        owners = [guild.owner]
+                    for owner in owners:
+                        if await _dm(
+                            bot,
+                            guild,
+                            str(owner.id),
+                            notice,
+                            "role grant failure",
+                        ):
+                            owner_notified = True
+                            break
+                if owner_notified:
+                    conduct_applications.update_one(
+                        {"_id": app_id}, {"$set": {"owner_notified": True}}
+                    )
                 doc = conduct_applications.find_one({"_id": app_id})
 
         if doc.get("role_granted"):
@@ -1267,12 +1342,19 @@ async def finish_application(bot, app_id: str, now=None):
                         {"_id": app_id}, {"$set": {"public_logged": True}}
                     )
         elif not doc.get("notified"):
+            text = (
+                "Your Duck Council application was approved, but I could not "
+                "grant the role."
+            )
+            if doc.get("owner_notified"):
+                text += " An owner has been notified."
+            else:
+                text += " Please contact a server owner."
             await _dm(
                 bot,
                 guild,
                 applicant_id,
-                "Your Duck Council application was approved, but I could not "
-                "grant the role. An owner has been notified.",
+                text,
                 "application accepted but role grant failed",
             )
             conduct_applications.update_one(

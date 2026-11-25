@@ -29,8 +29,8 @@ async def _complete_ack(interaction) -> None:
     """Finish a component update defer without changing the board."""
     try:
         await interaction.edit_original_response()
-    except (discord.NotFound, discord.HTTPException):
-        pass
+    except (discord.NotFound, discord.HTTPException) as e:
+        log.warning("Could not complete the conduct vote acknowledgement: %s", e)
 
 
 class ReportModal(discord.ui.Modal, title="Report a player"):
@@ -200,6 +200,8 @@ class UnwarnSelectView(discord.ui.View):
         super().__init__(timeout=300)
         self.subject = subject
         options = []
+        # shortcut: Discord caps select menus at 25 options, so only the first
+        # 25 active warnings can be revoked; paginate if subjects ever exceed it.
         for warning in warnings[:25]:
             issued = warning.get("issued_at")
             expires = warning.get("expires_at")

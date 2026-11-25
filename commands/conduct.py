@@ -10,6 +10,7 @@ from game.conduct import (
     OWNER_ROLE_NAME,
     active_warnings,
 )
+from views import safe_reply
 from views.conduct_views import (
     ApplicationModal,
     ReportModal,
@@ -48,7 +49,15 @@ class ConductCommands(commands.Cog):
                 "You can't use that command right now.", ephemeral=True
             )
             return
-        await interaction.response.send_modal(ReportModal())
+        try:
+            await interaction.response.send_modal(ReportModal())
+        except (discord.NotFound, discord.HTTPException) as e:
+            log.error("Could not open the report modal: %s", type(e).__name__)
+            await safe_reply(
+                interaction,
+                "Could not open the report form. Try again.",
+                ephemeral=True,
+            )
 
     @app_commands.command(
         name="applycouncil",
@@ -61,7 +70,15 @@ class ConductCommands(commands.Cog):
                 "You can't use that command right now.", ephemeral=True
             )
             return
-        await interaction.response.send_modal(ApplicationModal())
+        try:
+            await interaction.response.send_modal(ApplicationModal())
+        except (discord.NotFound, discord.HTTPException) as e:
+            log.error("Could not open the council application modal: %s", e, exc_info=e)
+            await safe_reply(
+                interaction,
+                "Could not open the application form. Try again.",
+                ephemeral=True,
+            )
 
     @app_commands.command(
         name="unwarn",
@@ -75,7 +92,11 @@ class ConductCommands(commands.Cog):
                 "You can't use that command right now.", ephemeral=True
             )
             return
-        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.NotFound, discord.HTTPException) as e:
+            log.error("Could not defer /unwarn: %s", e, exc_info=e)
+            return
         if (
             discord.utils.get(
                 getattr(interaction.user, "roles", []), name=OWNER_ROLE_NAME

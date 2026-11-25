@@ -156,8 +156,12 @@ def next_id():
 
 
 class FakePerms:
-    view_channel = True
-    send_messages = True
+    def __init__(self, view_channel=True, send_messages=True):
+        self.view_channel = view_channel
+        self.send_messages = send_messages
+        self.embed_links = True
+        self.attach_files = True
+        self.read_message_history = True
 
 
 class FakeRole:
@@ -226,6 +230,8 @@ class FakeChannel:
         self.messages = {}
         self.created_overwrites = None
         self.fail_next_send = False
+        self.everyone_view = True
+        self.role_view = True
 
     async def send(self, content=None, **kwargs):
         if self.fail_next_send:
@@ -242,7 +248,13 @@ class FakeChannel:
         return self.messages[message_id]
 
     def permissions_for(self, member):
-        return FakePerms()
+        perms = FakePerms()
+        name = getattr(member, "name", "")
+        if name == "@everyone":
+            perms.view_channel = self.everyone_view
+        elif name == "Duck Council":
+            perms.view_channel = self.role_view
+        return perms
 
 
 class FakeGuild:
@@ -252,6 +264,7 @@ class FakeGuild:
         self.members = {}
         self.bans = []
         self.dm_count_at_ban = []
+        self.fail_ban = False
         self.role_creates = []
         self.channel_creates = []
         self.default_role = FakeRole(1, "@everyone", 0)
@@ -284,6 +297,7 @@ class FakeGuild:
         self.text_channels = [self.log_channel]
         if with_setup:
             self.council = FakeChannel(200, "duck-council")
+            self.council.everyone_view = False
             self.text_channels.insert(0, self.council)
 
     def get_member(self, member_id):
@@ -317,10 +331,15 @@ class FakeGuild:
         self.channel_creates.append((name, overwrites))
         self.text_channels.append(channel)
         if name == "duck-council":
+            channel.everyone_view = False
             self.council = channel
         return channel
 
     async def ban(self, user, reason=None):
+        if self.fail_ban:
+            raise discord.Forbidden(
+                types.SimpleNamespace(status=403, reason="Forbidden"), "missing"
+            )
         self.bans.append((user.id, reason))
         self.dm_count_at_ban.append(len(self.subject.dms))
 
@@ -511,6 +530,26 @@ async def demo():
     else:  # pragma: no cover - explicit failure path
         raise AssertionError("missing #announcements was accepted")
 
+    # An existing public council channel is rejected rather than used.
+    public = Harness()
+    public.guild.council.everyone_view = True
+    try:
+        await conduct.ensure_setup(public.bot, public.guild)
+    except conduct.SetupError as e:
+        assert "visible to @everyone" in str(e)
+    else:  # pragma: no cover - explicit failure path
+        raise AssertionError("public #duck-council was accepted")
+
+    # An existing channel the council role cannot view is rejected too.
+    hidden = Harness()
+    hidden.guild.council.role_view = False
+    try:
+        await conduct.ensure_setup(hidden.bot, hidden.guild)
+    except conduct.SetupError as e:
+        assert "cannot view" in str(e)
+    else:  # pragma: no cover - explicit failure path
+        raise AssertionError("unviewable #duck-council was accepted")
+
     # A council role at/above the bot's top role refuses applications.
     harness = Harness()
     harness.guild.council_role.position = 50
@@ -700,6 +739,36 @@ async def demo():
     assert not any(
         harness.council_member(i).name in result_text for i in range(3)
     ), "voter names leaked into the result"
+
+    # A failed ban must not create a sanction or announce an outcome; the
+    # next tick retries the ban and only then records/logs it.
+    harness = Harness()
+    harness.guild.fail_ban = True
+    await submit_report(harness, harness.reporter)
+    for index in range(3):
+        await vote(harness, harness.council_member(index), "yes")
+    case = CASES.latest()
+    assert case["status"] == CLOSED and case["outcome"] == BAN
+    assert case["ban_applied"] is False
+    assert not SANCTIONS.docs, "a failed ban was recorded as a sanction"
+    assert not harness.log.sent, "a failed ban was announced publicly"
+    assert not any(
+        "Outcome: Banned" in (content or "") for content, _ in harness.council.sent
+    ), "a failed ban was announced as the result"
+    assert len(harness.guild.subject.dms) == 1, "ban DM was not sent before the ban"
+
+    harness.guild.fail_ban = False
+    await conduct.conduct_tick(harness.bot)
+    assert harness.guild.bans and harness.guild.bans[0][0] == harness.guild.subject.id
+    assert SANCTIONS.docs and SANCTIONS.latest()["type"] == BAN
+    assert harness.log.sent[-1][0] == conduct.public_ban_line("Reported Player")
+    result_text = "\n".join(
+        content
+        for content, _ in harness.council.sent
+        if content and "Outcome:" in content
+    )
+    assert "Outcome: Banned" in result_text
+    assert len(harness.guild.subject.dms) == 1, "ban DM was duplicated on retry"
 
     # ------------------------------------------------------------------
     # Ban phase: majority no / tie / quorum failure all open the Warn phase.
@@ -1042,6 +1111,21 @@ async def demo():
     assert "could not grant" in applicant.dms[-1]
     owner_notice = "\n".join(content or "" for content, _ in harness.council.sent)
     assert harness.guild.owner_role.mention in owner_notice
+    assert not harness.log.sent, "false public acceptance was posted"
+
+    # If #duck-council is gone, the Owner notice falls back to a DM and the
+    # applicant is told the truth instead of "an owner has been notified".
+    harness = Harness()
+    applicant = harness.guild.subject
+    applicant.fail_add_roles = True
+    await submit_application(harness, applicant)
+    harness.guild.text_channels.remove(harness.guild.council)
+    for index in range(5):
+        await apply_vote(harness, harness.council_member(index), "yes")
+    app = APPLICATIONS.latest()
+    assert app["role_grant_error"] and app["owner_notified"]
+    assert harness.guild.owner.dms, "Owner was not DMed when the channel was gone"
+    assert "An owner has been notified" in applicant.dms[-1]
     assert not harness.log.sent, "false public acceptance was posted"
 
     # Owners may apply, open application views re-register, and a rejected

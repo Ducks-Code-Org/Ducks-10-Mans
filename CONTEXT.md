@@ -152,3 +152,7 @@ _Avoid_: council (when the role is meant)
 **Council application**:
 A request to join the Duck Council; every council member must vote yes before the 7-day deadline, and one no or a non-vote rejects it.
 _Avoid_: signup, admission
+
+**Conduct public log**:
+The permanent entries posted in the server's `#announcements` channel after a warning, ban, or accepted application; they name only the sanctioned user and outcome.
+_Avoid_: council log, moderation log
