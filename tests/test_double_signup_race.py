@@ -161,6 +161,7 @@ class _DefaultRole:
 class FakeCtx:
     def __init__(self):
         self.sent = []
+        self.send_kwargs = []
         self.author = types.SimpleNamespace(id=1, name="owner")
         self.guild = None
         self.channel = types.SimpleNamespace(category=None, send=None)
@@ -171,6 +172,14 @@ class FakeCtx:
 
     async def send(self, msg=None, **kw):
         self.sent.append(msg)
+        self.send_kwargs.append(kw)
+
+    def public_messages(self):
+        return [
+            msg
+            for msg, kw in zip(self.sent, self.send_kwargs)
+            if not kw.get("ephemeral", False)
+        ]
 
 
 def make_bot():
@@ -258,8 +267,8 @@ async def _run_live_setup_refusal():
     assert bot.setup_generation == 5, "setup_generation must not be bumped"
     assert bot.match_setup_generation == 5
     assert any(
-        "being set up" in (m or "") for m in ctx.sent
-    ), f"expected a refusal message, got {ctx.sent}"
+        "being set up" in (m or "") for m in ctx.public_messages()
+    ), f"expected a public refusal message, got {ctx.sent}"
     # And the queue state of the running setup must be untouched.
     assert bot.queue == []
     assert bot.team1 == [] and bot.team2 == []
