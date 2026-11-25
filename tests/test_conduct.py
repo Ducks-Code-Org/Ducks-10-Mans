@@ -279,11 +279,12 @@ class FakeGuild:
             self.roles.insert(1, self.council_role)
         self.text_channels = []
         self.council = None
-        self.log_channel = None
+        # Announcements always exists; the conduct public log reuses it.
+        self.log_channel = FakeChannel(201, "announcements")
+        self.text_channels = [self.log_channel]
         if with_setup:
             self.council = FakeChannel(200, "duck-council")
-            self.log_channel = FakeChannel(201, "council-log")
-            self.text_channels = [self.council, self.log_channel]
+            self.text_channels.insert(0, self.council)
 
     def get_member(self, member_id):
         return self.members.get(int(member_id))
@@ -317,8 +318,6 @@ class FakeGuild:
         self.text_channels.append(channel)
         if name == "duck-council":
             self.council = channel
-        elif name == "council-log":
-            self.log_channel = channel
         return channel
 
     async def ban(self, user, reason=None):
@@ -474,7 +473,8 @@ def embed_text(embed):
 
 async def demo():
     # ------------------------------------------------------------------
-    # Setup: missing role and channels are created with the right perms.
+    # Setup: missing role and council channel are created; the existing
+    # #announcements channel is reused for the public log and never rewritten.
     # ------------------------------------------------------------------
     harness = Harness(with_setup=False)
     guild = harness.guild
@@ -483,10 +483,7 @@ async def demo():
     )
     assert role.name == "Duck Council" and role.mentionable
     assert role_error is None, role_error
-    assert [name for name, _ in guild.channel_creates] == [
-        "duck-council",
-        "council-log",
-    ]
+    assert [name for name, _ in guild.channel_creates] == ["duck-council"]
     assert guild.owner.dms, "owner was not DMed about the created role"
     council_overwrites = council.created_overwrites
     assert (
@@ -496,13 +493,23 @@ async def demo():
         council_overwrites[role].send_messages is True
         and council_overwrites[role].attach_files is True
     ), "council role needs send/attach permissions"
-    log_overwrites = log_channel.created_overwrites
-    assert log_overwrites[guild.default_role].view_channel is True
-    assert log_overwrites[guild.default_role].send_messages is False
+    assert log_channel is guild.log_channel, "announcements channel was replaced"
+    assert log_channel.created_overwrites is None, "announcements was rewritten"
     # Existing objects are verified, not rewritten.
     before = len(guild.channel_creates)
     await conduct.ensure_setup(harness.bot, guild)
     assert len(guild.channel_creates) == before, "existing channels were rewritten"
+
+    # A missing #announcements fails setup loudly instead of creating a
+    # second public-log channel.
+    missing = Harness(with_setup=False)
+    missing.guild.text_channels.remove(missing.guild.log_channel)
+    try:
+        await conduct.ensure_setup(missing.bot, missing.guild)
+    except conduct.SetupError as e:
+        assert "announcements" in str(e)
+    else:  # pragma: no cover - explicit failure path
+        raise AssertionError("missing #announcements was accepted")
 
     # A council role at/above the bot's top role refuses applications.
     harness = Harness()

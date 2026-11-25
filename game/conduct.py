@@ -19,7 +19,7 @@ from database import conduct_applications, conduct_cases, conduct_sanctions
 log = logging.getLogger(__name__)
 
 COUNCIL_CHANNEL_NAME = "duck-council"
-COUNCIL_LOG_CHANNEL_NAME = "council-log"
+PUBLIC_LOG_CHANNEL_NAME = "announcements"
 COUNCIL_ROLE_NAME = "Duck Council"
 OWNER_ROLE_NAME = "Owner"
 
@@ -379,11 +379,14 @@ def _channel_perms_ok(channel, guild, *, attachments: bool = False) -> bool:
 
 
 async def ensure_setup(bot, guild):
-    """Find (create if missing) the council channel, log channel, and role.
+    """Find (create if missing) the council channel and role, and find the
+    server's announcements channel used for the public conduct log.
 
-    Existing objects are verified but never rewritten. Returns
-    ``(council_channel, log_channel, role, role_error)`` where role_error is
-    set only when the bot cannot manage the role (applications must refuse).
+    Existing objects are verified but never rewritten. The announcements
+    channel is reused as-is and never created. Returns
+    ``(council_channel, announcements_channel, role, role_error)`` where
+    role_error is set only when the bot cannot manage the role (applications
+    must refuse).
     """
     council = discord.utils.get(guild.text_channels, name=COUNCIL_CHANNEL_NAME)
     council_existed = council is not None
@@ -479,27 +482,17 @@ async def ensure_setup(bot, guild):
                 "Could not create #duck-council; check Manage Channels."
             ) from e
 
-    log_channel = discord.utils.get(guild.text_channels, name=COUNCIL_LOG_CHANNEL_NAME)
+    log_channel = discord.utils.get(guild.text_channels, name=PUBLIC_LOG_CHANNEL_NAME)
     if log_channel is None:
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(
-                view_channel=True, send_messages=False
-            ),
-            guild.me: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True
-            ),
-        }
-        try:
-            log_channel = await guild.create_text_channel(
-                COUNCIL_LOG_CHANNEL_NAME,
-                overwrites=overwrites,
-                reason="Conduct reporting setup (issue #269)",
-            )
-        except (discord.Forbidden, discord.HTTPException) as e:
-            log.error("Conduct setup: could not create #council-log: %s", e, exc_info=e)
-            raise SetupError(
-                "Could not create #council-log; check Manage Channels."
-            ) from e
+        log.error(
+            "Conduct setup: #%s was not found; conduct outcomes cannot be "
+            "announced publicly",
+            PUBLIC_LOG_CHANNEL_NAME,
+        )
+        raise SetupError(
+            f"Could not find #{PUBLIC_LOG_CHANNEL_NAME}; create it so conduct "
+            "outcomes can be announced."
+        )
 
     if not _channel_perms_ok(council, guild, attachments=True):
         log.error(
@@ -511,8 +504,13 @@ async def ensure_setup(bot, guild):
             "in #duck-council."
         )
     if not _channel_perms_ok(log_channel, guild):
-        log.error("Conduct setup: missing view/send permissions in #council-log")
-        raise SetupError("I cannot view and send messages in #council-log.")
+        log.error(
+            "Conduct setup: missing view/send permissions in #%s",
+            PUBLIC_LOG_CHANNEL_NAME,
+        )
+        raise SetupError(
+            f"I cannot view and send messages in #{PUBLIC_LOG_CHANNEL_NAME}."
+        )
 
     guild_perms = getattr(guild.me, "guild_permissions", None)
     if guild_perms is not None:
@@ -567,11 +565,13 @@ async def _dm(bot, guild, user_id: str, content: str, purpose: str) -> bool:
         return False
 
 
-async def _send_public_log(bot, guild, line: str) -> bool:
-    try:
-        _, log_channel, _, _ = await ensure_setup(bot, guild)
-    except SetupError as e:
-        log.error("Conduct public log unavailable: %s", e, exc_info=e)
+async def _send_public_log(guild, line: str) -> bool:
+    log_channel = discord.utils.get(guild.text_channels, name=PUBLIC_LOG_CHANNEL_NAME)
+    if log_channel is None:
+        log.error(
+            "Conduct public log unavailable: #%s not found",
+            PUBLIC_LOG_CHANNEL_NAME,
+        )
         return False
     try:
         await log_channel.send(line)
@@ -984,7 +984,7 @@ async def finish_case(bot, case_id: str, now=None):
                 except (discord.Forbidden, discord.HTTPException) as e:
                     log.error("Could not apply the conduct ban: %s", e, exc_info=e)
             if ban_applied and not doc.get("public_logged"):
-                if await _send_public_log(bot, guild, public_ban_line(subject_name)):
+                if await _send_public_log(guild, public_ban_line(subject_name)):
                     conduct_cases.update_one(
                         {"_id": case_id}, {"$set": {"public_logged": True}}
                     )
@@ -1021,7 +1021,7 @@ async def finish_case(bot, case_id: str, now=None):
                 line = public_warning_line(
                     subject_name, active_warning_count(subject_id, now)
                 )
-                if await _send_public_log(bot, guild, line):
+                if await _send_public_log(guild, line):
                     conduct_cases.update_one(
                         {"_id": case_id}, {"$set": {"public_logged": True}}
                     )
@@ -1262,9 +1262,7 @@ async def finish_application(bot, app_id: str, now=None):
                     {"_id": app_id}, {"$set": {"notified": True}}
                 )
             if not doc.get("public_logged"):
-                if await _send_public_log(
-                    bot, guild, public_accept_line(applicant_name)
-                ):
+                if await _send_public_log(guild, public_accept_line(applicant_name)):
                     conduct_applications.update_one(
                         {"_id": app_id}, {"$set": {"public_logged": True}}
                     )
@@ -1297,7 +1295,7 @@ async def finish_application(bot, app_id: str, now=None):
     doc = conduct_applications.find_one({"_id": app_id})
     if doc and not doc.get("result_posted"):
         if doc["status"] != APP_REJECTED:
-            # Accepted applications are announced in #council-log only.
+            # Accepted applications are announced in #announcements only.
             conduct_applications.update_one(
                 {"_id": app_id}, {"$set": {"result_posted": True}}
             )
