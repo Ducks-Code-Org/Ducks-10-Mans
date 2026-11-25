@@ -124,7 +124,9 @@ def make_bot():
 
 # --- /signup defers before the first slow await -----------------------------
 # Order is the whole bug: identity refresh (which stalls on the rate limiter)
-# must not run before the interaction is acknowledged.
+# must not run before the interaction is acknowledged. The defer must be
+# public because Discord edits that placeholder with the first follow-up and
+# preserves its ephemeral state.
 async def _run_defer_order():
     bot = make_bot()
     order = []
@@ -157,8 +159,8 @@ async def _run_defer_order():
         signup_mod.ensure_current_riot_identity = _ORIGINAL_ENSURE_IDENTITY
 
     assert ctx.defer_calls == [
-        True
-    ], f"/signup must defer (ephemeral) exactly once first, got {ctx.defer_calls}"
+        False
+    ], f"/signup must defer publicly exactly once first, got {ctx.defer_calls}"
     # Defer must be the FIRST event: it has to appear in the shared order
     # before the permission check and the identity refresh, or a regression
     # moving it after slow work would pass unnoticed.
@@ -202,7 +204,7 @@ async def _run_already_active():
     finally:
         signup_mod.ensure_perms = _ORIGINAL_ENSURE_PERMS
 
-    assert ctx.defer_calls == [True], "defer must happen even for rejections"
+    assert ctx.defer_calls == [False], "defer must happen even for rejections"
     assert any(
         "already in progress" in (m or "") for m in ctx.public_messages()
     ), f"expected the already-active public reply, got {ctx.sent}"

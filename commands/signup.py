@@ -229,7 +229,12 @@ class SignupCommand(BotCommands):
         # Without this, the 3-second interaction deadline (Discord 10062)
         # kills the token and every later ctx.send fails; with it, all later
         # sends ride the long-lived followup webhook.
-        await ctx.defer(ephemeral=True)
+        #
+        # The defer must be public: Discord's first follow-up edits this
+        # placeholder, and it keeps the defer's ephemeral state. An ephemeral
+        # defer would make every first reply — including "Queue started!" and
+        # every refusal — sender-only.
+        await ctx.defer(ephemeral=False)
         # Every /signup call must leave a publicly visible reply, including
         # refusals; an ephemeral-only rejection is invisible to the channel.
         async with self.bot.signup_lock:
