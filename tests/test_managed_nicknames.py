@@ -19,7 +19,14 @@ class UsersStub:
         self.docs = {}
 
     def find_one(self, query):
-        return self.docs.get(str(query.get("discord_id")))
+        if "discord_id" in query:
+            return self.docs.get(str(query.get("discord_id")))
+        for doc in self.docs.values():
+            if doc.get("name") == query.get("name") and doc.get("tag") == query.get(
+                "tag"
+            ):
+                return doc
+        return None
 
 
 class DatabaseStub(types.ModuleType):
@@ -262,6 +269,82 @@ def demo():
         assert m1.nick == "Alice#NA", m1.nick
         assert m4.nick == "dave#x", m4.nick
         assert run(nn.strip_rank_icons(guild)) == 0, "second strip is a no-op"
+
+        # Season reset reuses the over-length guard and logs the outranked
+        # skip instead of silently dropping it.
+        reset_users()
+        with_flag()
+        m6 = FakeMember(6, nick="💎 " + USERS["6"]["riot_display_name"])
+        guild = FakeGuild([m6])
+        with mock.patch.object(nn.log, "warning") as warn:
+            assert run(nn.strip_rank_icons(guild)) == 0
+        assert m6.edits == []
+        assert any("exceeds" in str(c) for c in warn.call_args_list)
+
+        m9 = FakeMember(9, top_role=100, nick="💎 Alice#NA")
+        guild = FakeGuild([m9])
+        with mock.patch.object(nn.log, "warning") as warn:
+            assert run(nn.strip_rank_icons(guild)) == 0
+        assert m9.edits == []
+        assert any("role above the bot" in str(c) for c in warn.call_args_list)
+
+        # Button signups refresh the identity before the nickname. A renamed
+        # Riot ID follows instead of blocking the signup.
+        reset_users()
+        with_flag()
+        renamed = {
+            "discord_id": "1",
+            "name": "alice",
+            "tag": "na",
+            "riot_display_name": "Alice#NA",
+        }
+
+        async def fake_identity(_discord_id):
+            _database_stub.users.docs["1"] = dict(renamed)
+            return True, "", dict(renamed)
+
+        original_identity = nn.ensure_current_riot_identity
+        nn.ensure_current_riot_identity = fake_identity
+        try:
+            m1 = FakeMember(1)
+            guild = FakeGuild([m1])
+            assert run(nn.refresh_signup_nickname(BOT, guild, 1)) == (True, "")
+        finally:
+            nn.ensure_current_riot_identity = original_identity
+        assert m1.nick == "💎 Alice#NA", m1.nick
+
+        # The refreshed ID must still belong to this Discord account.
+        reset_users()
+
+        async def conflicting_identity(_discord_id):
+            return True, "", dict(USERS["2"])
+
+        nn.ensure_current_riot_identity = conflicting_identity
+        try:
+            ok, message = run(
+                nn.refresh_signup_nickname(BOT, FakeGuild([FakeMember(1)]), 1)
+            )
+        finally:
+            nn.ensure_current_riot_identity = original_identity
+        assert ok is False and "different Discord account" in message, (ok, message)
+
+        # A nickname failure does not fail the signup refresh.
+        reset_users()
+
+        async def broken_sync(*_a, **_k):
+            raise RuntimeError("discord down")
+
+        original_sync = nn.sync_member_nickname
+        nn.ensure_current_riot_identity = fake_identity
+        nn.sync_member_nickname = broken_sync
+        try:
+            with mock.patch.object(nn.log, "error"):
+                assert run(
+                    nn.refresh_signup_nickname(BOT, FakeGuild([FakeMember(1)]), 1)
+                ) == (True, "")
+        finally:
+            nn.ensure_current_riot_identity = original_identity
+            nn.sync_member_nickname = original_sync
 
         # The season-reset hook runs whether or not stats are reset.
         admin_src = open(

@@ -8,6 +8,7 @@ import discord
 from discord.ui import Button
 
 from database import users
+from game.nicknames import managed_nicknames_enabled, refresh_signup_nickname
 from game.recent_queue import remember_recent_queue
 from services.riot_api import verify_riot_account_async
 from game.stats_helper import DEFAULT_MMR
@@ -390,29 +391,39 @@ class SignupView(discord.ui.View):
             return False
 
         if verified_user is None:
-            # Verify the user's Riot account (async + rate-limited; 429s never
-            # block the signup)
-            user_name: str = (db_user.get("name") or "").lower().strip()
-            user_tag: str = (db_user.get("tag") or "").lower().strip()
-            async with aiohttp.ClientSession() as session:
-                is_successful, reason = await verify_riot_account_async(
-                    session, user_name, user_tag
-                )
-            if not is_successful:
-                await send_notify(
-                    f"❌ Your stored Riot ID `{user_name}#{user_tag}` could not be verified: {reason}"
-                )
-                return False
+            if managed_nicknames_enabled():
+                # The button path otherwise only checks that the stored ID
+                # exists. With managed nicknames on, run the same puuid-based
+                # refresh as /signup so a rename follows and canonical casing
+                # is filled before the nickname write (issue #268).
+                ok, message = await refresh_signup_nickname(self.bot, guild, user_id)
+                if not ok:
+                    await send_notify(f"❌ {message}")
+                    return False
+            else:
+                # Verify the user's Riot account (async + rate-limited; 429s
+                # never block the signup)
+                user_name: str = (db_user.get("name") or "").lower().strip()
+                user_tag: str = (db_user.get("tag") or "").lower().strip()
+                async with aiohttp.ClientSession() as session:
+                    is_successful, reason = await verify_riot_account_async(
+                        session, user_name, user_tag
+                    )
+                if not is_successful:
+                    await send_notify(
+                        f"❌ Your stored Riot ID `{user_name}#{user_tag}` could not be verified: {reason}"
+                    )
+                    return False
 
-            # Verify the stored Riot ID is linked to THIS discord id in the database
-            # (someone else may have linked the same Riot ID to their account)
-            linked_user = users.find_one({"name": user_name, "tag": user_tag})
-            if not linked_user or str(linked_user.get("discord_id")) != user_id:
-                await send_notify(
-                    "❌ Your Riot ID is linked to a different Discord account, or was changed "
-                    "after another user linked it. Please re-link it using `/linkriot <Name#Tag>`."
-                )
-                return False
+                # Verify the stored Riot ID is linked to THIS discord id in the database
+                # (someone else may have linked the same Riot ID to their account)
+                linked_user = users.find_one({"name": user_name, "tag": user_tag})
+                if not linked_user or str(linked_user.get("discord_id")) != user_id:
+                    await send_notify(
+                        "❌ Your Riot ID is linked to a different Discord account, or was changed "
+                        "after another user linked it. Please re-link it using `/linkriot <Name#Tag>`."
+                    )
+                    return False
 
         # Re-check the cancellation gate AFTER the awaits above (issue #236):
         # the Riot verification can take seconds, and a !cancel or queue

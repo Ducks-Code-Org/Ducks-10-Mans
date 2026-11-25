@@ -11,6 +11,7 @@ import logging
 import discord
 
 from database import users
+from game.identity import ensure_current_riot_identity
 from game.ranking import has_played, position_of
 from game.ranks import SSR_NAME, rank_of
 from globals import feature_enabled
@@ -78,6 +79,20 @@ def _format_nickname(riot_id: str, icon: str | None) -> str:
     return f"{icon} {riot_id}" if icon else riot_id
 
 
+def _over_limit(discord_id, target: str, action: str) -> bool:
+    """True after logging when a target would exceed Discord's nickname cap."""
+    if len(target) <= NICKNAME_LIMIT:
+        return False
+    log.warning(
+        "Nickname %s skipped for %s: %r exceeds %s characters",
+        action,
+        discord_id,
+        target,
+        NICKNAME_LIMIT,
+    )
+    return True
+
+
 def _member_skip_reason(guild, member_id) -> tuple[object, str | None]:
     """The guild member, or None plus the reason they must not be renamed."""
     try:
@@ -127,13 +142,7 @@ async def sync_member_nickname(bot, guild, discord_id) -> str:
         return "skipped"
 
     target = _format_nickname(riot_id, _rank_icon(bot, discord_id))
-    if len(target) > NICKNAME_LIMIT:
-        log.warning(
-            "Nickname sync skipped for %s: %r exceeds %s characters",
-            discord_id,
-            target,
-            NICKNAME_LIMIT,
-        )
+    if _over_limit(discord_id, target, "sync"):
         return "skipped"
     if member.nick == target:
         return "unchanged"
@@ -145,6 +154,37 @@ async def sync_member_nickname(bot, guild, discord_id) -> str:
         return "failed"
     log.info("Set nickname for %s to %r", discord_id, target)
     return "updated"
+
+
+async def refresh_signup_nickname(bot, guild, discord_id) -> tuple[bool, str]:
+    """Refresh a button signup's identity, then its nickname (issue #268).
+
+    The `/signup` host already runs the puuid-based identity refresh; the
+    other nine join from the button, which otherwise only checks that the
+    stored Riot ID exists. With the flag on, follow a Riot ID rename and fill
+    canonical casing before the nickname write. Returns `(ok, message)`; a
+    nickname failure never fails the signup.
+    """
+    ok, message, doc = await ensure_current_riot_identity(discord_id)
+    if not ok:
+        return False, message
+
+    doc = doc or {}
+    name = (doc.get("name") or "").lower().strip()
+    tag = (doc.get("tag") or "").lower().strip()
+    linked = users.find_one({"name": name, "tag": tag})
+    if not linked or str(linked.get("discord_id")) != str(discord_id):
+        return False, (
+            "Your Riot ID is linked to a different Discord account, or was "
+            "changed after another user linked it. Please re-link it using "
+            "`/linkriot <Name#Tag>`."
+        )
+
+    try:
+        await sync_member_nickname(bot, guild, discord_id)
+    except Exception as e:
+        log.error("Nickname sync failed for %s: %s", discord_id, e, exc_info=e)
+    return True, ""
 
 
 async def sync_guild_nicknames(bot, guild) -> dict[str, int]:
@@ -198,13 +238,13 @@ async def strip_rank_icons(guild) -> int:
 
     updated = 0
     for member in list(getattr(guild, "members", [])):
-        if member.bot:
-            continue
-        skip_member, _reason = _member_skip_reason(guild, member.id)
-        if skip_member is None:
+        member = _editable_member(guild, member.id, "rank strip")
+        if member is None:
             continue
         riot_id = _riot_id_for(member.id)
         if riot_id is None or member.nick == riot_id:
+            continue
+        if _over_limit(member.id, riot_id, "rank strip"):
             continue
         try:
             await member.edit(nick=riot_id)

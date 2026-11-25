@@ -64,7 +64,7 @@ The Unicode emoji prefix representing the player's current rank tier; the rank-1
 _Avoid_: rank badge, rank emoji
 
 **Nickname sync**:
-The event-driven reconciliation that applies a managed nickname; it never reverts manual edits.
+The event-driven reconciliation that applies a managed nickname; it only writes on sync events and does not watch for manual edits.
 _Avoid_: nickname watcher, rename loop
 
 **Backfill**:
