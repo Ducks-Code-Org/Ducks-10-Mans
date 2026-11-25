@@ -1,4 +1,4 @@
-"""Self-checks for managed nicknames: `<rank icon> <Riot ID>` (issue #268).
+"""Self-checks for managed nicknames: `<rank icon|?> <Riot ID>` (issue #268).
 
 All behavior is asserted through the public seam in game.nicknames with fake
 guilds, members, a stubbed users collection and an in-memory MMR cache.
@@ -145,6 +145,7 @@ def demo():
         assert set(nn.RANK_ICONS) == tier_names | {SSR_NAME}, "icon map has gaps"
         assert nn.RANK_ICONS["Iron Rank"] == "\U0001f6e1\ufe0f", "Iron needs FE0F"
         assert len(nn.RANK_ICONS[SSR_NAME]) == 1 and SSR_NAME == "Supersonic Radiant"
+        assert nn.UNRANKED_ICON == "?", "unranked marker must be ASCII"
 
         reset_users()
         with_flag()
@@ -171,11 +172,11 @@ def demo():
         assert run(nn.sync_member_nickname(BOT, guild, 2)) == "updated"
         assert m2.nick == "🌟 Bob#NA", m2.nick
 
-        # Zero matches: Riot ID only, no icon.
+        # Zero matches: the ASCII `?` unranked marker in the icon slot.
         m3 = FakeMember(3)
         guild = FakeGuild([m3])
         assert run(nn.sync_member_nickname(BOT, guild, 3)) == "updated"
-        assert m3.nick == "Carol#X", m3.nick
+        assert m3.nick == "? Carol#X", m3.nick
 
         # Missing canonical field: the lowercase name#tag fallback is used.
         m4 = FakeMember(4)
@@ -230,7 +231,7 @@ def demo():
 
         # Backfill counts, and a second run is all unchanged.
         m1 = FakeMember(1)
-        m3 = FakeMember(3, nick="Carol#X")  # already the target
+        m3 = FakeMember(3, nick="? Carol#X")  # already the target
         unlinked = FakeMember(7)
         outranked = FakeMember(9, top_role=100)
         guild = FakeGuild([m1, m3, unlinked, outranked])
@@ -261,13 +262,13 @@ def demo():
         assert run(nn.clear_member_nickname(guild, 2)) == "unchanged"
         assert manual.edits == [], "a manual nickname must not be cleared"
 
-        # Season reset strips the icon and leaves the Riot ID.
+        # Season reset replaces the rank icon with the `?` unranked marker.
         m1 = FakeMember(1, nick="💎 Alice#NA")
         m4 = FakeMember(4, nick="🪵 dave#x")
         guild = FakeGuild([m1, m4])
         assert run(nn.strip_rank_icons(guild)) == 2
-        assert m1.nick == "Alice#NA", m1.nick
-        assert m4.nick == "dave#x", m4.nick
+        assert m1.nick == "? Alice#NA", m1.nick
+        assert m4.nick == "? dave#x", m4.nick
         assert run(nn.strip_rank_icons(guild)) == 0, "second strip is a no-op"
 
         # Season reset reuses the over-length guard and logs the outranked

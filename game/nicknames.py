@@ -1,9 +1,10 @@
 """Managed nicknames: `<rank icon> <Riot ID>` for linked players (issue #268).
 
-Every nickname rule lives here so the link, report, join, purge, season-reset
-and backfill hooks cannot drift. The `managed_nicknames` flag is read on each
-call, so a live configuration change applies on the next sync. The bot never
-reverts a manual edit; it only writes on the events listed above.
+Unranked players show the ASCII `?` in the icon slot instead. Every nickname
+rule lives here so the link, report, join, purge, season-reset and backfill
+hooks cannot drift. The `managed_nicknames` flag is read on each call, so a
+live configuration change applies on the next sync. The bot never reverts a
+manual edit; it only writes on the events listed above.
 """
 
 import logging
@@ -37,6 +38,10 @@ RANK_ICONS = {
     SSR_NAME: "🌟",
 }
 
+# ASCII fallback for unplayed/unranked players: the icon slot must never be
+# empty, so an unranked member reads `? Name#Tag`.
+UNRANKED_ICON = "?"
+
 
 def managed_nicknames_enabled() -> bool:
     """Whether the managed_nicknames feature flag is on (default off)."""
@@ -62,8 +67,9 @@ def _riot_id_for(discord_id) -> str | None:
 def _rank_icon(bot, discord_id) -> str | None:
     """Icon for the player's current standing, or None when unplayed.
 
-    Reuses the shared "has played" and leaderboard-position helpers so the
-    rank-1 icon and the Supersonic Radiant role cannot disagree.
+    None is rendered as the ASCII `?` unranked marker. Reuses the shared
+    "has played" and leaderboard-position helpers so the rank-1 icon and the
+    Supersonic Radiant role cannot disagree.
     """
     player_mmr = getattr(bot, "player_mmr", None) or {}
     stats = player_mmr.get(str(discord_id))
@@ -75,8 +81,8 @@ def _rank_icon(bot, discord_id) -> str | None:
 
 
 def _format_nickname(riot_id: str, icon: str | None) -> str:
-    """One space after the icon, no rank wording; icon-less when unplayed."""
-    return f"{icon} {riot_id}" if icon else riot_id
+    """One space after the icon; `?` when the player is unranked."""
+    return f"{icon or UNRANKED_ICON} {riot_id}"
 
 
 def _over_limit(discord_id, target: str, action: str) -> bool:
@@ -229,7 +235,7 @@ async def clear_member_nickname(guild, discord_id) -> str:
 
 
 async def strip_rank_icons(guild) -> int:
-    """Rewrite linked members' nicknames to the Riot ID only (season reset).
+    """Rewrite linked members' nicknames to `? <Riot ID>` (season reset).
 
     Returns the number of members updated. Flag-gated like every other write.
     """
@@ -242,12 +248,15 @@ async def strip_rank_icons(guild) -> int:
         if member is None:
             continue
         riot_id = _riot_id_for(member.id)
-        if riot_id is None or member.nick == riot_id:
+        if riot_id is None:
             continue
-        if _over_limit(member.id, riot_id, "rank strip"):
+        target = _format_nickname(riot_id, None)
+        if member.nick == target:
+            continue
+        if _over_limit(member.id, target, "rank strip"):
             continue
         try:
-            await member.edit(nick=riot_id)
+            await member.edit(nick=target)
         except (discord.Forbidden, discord.NotFound, discord.HTTPException) as e:
             log.warning("Rank icon strip failed for %s: %s", member.id, e)
             continue
