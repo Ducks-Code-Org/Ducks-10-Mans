@@ -49,10 +49,14 @@ sys.modules["globals"] = types.SimpleNamespace(
 
 import commands.signup as signup_mod
 
+_ORIGINAL_ENSURE_PERMS = signup_mod.ensure_perms
+_ORIGINAL_ENSURE_IDENTITY = signup_mod.ensure_current_riot_identity
+
 
 class FakeCtx:
     def __init__(self, order=None):
         self.sent = []
+        self.send_kwargs = []
         self.defer_calls = []
         self.order = order
         self.author = types.SimpleNamespace(id=1, name="owner")
@@ -66,6 +70,14 @@ class FakeCtx:
 
     async def send(self, msg=None, **kw):
         self.sent.append(msg)
+        self.send_kwargs.append(kw)
+
+    def public_messages(self):
+        return [
+            msg
+            for msg, kw in zip(self.sent, self.send_kwargs)
+            if not kw.get("ephemeral", False)
+        ]
 
 
 class _Role:
@@ -112,7 +124,9 @@ def make_bot():
 
 # --- /signup defers before the first slow await -----------------------------
 # Order is the whole bug: identity refresh (which stalls on the rate limiter)
-# must not run before the interaction is acknowledged.
+# must not run before the interaction is acknowledged. The defer must be
+# public because Discord edits that placeholder with the first follow-up and
+# preserves its ephemeral state.
 async def _run_defer_order():
     bot = make_bot()
     order = []
@@ -138,11 +152,15 @@ async def _run_defer_order():
     # Identity (the slowest pre-reply await) runs; the flow then dies creating
     # the match channel, after the role was already made, and lands in the
     # error path.
-    await SignupCommand.signup.callback(cog, ctx)
+    try:
+        await SignupCommand.signup.callback(cog, ctx)
+    finally:
+        signup_mod.ensure_perms = _ORIGINAL_ENSURE_PERMS
+        signup_mod.ensure_current_riot_identity = _ORIGINAL_ENSURE_IDENTITY
 
     assert ctx.defer_calls == [
-        True
-    ], f"/signup must defer (ephemeral) exactly once first, got {ctx.defer_calls}"
+        False
+    ], f"/signup must defer publicly exactly once first, got {ctx.defer_calls}"
     # Defer must be the FIRST event: it has to appear in the shared order
     # before the permission check and the identity refresh, or a regression
     # moving it after slow work would pass unnoticed.
@@ -152,8 +170,8 @@ async def _run_defer_order():
         "identity",
     ], f"defer must precede every slow await, got {order}"
     assert any(
-        "Error setting up queue" in (m or "") for m in ctx.sent
-    ), f"expected the error-path reply (it rides the deferred followup), got {ctx.sent}"
+        "Could not start the queue" in (m or "") for m in ctx.public_messages()
+    ), f"expected a public error reply, got {ctx.sent}"
     # The error path must forget the created-then-deleted role or the next
     # /signup logs the stale-leftovers warning this issue is about.
     assert bot.match_role is None and bot.match_channel is None, (
@@ -176,16 +194,108 @@ async def _run_already_active():
     cog = SignupCommand.__new__(SignupCommand)
     cog.bot = bot
     ctx = FakeCtx()
-    await SignupCommand.signup.callback(cog, ctx)
 
-    assert ctx.defer_calls == [True], "defer must happen even for rejections"
+    async def _perms(_ctx):
+        return True
+
+    signup_mod.ensure_perms = _perms
+    try:
+        await SignupCommand.signup.callback(cog, ctx)
+    finally:
+        signup_mod.ensure_perms = _ORIGINAL_ENSURE_PERMS
+
+    assert ctx.defer_calls == [False], "defer must happen even for rejections"
     assert any(
-        "already in progress" in (m or "") for m in ctx.sent
-    ), f"expected the already-active reply, got {ctx.sent}"
+        "already in progress" in (m or "") for m in ctx.public_messages()
+    ), f"expected the already-active public reply, got {ctx.sent}"
     assert bot.queue == [], "no queue side effects on rejection"
 
 
 asyncio.run(_run_already_active())
+
+
+# --- Every other early exit is public too -----------------------------------
+async def _run_unreported_match_is_public():
+    bot = make_bot()
+    bot.match_not_reported = True
+
+    from commands.signup import SignupCommand
+
+    cog = SignupCommand.__new__(SignupCommand)
+    cog.bot = bot
+    ctx = FakeCtx()
+
+    original = signup_mod.ensure_perms
+
+    async def _perms(_ctx):
+        return True
+
+    signup_mod.ensure_perms = _perms
+    try:
+        await SignupCommand.signup.callback(cog, ctx)
+    finally:
+        signup_mod.ensure_perms = original
+
+    assert any(
+        "Report the last match" in (m or "") for m in ctx.public_messages()
+    ), f"expected a public unreported-match reply, got {ctx.sent}"
+
+
+asyncio.run(_run_unreported_match_is_public())
+
+
+async def _run_identity_failure_is_public():
+    bot = make_bot()
+
+    from commands.signup import SignupCommand
+
+    cog = SignupCommand.__new__(SignupCommand)
+    cog.bot = bot
+    ctx = FakeCtx()
+
+    original_perms = signup_mod.ensure_perms
+    original_identity = signup_mod.ensure_current_riot_identity
+
+    async def _perms(_ctx):
+        return True
+
+    async def _no_identity(_discord_id):
+        return (False, "You need to link your Riot account first.", None)
+
+    signup_mod.ensure_perms = _perms
+    signup_mod.ensure_current_riot_identity = _no_identity
+    try:
+        await SignupCommand.signup.callback(cog, ctx)
+    finally:
+        signup_mod.ensure_perms = original_perms
+        signup_mod.ensure_current_riot_identity = original_identity
+
+    assert any(
+        "link your Riot account" in (m or "") for m in ctx.public_messages()
+    ), f"expected a public identity reply, got {ctx.sent}"
+
+
+asyncio.run(_run_identity_failure_is_public())
+
+
+async def _run_permission_failure_is_public():
+    class _Perms:
+        manage_roles = False
+        manage_channels = True
+
+    class _Me:
+        guild_permissions = _Perms()
+
+    ctx = FakeCtx()
+    ctx.guild = types.SimpleNamespace(me=_Me())
+    ok = await _ORIGINAL_ENSURE_PERMS(ctx)
+    assert not ok
+    assert any(
+        "Manage Roles" in (m or "") for m in ctx.public_messages()
+    ), f"expected a public permission reply, got {ctx.sent}"
+
+
+asyncio.run(_run_permission_failure_is_public())
 
 
 # --- cancel_signup nulls the deleted resources ------------------------------

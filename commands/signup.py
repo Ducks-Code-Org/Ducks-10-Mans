@@ -229,20 +229,24 @@ class SignupCommand(BotCommands):
         # Without this, the 3-second interaction deadline (Discord 10062)
         # kills the token and every later ctx.send fails; with it, all later
         # sends ride the long-lived followup webhook.
-        await ctx.defer(ephemeral=True)
+        #
+        # The defer must be public: Discord's first follow-up edits this
+        # placeholder, and it keeps the defer's ephemeral state. An ephemeral
+        # defer would make every first reply — including "Queue started!" and
+        # every refusal — sender-only.
+        await ctx.defer(ephemeral=False)
+        # Every /signup call must leave a publicly visible reply, including
+        # refusals; an ephemeral-only rejection is invisible to the channel.
         async with self.bot.signup_lock:
             if not await ensure_perms(ctx):
                 return
 
             if self.bot.signup_active:
-                await ctx.send("A signup is already in progress.", ephemeral=True)
+                await ctx.send("A signup is already in progress.")
                 return
 
             if self.bot.match_not_reported:
-                await ctx.send(
-                    "Report the last match before starting another one.",
-                    ephemeral=True,
-                )
+                await ctx.send("Report the last match before starting another one.")
                 return
 
             # A stale purge from a previous signup may still be hogging the
@@ -251,7 +255,7 @@ class SignupCommand(BotCommands):
 
             ok, msg, _db_user = await ensure_current_riot_identity(ctx.author.id)
             if not ok:
-                await ctx.send(msg, ephemeral=True)
+                await ctx.send(msg)
                 return
 
             self.bot.load_mmr_data()
@@ -288,8 +292,7 @@ class SignupCommand(BotCommands):
                     await ctx.send(
                         "A match is being set up right now (voting/draft in "
                         "progress). Wait for it to finish, report it, or use "
-                        "`/cancel` to abort it.",
-                        ephemeral=True,
+                        "`/cancel` to abort it."
                     )
                     return
                 log.warning(
@@ -370,7 +373,7 @@ class SignupCommand(BotCommands):
                     pass
             release_match_resources(self.bot)
             log.error("Error setting up queue: %s", e, exc_info=e)
-            await ctx.send(f"Error setting up queue: {e}", ephemeral=True)
+            await ctx.send("Could not start the queue; the error has been logged.")
             return
 
         # Auto-signup the /signup runner: they've already verified their Riot
@@ -404,8 +407,7 @@ async def ensure_perms(ctx) -> bool:
         missing.append("Manage Channels")
     if missing:
         await ctx.send(
-            f"I need the following permissions in this server: {', '.join(missing)}",
-            ephemeral=True,
+            f"I need the following permissions in this server: {', '.join(missing)}"
         )
         return False
     return True

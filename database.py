@@ -35,3 +35,22 @@ recent_queue = db["recent_queue"]
 # bot.bet_session / bot.double_downs, so a restart can refund what an open
 # window was holding.
 coin_escrow = db["coin_escrow"]
+
+# Conduct reporting, sanctions, and Duck Council applications (issue #269).
+conduct_cases = db["conduct_cases"]
+conduct_sanctions = db["conduct_sanctions"]
+conduct_applications = db["conduct_applications"]
+
+for _collection, _indexes in (
+    (conduct_cases, (("subject_id", 1), ("status", 1), ("purge_after", 1))),
+    (
+        conduct_sanctions,
+        (("subject_id", 1), ("type", 1), ("case_id", 1)),
+    ),
+    (conduct_applications, (("applicant_id", 1), ("status", 1), ("purge_after", 1))),
+):
+    for _field, _direction in _indexes:
+        try:
+            _collection.create_index([(_field, _direction)])
+        except Exception as _e:  # index creation must never block startup
+            log.warning("Could not create index %s: %s", _field, _e)
