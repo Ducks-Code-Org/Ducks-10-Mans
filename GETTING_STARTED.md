@@ -42,7 +42,7 @@ This guide will cover everything you need to do to set up the codebase for local
 
 ## Managed nicknames (optional, off by default)
 
-`managed_nicknames` renames linked members to `<rank icon> <Riot ID>`, or `? <Riot ID>` when unranked, and keeps them in sync. Before enabling it:
+`managed_nicknames` renames linked members to `<rank icon> <Riot ID>` and keeps them in sync. Before enabling it:
 
 - Give the bot the `Manage Nicknames` permission and keep its role above the members it renames. The server owner is always skipped (Discord forbids editing them).
 - Remove `Manage Nicknames` from ordinary members, otherwise they can overwrite their own managed nickname.

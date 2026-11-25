@@ -56,11 +56,11 @@ The channel message naming the incoming and outgoing players of a substitute.
 ### Identity
 
 **Managed nickname**:
-The guild-specific server nickname the bot owns for a linked player, formatted as `<rank icon> <Riot ID>` when ranked and `? <Riot ID>` when unranked.
+The guild-specific server nickname the bot owns for a linked player, formatted as `<rank icon> <Riot ID>` when ranked and `<Riot ID>` otherwise.
 _Avoid_: bot name, forced nickname
 
 **Rank icon**:
-The Unicode emoji prefix representing the player's current rank tier; the rank-1 player shows the Supersonic Radiant icon instead of their tier icon, and unranked players show the ASCII `?` in that slot.
+The Unicode emoji prefix representing the player's current rank tier; the rank-1 player shows the Supersonic Radiant icon instead of their tier icon.
 _Avoid_: rank badge, rank emoji
 
 **Nickname sync**:
