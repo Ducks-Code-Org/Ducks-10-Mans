@@ -112,3 +112,25 @@ _Avoid_: grace period, setup window
 **Dodge**:
 A match player's paid cancellation of the live match, costing a burned fee while every other coin spent on the match is refunded.
 _Avoid_: quit, leave
+
+### Conduct
+
+**Conduct case**:
+One anonymous code-of-conduct report and its two sequential council votes, Ban first and Warn only if the Ban does not pass.
+_Avoid_: report, ticket, moderation case
+
+**Warning**:
+A conduct sanction that counts as active for 12 months and adds one automatic Ban vote to a subject's next case.
+_Avoid_: strike, infraction
+
+**Ban**:
+A permanent conduct sanction applied by Discord ID after a passed Ban vote, whether or not the subject is still in the guild.
+_Avoid_: kick, removal
+
+**Duck Council**:
+The role whose holders vote on conduct cases and applications.
+_Avoid_: council (when the role is meant)
+
+**Council application**:
+A request to join the Duck Council; every council member must vote yes before the 7-day deadline, and one no or a non-vote rejects it.
+_Avoid_: signup, admission

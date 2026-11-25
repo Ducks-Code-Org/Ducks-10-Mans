@@ -37,6 +37,9 @@ for name in (
     "coin_escrow",
     "interests",
     "recent_queue",
+    "conduct_cases",
+    "conduct_sanctions",
+    "conduct_applications",
 ):
     setattr(_database_stub, name, _Coll())
 _database_stub.client = types.SimpleNamespace(close=lambda: None)

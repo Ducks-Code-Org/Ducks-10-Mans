@@ -13,6 +13,9 @@ from views.signup_view import SignupView
 
 log = logging.getLogger(__name__)
 
+# Commands whose invocation must never log the user's identity (issue #269).
+ANONYMOUS_COMMANDS = {"reportplayer"}
+
 
 class CustomBot(commands.Bot):
     def __init__(self, *args, **kwargs):
@@ -54,6 +57,10 @@ class CustomBot(commands.Bot):
 
         # Discord log mirror flush task (started in on_ready).
         self.mirror_flush_loop = None
+
+        # Conduct reporting / Duck Council lifecycle (issue #269).
+        self._conduct_recovered = False
+        self._conduct_task = None
 
         # Duck Coins (issue #34)
         self.bet_session: dict | None = None
@@ -290,6 +297,7 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.admin_commands")
         await self.load_extension("commands.bug")
         await self.load_extension("commands.coin_commands")
+        await self.load_extension("commands.conduct")
         await self.load_extension("commands.help")
         await self.load_extension("commands.interest")
         await self.load_extension("commands.leaderboard")
@@ -299,6 +307,14 @@ class CustomBot(commands.Bot):
         await self.load_extension("commands.report")
         await self.load_extension("commands.signup")
         await self.load_extension("commands.stats")
+        # Persistent conduct vote buttons must be registered before the
+        # gateway can dispatch their clicks (issue #269).
+        try:
+            from game.conduct import register_conduct_views
+
+            register_conduct_views(self)
+        except Exception as e:
+            log.error("Could not register conduct views: %r", e, exc_info=e)
         self.tree.on_error = self._on_app_command_error
         # Slash registration must never kill startup (issue #227): a failed
         # sync (missing `applications.commands` scope, Discord 4xx, network)
@@ -360,7 +376,19 @@ class CustomBot(commands.Bot):
         else:
             await self.purge_old_match_roles()
             await self.purge_old_match_channels()
+        await self._start_conduct_lifecycle()
         await self.send_new_leaderboard()
+
+    async def _start_conduct_lifecycle(self):
+        """Close expired conduct votes and start the retention sweep once."""
+        if self._conduct_recovered:
+            return
+        self._conduct_recovered = True
+        from game.conduct import conduct_loop, recover_conduct
+
+        await recover_conduct(self)
+        if self._conduct_task is None or self._conduct_task.done():
+            self._conduct_task = self.loop.create_task(conduct_loop(self))
 
     async def _flush_discord_logs(self, handler):
         """Periodically drain queued log records into #bot-logs."""
@@ -375,23 +403,36 @@ class CustomBot(commands.Bot):
 
     async def on_command(self, ctx):
         name = getattr(ctx.command, "qualified_name", ctx.command)
+        if name in ANONYMOUS_COMMANDS:
+            return
         prefix = "/" if getattr(ctx, "interaction", None) is not None else "!"
         log.info(
             "Command %s%s invoked by %s in #%s", prefix, name, ctx.author, ctx.channel
         )
 
     async def on_app_command_completion(self, interaction, command):
+        name = getattr(command, "qualified_name", command)
+        if name in ANONYMOUS_COMMANDS:
+            return
         log.info(
             "Slash command /%s invoked by %s in #%s",
-            getattr(command, "qualified_name", command),
+            name,
             interaction.user,
             interaction.channel,
         )
 
     async def _on_app_command_error(self, interaction, error):
+        name = getattr(interaction.command, "qualified_name", interaction.command)
+        if name in ANONYMOUS_COMMANDS:
+            log.error(
+                "Error in anonymous command /%s: %s",
+                name,
+                type(error).__name__,
+            )
+            return
         log.error(
             "Error in slash command /%s by %s: %r",
-            getattr(interaction.command, "qualified_name", interaction.command),
+            name,
             interaction.user,
             error,
             exc_info=error,
