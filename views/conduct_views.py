@@ -8,7 +8,6 @@ from game.conduct import (
     BAN,
     ConductError,
     build_application_embed,
-    build_case_embed,
     cast_application_vote,
     cast_vote,
     close_application,
@@ -19,6 +18,7 @@ from game.conduct import (
     should_close,
     should_close_application,
     utcnow,
+    vote_progress_line,
 )
 from views import defer_component, safe_reply
 
@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 
 async def _complete_ack(interaction) -> None:
-    """Finish a component update defer without changing the board."""
+    """Finish a component update defer without changing the message."""
     try:
         await interaction.edit_original_response()
     except (discord.NotFound, discord.HTTPException) as e:
@@ -255,24 +255,24 @@ async def handle_vote(interaction, case_id: str, phase: str, choice: str, view):
     now = utcnow()
     try:
         if should_close(doc, phase, now):
-            board_ok = await close_phase(bot, doc, phase, now, interaction=interaction)
-            if board_ok:
+            closed_ok = await close_phase(bot, doc, phase, now, interaction=interaction)
+            if closed_ok:
                 await interaction.followup.send(
                     "Your vote has been recorded. The vote is closed.", ephemeral=True
                 )
             else:
                 await interaction.followup.send(
-                    "Your vote was recorded, but the board could not be updated.",
+                    "Your vote was recorded, but the vote message could not be updated.",
                     ephemeral=True,
                 )
             return
         await interaction.edit_original_response(
-            embed=build_case_embed(doc, now), view=view
+            content=vote_progress_line(doc, phase), view=view
         )
     except (discord.NotFound, discord.HTTPException) as e:
-        log.error("Could not update the conduct board: %s", e, exc_info=e)
+        log.error("Could not update the conduct vote message: %s", e, exc_info=e)
         await interaction.followup.send(
-            "Your vote was recorded, but the board could not be updated.",
+            "Your vote was recorded, but the vote message could not be updated.",
             ephemeral=True,
         )
         return
@@ -280,7 +280,7 @@ async def handle_vote(interaction, case_id: str, phase: str, choice: str, view):
         log.error("Conduct vote handling failed: %r", e, exc_info=e)
         await _complete_ack(interaction)
         await interaction.followup.send(
-            "Could not update the vote board right now.", ephemeral=True
+            "Could not update the vote message right now.", ephemeral=True
         )
         return
     await interaction.followup.send("Your vote has been recorded.", ephemeral=True)

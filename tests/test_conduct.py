@@ -214,6 +214,8 @@ class FakeMessage:
 
     async def edit(self, **kwargs):
         self.edits.append(kwargs)
+        if "content" in kwargs:
+            self.content = kwargs["content"]
         if "embed" in kwargs:
             self.embed = kwargs["embed"]
         self.view = kwargs.get("view", self.view)
@@ -467,7 +469,7 @@ async def submit_application(harness, applicant, answer="I am helpful"):
 async def vote(harness, voter, choice, phase=None):
     case = CASES.latest()
     phase = phase or case["status"]
-    message = harness.council.messages[case["message_id"]]
+    message = harness.council.messages[case["vote_message_id"]]
     view = ConductVoteView(case["_id"], phase)
     button = view.children[0] if choice == "yes" else view.children[1]
     interaction = harness.interaction(voter, message=message)
@@ -699,9 +701,15 @@ async def demo():
     assert "Expired warnings (inactive): 1" in text
     assert "Prior bans: 0" in text
     assert "https://example.com/evidence" in text
+    assert "Tally:" not in text and "Result:" not in text
+    assert "view" not in kwargs, "report embed must not carry vote buttons"
     assert reporter.name not in text, "reporter name leaked into the case embed"
     assert str(reporter.id) not in text, "reporter id leaked into the case embed"
     assert kwargs["files"], "uploaded evidence was not re-uploaded"
+    vote_content, vote_kwargs = harness.council.sent[1]
+    assert "Ban vote: 0 of" in vote_content, "missing plain-text vote progress"
+    assert vote_kwargs["view"], "vote message does not carry the buttons"
+    assert "embed" not in vote_kwargs, "vote message must be plain text"
     assert reporter.name not in repr(case), "reporter name leaked into the case"
     assert all(
         value != str(reporter.id) and value != reporter.id for value in case.values()
@@ -721,6 +729,8 @@ async def demo():
         await vote(harness, harness.council_member(index), "yes")
     case = CASES.latest()
     assert case["status"] == CLOSED and case["outcome"] == BAN
+    report_message = harness.council.messages[case["message_id"]]
+    assert not report_message.edits, "report embed was edited during the vote"
     assert harness.guild.bans and harness.guild.bans[0][0] == harness.guild.subject.id
     assert harness.guild.dm_count_at_ban[0] >= 1, "ban DM was not sent before the ban"
     assert harness.guild.subject.dms[0].startswith("You have been banned")
@@ -730,18 +740,16 @@ async def demo():
         "Warn vote" in (content or "") for content, _ in harness.council.sent
     ), "a warn phase opened after a passed ban"
     result_text = "\n".join(
-        content
-        for content, _ in harness.council.sent
-        if content and "Outcome:" in content
+        content for content, _ in harness.council.sent if content and "Ban:" in content
     )
     assert "Ban: 3 to 0 — passed" in result_text
-    assert "Outcome: Banned" in result_text
+    assert not any("Outcome:" in (content or "") for content, _ in harness.council.sent)
     assert not any(
         harness.council_member(i).name in result_text for i in range(3)
     ), "voter names leaked into the result"
 
-    # A failed ban must not create a sanction or announce an outcome; the
-    # next tick retries the ban and only then records/logs it.
+    # A failed ban must not create a sanction or public log entry; the next
+    # tick retries the ban and only then records/logs it.
     harness = Harness()
     harness.guild.fail_ban = True
     await submit_report(harness, harness.reporter)
@@ -753,21 +761,31 @@ async def demo():
     assert not SANCTIONS.docs, "a failed ban was recorded as a sanction"
     assert not harness.log.sent, "a failed ban was announced publicly"
     assert not any(
-        "Outcome: Banned" in (content or "") for content, _ in harness.council.sent
-    ), "a failed ban was announced as the result"
+        "Outcome:" in (content or "") for content, _ in harness.council.sent
+    ), "a failed ban announced an outcome"
     assert len(harness.guild.subject.dms) == 1, "ban DM was not sent before the ban"
+    ban_counts = [
+        content
+        for content, _ in harness.council.sent
+        if content and "Ban: 3 to 0 — passed" in content
+    ]
+    assert len(ban_counts) == 1, "ban vote counts were not posted"
 
     harness.guild.fail_ban = False
     await conduct.conduct_tick(harness.bot)
     assert harness.guild.bans and harness.guild.bans[0][0] == harness.guild.subject.id
     assert SANCTIONS.docs and SANCTIONS.latest()["type"] == BAN
     assert harness.log.sent[-1][0] == conduct.public_ban_line("Reported Player")
-    result_text = "\n".join(
-        content
-        for content, _ in harness.council.sent
-        if content and "Outcome:" in content
-    )
-    assert "Outcome: Banned" in result_text
+    assert (
+        len(
+            [
+                content
+                for content, _ in harness.council.sent
+                if content and "Ban: 3 to 0 — passed" in content
+            ]
+        )
+        == 1
+    ), "ban vote counts were duplicated on retry"
     assert len(harness.guild.subject.dms) == 1, "ban DM was duplicated on retry"
 
     # ------------------------------------------------------------------
@@ -788,12 +806,15 @@ async def demo():
     harness, case = await open_warn_with(["no", "no", "yes", "yes", "no"])
     assert case["status"] == WARN, case["status"]
     assert case["deadline"] > conduct.utcnow(), "warn phase did not get a new clock"
-    warn_board = harness.council.messages[case["message_id"]]
-    assert "Warn vote" in embed_text(warn_board.embed)
+    warn_vote = harness.council.messages[case["vote_message_id"]]
+    assert "Warn vote" in (warn_vote.content or "")
+    assert warn_vote.embed is None, "warn phase reposted the report embed"
+    assert (
+        sum(1 for _, kw in harness.council.sent if "embed" in kw) == 1
+    ), "the report embed must be posted once, not repeated for the Warn vote"
     assert any(
-        "Warn vote is now open" in (content or "")
-        for content, _ in harness.council.sent
-    ), "warn phase did not ping the council"
+        "Warn vote: 0 of" in (content or "") for content, _ in harness.council.sent
+    ), "warn phase did not post a public vote message"
     assert case["ban_result"]["passed"] is False
 
     harness, case = await open_warn_with(["yes", "yes", "no", "no"])
@@ -829,14 +850,14 @@ async def demo():
     await submit_report(harness, harness.reporter)
     case = CASES.latest()
     assert case["prior_warning"] is True
-    assert "+ 1 prior warning" in embed_text(
-        harness.council.messages[case["message_id"]].embed
-    )
     await vote(harness, harness.council_member(0), "yes")
     case["deadline"] = conduct.utcnow() - timedelta(seconds=1)
     await conduct.conduct_tick(harness.bot)
     case = CASES.latest()
     assert case["status"] == WARN, "+1 wrongly satisfied quorum"
+    assert any(
+        "+ 1 prior warning" in (content or "") for content, _ in harness.council.sent
+    ), "prior-warning weight was not shown in the closed vote counts"
     assert case["ban_result"]["yes"] == 1
     assert case["ban_result"]["prior"] == 1, "prior-warning weight was not capped"
 
@@ -930,13 +951,10 @@ async def demo():
     assert case["status"] == CLOSED and case["outcome"] is None
     assert not harness.guild.subject.dms, "no-sanction outcome sent a DM"
     assert not harness.log.sent, "no-sanction outcome was publicly logged"
-    assert "Outcome: No sanction" in "\n".join(case["result_lines"])
-    result_text = "\n".join(
-        content
-        for content, _ in harness.council.sent
-        if content and "Outcome:" in content
-    )
-    assert "Ban:" in result_text and "Warn:" in result_text
+    assert "Warn:" in "\n".join(case["result_lines"])
+    assert "not passed" in "\n".join(case["result_lines"])
+    council_text = "\n".join(content or "" for content, _ in harness.council.sent)
+    assert "Ban:" in council_text and "Warn:" in council_text
 
     harness = await reach_warn(roster_size=4)
     harness.guild.subject.dms.clear()
@@ -961,8 +979,11 @@ async def demo():
     assert "already voted" in second.followup.messages[0][0]
     case = CASES.latest()
     assert case["votes"][BAN] == {str(harness.council_member(0).id): "yes"}
-    board = harness.council.messages[case["message_id"]]
-    assert harness.council_member(0).name not in embed_text(board.embed)
+    vote_message = harness.council.messages[case["vote_message_id"]]
+    assert "Ban vote: 1 of 5 people have voted." in (vote_message.content or "")
+    assert "Yes" not in (vote_message.content or "")
+    assert "No" not in (vote_message.content or "")
+    assert harness.council_member(0).name not in (vote_message.content or "")
 
     # Votes after the deadline are rejected, not counted.
     harness = Harness()
@@ -1196,21 +1217,25 @@ async def demo():
     await submit_report(harness, harness.reporter)
     assert CASES.latest()["prior_warning"] is False, "revoked warning still weighted"
 
-    # A failed warn-board send is retried by the tick instead of freezing
+    # A failed Warn vote send is retried by the tick instead of freezing
     # a buttonless phase until its deadline.
     harness = Harness()
     await submit_report(harness, harness.reporter)
     case = CASES.latest()
     case["deadline"] = conduct.utcnow() - timedelta(seconds=1)
+    await conduct.conduct_tick(harness.bot)
+    case = CASES.latest()
+    assert case["status"] == WARN and case["warn_vote_posted"] is True
+    case["warn_vote_posted"] = False
     harness.council.fail_next_send = True
     await conduct.conduct_tick(harness.bot)
     case = CASES.latest()
-    assert case["status"] == WARN and case["warn_board_posted"] is False
+    assert case["warn_vote_posted"] is False, "failed retry marked as posted"
     await conduct.conduct_tick(harness.bot)
     case = CASES.latest()
-    assert case["warn_board_posted"] is True
-    warn_board = harness.council.messages[case["message_id"]]
-    assert "Warn vote" in embed_text(warn_board.embed)
+    assert case["warn_vote_posted"] is True
+    warn_vote = harness.council.messages[case["vote_message_id"]]
+    assert "Warn vote" in (warn_vote.content or "")
 
     # ------------------------------------------------------------------
     # Lifecycle: views re-register, expired phases close, and the 90-day

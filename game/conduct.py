@@ -157,20 +157,12 @@ def quorum_line(result: PhaseResult) -> str:
     )
 
 
-def vote_tally_line(doc: dict, phase: str) -> str:
-    result = evaluate_phase(doc, phase)
-    if phase == BAN and result.prior:
-        return (
-            f"Yes: {result.yes} council + 1 prior warning\n"
-            f"No: {result.no}\n"
-            f"Quorum: {result.cast}/{result.quorum} voted — "
-            f"{'met' if result.quorum_met else 'not met'}"
-        )
-    return (
-        f"Yes: {result.yes}\nNo: {result.no}\n"
-        f"Quorum: {result.cast}/{result.quorum} voted — "
-        f"{'met' if result.quorum_met else 'not met'}"
-    )
+def vote_progress_line(doc: dict, phase: str) -> str:
+    """Plain-text progress line; vote counts stay hidden until close."""
+    cast = phase_counts(doc, phase)[2]
+    total = len(doc.get("roster") or [])
+    label = "Ban" if phase == BAN else "Warn"
+    return f"{label} vote: {cast} of {total} people have voted."
 
 
 def application_result_line(doc: dict) -> str:
@@ -296,27 +288,6 @@ def build_case_embed(doc: dict, now: datetime | None = None) -> discord.Embed:
         value=_clip(history_field(doc.get("subject_id"), now)),
         inline=False,
     )
-    if doc.get("status") == WARN and doc.get("ban_result"):
-        result = PhaseResult(**doc["ban_result"])
-        embed.add_field(
-            name="Ban result",
-            value=_clip(f"{phase_result_line(BAN, result)}\n{quorum_line(result)}"),
-            inline=False,
-        )
-    if doc.get("status") in (BAN, WARN):
-        embed.add_field(
-            name="Current phase",
-            value="Ban vote" if doc["status"] == BAN else "Warn vote",
-            inline=True,
-        )
-        embed.add_field(
-            name="Tally",
-            value=_clip(vote_tally_line(doc, doc["status"])),
-            inline=True,
-        )
-    else:
-        lines = list(doc.get("result_lines") or [])
-        embed.add_field(name="Result", value=_clip("\n".join(lines)), inline=False)
     return embed
 
 
@@ -700,6 +671,7 @@ async def file_report(
         "channel_id": council.id,
         "message_ids": [],
         "message_id": None,
+        "vote_message_id": None,
         "ban_result": None,
         "warn_result": None,
         "outcome": None,
@@ -708,7 +680,7 @@ async def file_report(
         "notified": False,
         "public_logged": False,
         "ban_applied": False,
-        "warn_board_posted": True,
+        "warn_vote_posted": True,
         "closed_at": None,
         "purge_after": None,
         "purged": False,
@@ -717,26 +689,41 @@ async def file_report(
     embed = build_case_embed(doc, now)
     from views.conduct_views import ConductVoteView
 
-    view = ConductVoteView(doc["_id"], BAN)
-    if hasattr(bot, "add_view"):
-        bot.add_view(view)
     try:
         message = await council.send(
             content=f"{role.mention} A code of conduct report has been filed.",
             embed=embed,
-            view=view,
             files=files,
         )
     except (discord.Forbidden, discord.HTTPException) as e:
         conduct_cases.delete_one({"_id": doc["_id"]})
         log.error("Could not post the conduct report: %s", e, exc_info=e)
         raise ConductError("Could not post the report to #duck-council.") from e
+
+    view = ConductVoteView(doc["_id"], BAN)
+    if hasattr(bot, "add_view"):
+        bot.add_view(view)
+    try:
+        vote_message = await council.send(
+            content=vote_progress_line(doc, BAN),
+            view=view,
+        )
+    except (discord.Forbidden, discord.HTTPException) as e:
+        try:
+            await message.delete()
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+        conduct_cases.delete_one({"_id": doc["_id"]})
+        log.error("Could not post the conduct vote message: %s", e, exc_info=e)
+        raise ConductError("Could not post the report to #duck-council.") from e
+
     conduct_cases.update_one(
         {"_id": doc["_id"]},
         {
             "$set": {
                 "message_id": message.id,
                 "message_ids": [message.id],
+                "vote_message_id": vote_message.id,
             }
         },
     )
@@ -766,30 +753,48 @@ def cast_vote(case_id: str, phase: str, voter_id: str, choice: str) -> dict:
     return conduct_cases.find_one({"_id": case_id})
 
 
-async def _board_message(bot, doc, message=None):
-    if message is not None:
-        return message
+async def _vote_message(bot, doc):
     channel = None
     guild = bot.get_guild(doc.get("guild_id"))
     if guild is not None:
         channel = guild.get_channel(doc.get("channel_id"))
-    if channel is None or doc.get("message_id") is None:
+    if channel is None or doc.get("vote_message_id") is None:
         return None
     try:
-        return await channel.fetch_message(doc["message_id"])
+        return await channel.fetch_message(doc["vote_message_id"])
     except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
-        log.warning("Could not fetch the conduct board message: %s", e)
+        log.warning("Could not fetch the conduct vote message: %s", e)
         return None
+
+
+async def _close_vote_message(vote_message, interaction):
+    """Finish the deferred vote message without touching the report embed."""
+    content = "Voting closed."
+    if interaction is not None:
+        try:
+            await interaction.edit_original_response(content=content, view=None)
+            return True
+        except (discord.NotFound, discord.HTTPException) as e:
+            log.error("Could not close the conduct vote message: %s", e, exc_info=e)
+            return False
+    if vote_message is None:
+        return False
+    try:
+        await vote_message.edit(content=content, view=None)
+        return True
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+        log.error("Could not close the conduct vote message: %s", e, exc_info=e)
+        return False
 
 
 async def _edit_board(message, embed, view=None, interaction=None):
-    """Write the board; interaction-driven votes complete their own defer."""
+    """Write an application board; interaction-driven votes complete their defer."""
     if interaction is not None:
         try:
             await interaction.edit_original_response(embed=embed, view=view)
             return True
         except (discord.NotFound, discord.HTTPException) as e:
-            log.error("Could not update the conduct board: %s", e, exc_info=e)
+            log.error("Could not update the application board: %s", e, exc_info=e)
             return False
     if message is None:
         return False
@@ -797,21 +802,32 @@ async def _edit_board(message, embed, view=None, interaction=None):
         await message.edit(embed=embed, view=view)
         return True
     except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
-        log.error("Could not update the conduct board: %s", e, exc_info=e)
+        log.error("Could not update the application board: %s", e, exc_info=e)
         return False
 
 
-async def _post_warn_board(bot, doc: dict, now=None) -> bool:
-    """Post the Warn phase board; retried by the tick if the send failed."""
-    now = now or utcnow()
+async def _send_phase_counts(channel, lines: list[str]) -> bool:
+    if channel is None:
+        log.error("Could not post the conduct vote counts: channel missing")
+        return False
+    try:
+        await channel.send("\n".join(lines))
+        return True
+    except (discord.Forbidden, discord.HTTPException) as e:
+        log.error("Could not post the conduct vote counts: %s", e, exc_info=e)
+        return False
+
+
+async def _post_warn_vote(bot, doc: dict) -> bool:
+    """Post the Warn vote message; retried by the tick if the send failed."""
     guild = bot.get_guild(doc.get("guild_id"))
     if guild is None:
-        log.error("Could not post the Warn phase board: guild missing")
+        log.error("Could not post the Warn vote: guild missing")
         return False
     role = discord.utils.get(guild.roles, name=COUNCIL_ROLE_NAME)
     channel = guild.get_channel(doc.get("channel_id"))
     if role is None or channel is None:
-        log.error("Could not post the Warn phase board: role or channel missing")
+        log.error("Could not post the Warn vote: role or channel missing")
         return False
     from views.conduct_views import ConductVoteView
 
@@ -820,26 +836,20 @@ async def _post_warn_board(bot, doc: dict, now=None) -> bool:
         bot.add_view(view)
     try:
         message = await channel.send(
-            content=f"{role.mention} The Warn vote is now open for a case.",
-            embed=build_case_embed(doc, now),
+            content=f"{role.mention} {vote_progress_line(doc, WARN)}",
             view=view,
         )
     except (discord.Forbidden, discord.HTTPException) as e:
-        log.error("Could not post the Warn phase board: %s", e, exc_info=e)
+        log.error("Could not post the Warn vote: %s", e, exc_info=e)
         return False
     conduct_cases.update_one(
         {"_id": doc["_id"]},
-        {
-            "$set": {"message_id": message.id, "warn_board_posted": True},
-            "$push": {"message_ids": message.id},
-        },
+        {"$set": {"vote_message_id": message.id, "warn_vote_posted": True}},
     )
     return True
 
 
-async def close_phase(
-    bot, doc: dict, phase: str, now=None, message=None, interaction=None
-):
+async def close_phase(bot, doc: dict, phase: str, now=None, interaction=None):
     """Close a phase if due, applying the outcome and all notifications."""
     now = now or utcnow()
     doc = conduct_cases.find_one({"_id": doc["_id"]})
@@ -848,8 +858,10 @@ async def close_phase(
     if not should_close(doc, phase, now):
         return False
     guild = bot.get_guild(doc.get("guild_id"))
+    channel = guild.get_channel(doc.get("channel_id")) if guild is not None else None
     result = evaluate_phase(doc, phase)
-    board = await _board_message(bot, doc, message) if interaction is None else None
+    vote_message = await _vote_message(bot, doc) if interaction is None else None
+    closed_ok = await _close_vote_message(vote_message, interaction)
 
     if phase == BAN:
         ban_result = {
@@ -861,12 +873,8 @@ async def close_phase(
             "quorum_met": result.quorum_met,
             "passed": result.passed,
         }
+        lines = [phase_result_line(BAN, result), quorum_line(result)]
         if result.passed:
-            lines = [
-                phase_result_line(BAN, result),
-                quorum_line(result),
-                "Outcome: Banned",
-            ]
             conduct_cases.update_one(
                 {"_id": doc["_id"]},
                 {
@@ -882,19 +890,14 @@ async def close_phase(
                 },
             )
             doc = conduct_cases.find_one({"_id": doc["_id"]})
-            board_ok = await _edit_board(
-                board, build_case_embed(doc, now), view=None, interaction=interaction
-            )
+            if await _send_phase_counts(channel, lines):
+                conduct_cases.update_one(
+                    {"_id": doc["_id"]}, {"$set": {"result_posted": True}}
+                )
             await finish_case(bot, doc["_id"], now)
-            return board_ok
+            return closed_ok
 
         # Ban did not pass: open the Warn phase with a fresh roster snapshot.
-        ban_board = dict(doc)
-        ban_board["status"] = CLOSED
-        ban_board["result_lines"] = [
-            phase_result_line(BAN, result),
-            quorum_line(result),
-        ]
         role = None
         if guild is not None:
             role = discord.utils.get(guild.roles, name=COUNCIL_ROLE_NAME)
@@ -909,19 +912,18 @@ async def close_phase(
                     "roster": roster,
                     "ban_result": ban_result,
                     "votes.warn": {},
-                    "warn_board_posted": False,
+                    "vote_message_id": None,
+                    "warn_vote_posted": False,
                 }
             },
         )
         doc = conduct_cases.find_one({"_id": doc["_id"]})
-        board_ok = await _edit_board(
-            board, build_case_embed(ban_board, now), view=None, interaction=interaction
-        )
+        await _send_phase_counts(channel, lines)
         if guild is None or role is None:
             log.error("Could not open the Warn phase: guild or role missing")
-            return board_ok
-        await _post_warn_board(bot, doc, now)
-        return board_ok
+            return closed_ok
+        await _post_warn_vote(bot, doc)
+        return closed_ok
 
     # Warn phase.
     outcome = WARN if result.passed else None
@@ -934,14 +936,7 @@ async def close_phase(
         "quorum_met": result.quorum_met,
         "passed": result.passed,
     }
-    ban_result_obj = PhaseResult(**doc["ban_result"])
-    lines = [
-        phase_result_line(BAN, ban_result_obj),
-        quorum_line(ban_result_obj),
-        phase_result_line(WARN, result),
-        quorum_line(result),
-        "Outcome: Warned" if outcome == WARN else "Outcome: No sanction",
-    ]
+    lines = [phase_result_line(WARN, result), quorum_line(result)]
     conduct_cases.update_one(
         {"_id": doc["_id"]},
         {
@@ -957,11 +952,10 @@ async def close_phase(
         },
     )
     doc = conduct_cases.find_one({"_id": doc["_id"]})
-    board_ok = await _edit_board(
-        board, build_case_embed(doc, now), view=None, interaction=interaction
-    )
+    if await _send_phase_counts(channel, lines):
+        conduct_cases.update_one({"_id": doc["_id"]}, {"$set": {"result_posted": True}})
     await finish_case(bot, doc["_id"], now)
-    return board_ok
+    return closed_ok
 
 
 async def finish_case(bot, case_id: str, now=None):
@@ -1487,11 +1481,11 @@ async def conduct_tick(bot, now: datetime | None = None) -> None:
     for doc in list(conduct_cases.find({"status": {"$in": [BAN, WARN]}})):
         if (
             doc.get("status") == WARN
-            and not doc.get("warn_board_posted", True)
+            and not doc.get("warn_vote_posted", True)
             and not should_close(doc, WARN, now)
         ):
             try:
-                await _post_warn_board(bot, doc, now)
+                await _post_warn_vote(bot, doc)
             except Exception as e:
                 log.error("Conduct warn board recovery failed: %r", e, exc_info=e)
         if should_close(doc, doc["status"], now):
