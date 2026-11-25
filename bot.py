@@ -8,6 +8,7 @@ from discord.ext import commands
 
 from commands.leaderboard import LeaderboardCommand
 from database import mmr_collection, seasons, users
+from game.nicknames import sync_member_nickname
 from game.stats_helper import DEFAULT_MMR
 from views.signup_view import SignupView
 
@@ -389,6 +390,16 @@ class CustomBot(commands.Bot):
         await recover_conduct(self)
         if self._conduct_task is None or self._conduct_task.done():
             self._conduct_task = self.loop.create_task(conduct_loop(self))
+
+    async def on_member_join(self, member):
+        # Discord drops a server nickname when a member leaves; reapply the
+        # managed one on rejoin. Rank roles are deliberately not re-granted.
+        try:
+            await sync_member_nickname(self, member.guild, member.id)
+        except Exception as e:
+            log.error(
+                "Nickname sync on join failed for %s: %s", member.id, e, exc_info=e
+            )
 
     async def _flush_discord_logs(self, handler):
         """Periodically drain queued log records into #bot-logs."""

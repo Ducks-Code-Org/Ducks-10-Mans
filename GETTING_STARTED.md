@@ -34,12 +34,23 @@ This guide will cover everything you need to do to set up the codebase for local
     ```
 
 - (Optional) Review `bot.ini` in the repository root. This read-only config file is parsed by the bot at startup and will be used by future updates to enable and disable certain features under the `[features]` section.
-
 - Install needed packages with `pip install -r requirements.txt`
 - Run the command `call env.bat` in a `cmd` terminal
   - This is needed to set the proper environment variables to run the bot, and will have to be run once each session
 - Run ther command `py main.py` to start the bot
 - You can now make changes, and restart the bot to see what they do!
+
+## Managed nicknames (optional, off by default)
+
+`managed_nicknames` renames linked members to `<rank icon> <Riot ID>` and keeps them in sync. Before enabling it:
+
+- Give the bot the `Manage Nicknames` permission and keep its role above the members it renames. The server owner is always skipped (Discord forbids editing them).
+- Remove `Manage Nicknames` from ordinary members, otherwise they can overwrite their own managed nickname.
+- Enable the flag live with `/setconfig managed_nicknames true` (or set it in `bot.ini` and restart).
+- Run `/syncnicknames` once to apply the policy to existing linked members; it uses stored Riot IDs and makes no Riot API calls.
+- Verify a ranked, unranked, rank-1, owner, and outranked member, then watch `#bot-logs` for skipped/failed warnings.
+
+Disabling the flag stops future syncs and leaves existing nicknames alone. The bot never reverts a manual admin rename; it only reapplies on the next sync (link, report, signup, rejoin, or season reset).
 
 ## Getting Production Data
 

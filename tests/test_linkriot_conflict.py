@@ -56,6 +56,7 @@ _database_stub.mmr_collection = FakeCollection()
 sys.modules["database"] = _database_stub
 
 _discord_stub = types.ModuleType("discord")
+_discord_stub.Guild = type("Guild", (), {})
 _discord_stub.NotFound = type("NotFound", (Exception,), {})
 _discord_stub.HTTPException = type("HTTPException", (Exception,), {})
 _discord_stub.Forbidden = type("Forbidden", (Exception,), {})
@@ -102,6 +103,10 @@ class FakeCtx:
     def __init__(self, user_id="222"):
         self.author = types.SimpleNamespace(id=int(user_id), name="claimer")
         self.sent = []
+        # Managed-nickname hook reads these; the flag is off, so no edit is
+        # attempted and no guild/bot objects are needed.
+        self.bot = None
+        self.guild = None
 
     async def send(self, content=None, **kw):
         self.sent.append(content)
@@ -152,6 +157,9 @@ def demo():
         assert any("Successfully linked" in str(m) for m in ctx.sent), ctx.sent
         assert len(lk.users.docs) == 1, "re-link must not duplicate the user doc"
         assert lk.users.docs[0]["discord_id"] == "111"
+        assert (
+            lk.users.docs[0]["riot_display_name"] == "foo#bar"
+        ), "link must store the canonical Riot ID"
 
         # 4. A genuinely new account links fine and only touches its own doc.
         reset()

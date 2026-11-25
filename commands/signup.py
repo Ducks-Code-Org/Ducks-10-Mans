@@ -11,7 +11,8 @@ from discord.ext import commands
 from commands import BotCommands
 from commands.report import cleanup_match_resources
 from database import users
-from game.identity import ensure_current_riot_identity
+from game.identity import canonical_riot_id, ensure_current_riot_identity
+from game.nicknames import clear_member_nickname, sync_member_nickname
 from game.recent_queue import get_recent_queue, pingrecent_message
 from services.riot_api import (
     get_account_by_puuid,
@@ -48,7 +49,12 @@ def _unlink_user(doc) -> str:
     users.update_one(
         {"_id": doc["_id"]},
         {
-            "$unset": {"name": "", "tag": "", "puuid": ""},
+            "$unset": {
+                "name": "",
+                "tag": "",
+                "puuid": "",
+                "riot_display_name": "",
+            },
             "$set": {"discord_id": discord_id},
         },
     )
@@ -131,7 +137,16 @@ async def purge_invalid_riot_ids(bot=None) -> list[str]:
                 new_tag = acc["tagLine"].lower().strip()
                 users.update_one(
                     {"_id": doc["_id"]},
-                    {"$set": {"name": new_name, "tag": new_tag, "puuid": puuid}},
+                    {
+                        "$set": {
+                            "name": new_name,
+                            "tag": new_tag,
+                            "puuid": puuid,
+                            "riot_display_name": canonical_riot_id(
+                                acc, acc["gameName"], acc["tagLine"]
+                            ),
+                        }
+                    },
                 )
                 log.info(
                     "Riot ID renamed: %s#%s -> %s#%s (%s); stats preserved",
@@ -142,9 +157,19 @@ async def purge_invalid_riot_ids(bot=None) -> list[str]:
                     doc.get("discord_id"),
                 )
                 continue
-        removed.append(_unlink_user(doc))
+        discord_id = str(doc.get("discord_id"))
         if bot is not None:
-            _kick_from_queue(bot, str(doc.get("discord_id")))
+            _kick_from_queue(bot, discord_id)
+            # Clear before the doc loses its Riot ID, so only a nickname that
+            # still carries that ID is removed (flag-gated).
+            for guild in getattr(bot, "guilds", []):
+                try:
+                    await clear_member_nickname(guild, discord_id)
+                except Exception as e:
+                    log.error(
+                        "Nickname clear failed for %s: %s", discord_id, e, exc_info=e
+                    )
+        removed.append(_unlink_user(doc))
 
     return removed
 
@@ -231,6 +256,18 @@ class SignupCommand(BotCommands):
 
             self.bot.load_mmr_data()
             log.debug("Reloaded MMR data at start of signup")
+
+            # Riot may have reported a changed Riot ID during the identity
+            # refresh; keep the managed nickname current (flag-gated).
+            try:
+                await sync_member_nickname(self.bot, ctx.guild, ctx.author.id)
+            except Exception as e:
+                log.error(
+                    "Nickname sync failed for %s: %s",
+                    ctx.author.id,
+                    e,
+                    exc_info=e,
+                )
 
             # Refuse to touch match resources owned by a LIVE setup cycle.
             # Between the queue filling and the report, every flag !signup

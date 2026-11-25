@@ -89,6 +89,7 @@ async def demo():
         "help",
         "bug",
         "newseason",
+        "syncnicknames",
         "initialize_rounds",
         "simulate_queue",
         "setcaptain",

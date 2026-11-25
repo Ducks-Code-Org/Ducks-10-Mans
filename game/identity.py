@@ -13,6 +13,15 @@ from services.riot_api import (
 log = logging.getLogger(__name__)
 
 
+def canonical_riot_id(payload: dict, name: str, tag: str) -> str:
+    """Canonical `GameName#TagLine` from a normalized Riot account payload.
+
+    The payload's own casing wins; the caller's input is the fallback for
+    sparse payloads so a link is never stored without a display field.
+    """
+    return (payload.get("riotId") or f"{name}#{tag}").strip()
+
+
 async def ensure_current_riot_identity(discord_id: int):
     doc = users.find_one({"discord_id": str(discord_id)})
     if not doc:
@@ -66,6 +75,12 @@ async def ensure_current_riot_identity(discord_id: int):
             updates["name"] = new_name.lower().strip()
         if new_tag and new_tag != tag:
             updates["tag"] = new_tag.lower().strip()
+        # Canonical casing for the managed nickname (issue #268). Existing
+        # links are filled in on their next signup; no bulk API fetch.
+        if new_name and new_tag:
+            canonical = canonical_riot_id(acc, new_name, new_tag)
+            if canonical != (doc.get("riot_display_name") or "").strip():
+                updates["riot_display_name"] = canonical
 
         log.info("Updating database for: %s#%s", new_name, new_tag)
         if updates:

@@ -18,6 +18,7 @@ from game.duck_coins import (
     refund_open_bets,
     settle_bets,
 )
+from game.nicknames import sync_member_nickname
 from game.ranking import has_played, leaderboard_order
 from game.ranks import RANKS, SSR_NAME, rank_of, role_mention, sync_player_rank
 from game.recent_queue import remember_recent_queue
@@ -901,12 +902,9 @@ class ReportCommand(BotCommands):
         # the first match of the season; rank 1 overall also wears Supersonic
         # Radiant on top of their traditional tier).
         if ctx.guild:
-            played_sorted = [
-                (pid, stats)
-                for pid, stats in sorted_mmr_after
-                if stats.get("matches_played", 0) > 0
-                or (stats.get("wins", 0) + stats.get("losses", 0)) > 0
-            ]
+            # Canonical leaderboard order (not a raw MMR sort) so the rank-1
+            # role and the nickname's Supersonic Radiant icon agree on ties.
+            played_sorted = leaderboard_order(list(self.bot.player_mmr.items()))
             for position, (pid, stats) in enumerate(played_sorted):
                 try:
                     await sync_player_rank(
@@ -918,6 +916,15 @@ class ReportCommand(BotCommands):
                     )
                 except Exception as e:
                     log.warning("Rank sync failed for %s: %s", pid, e)
+
+            # The rank-1 icon can move to someone who didn't play this match,
+            # so refresh every ranked player, not only tonight's ten. A
+            # nickname failure must never fail the report (issue #268).
+            for pid, _stats in played_sorted:
+                try:
+                    await sync_member_nickname(self.bot, ctx.guild, pid)
+                except Exception as e:
+                    log.error("Nickname sync failed for %s: %s", pid, e, exc_info=e)
 
         # Record every match played in a new collection
         match["mmr_context"] = mmr_context
